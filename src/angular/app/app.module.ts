@@ -1,13 +1,12 @@
 import { AppRoutingModule } from './app-routing.module';
 import { AppComponent } from './app.component';
-import { NgModule } from '@angular/core';
+import { NgModule, Pipe, PipeTransform, provideZonelessChangeDetection } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
 import { FormsModule, COMPOSITION_BUFFER_MODE } from '@angular/forms';
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap';
-import { NuMonacoEditorModule } from '@ng-util/monaco-editor';
+import { NuMonacoEditorComponent, provideNuMonacoEditorConfig } from '@ng-util/monaco-editor';
 import { SortablejsModule } from "@wiz/libs/portal/season/ngx-sortablejs";
 import { KeyboardShortcutsModule } from 'ng-keyboard-shortcuts';
-import { Pipe, PipeTransform } from '@angular/core';
 import { DomSanitizer } from '@angular/platform-browser';
 
 @Pipe({ name: 'safe' })
@@ -40,7 +39,7 @@ export function createTranslateLoader(http: HttpClient) {
         NgbModule,
         SortablejsModule,
         KeyboardShortcutsModule.forRoot(),
-        NuMonacoEditorModule.forRoot({ baseUrl: `lib` }),
+        NuMonacoEditorComponent,
         HttpClientModule,
         TranslateModule.forRoot({
             loader: {
@@ -53,6 +52,8 @@ export function createTranslateLoader(http: HttpClient) {
         '@wiz.imports'
     ],
     providers: [
+        provideZonelessChangeDetection(),
+        provideNuMonacoEditorConfig({ baseUrl: `lib` }),
         {
             provide: COMPOSITION_BUFFER_MODE,
             useValue: false

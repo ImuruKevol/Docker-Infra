@@ -1,4 +1,4 @@
-import { Component, OnInit, ChangeDetectorRef, enableProdMode } from '@angular/core';
+import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
 import { Router } from '@angular/router';
 import { Service } from '@wiz/libs/portal/season/service';
 import { TranslateService } from '@ngx-translate/core';
@@ -23,7 +23,6 @@ export class AppComponent implements OnInit {
     }
 
     public async ngOnInit() {
-        enableProdMode();
         await this.service.init(this);
     }
 }

@@ -1,4 +1,3 @@
-import $ from "jquery";
 import { io } from "socket.io-client";
 
 export default class Wiz {
@@ -15,44 +14,27 @@ export default class Wiz {
         return instance;
     }
 
-    public dev() {
-        let findcookie = (name) => {
-            let ca: Array<string> = document.cookie.split(';');
-            let caLen: number = ca.length;
-            let cookieName = `${name}=`;
-            let c: string;
+    private cookie(name: string) {
+        const cookies: Array<string> = document.cookie.split(';');
+        const cookieName = `${name}=`;
 
-            for (let i: number = 0; i < caLen; i += 1) {
-                c = ca[i].replace(/^\s+/g, '');
-                if (c.indexOf(cookieName) == 0) {
-                    return c.substring(cookieName.length, c.length);
-                }
+        for (let index: number = 0; index < cookies.length; index += 1) {
+            const cookie: string = cookies[index].replace(/^\s+/g, '');
+            if (cookie.indexOf(cookieName) == 0) {
+                return cookie.substring(cookieName.length, cookie.length);
             }
-            return '';
         }
+        return '';
+    }
 
-        let isdev = findcookie("season-wiz-devmode");
+    public dev() {
+        let isdev = this.cookie("season-wiz-devmode");
         if (isdev == 'true') return true;
         return false;
     }
 
     public project() {
-        let findcookie = (name) => {
-            let ca: Array<string> = document.cookie.split(';');
-            let caLen: number = ca.length;
-            let cookieName = `${name}=`;
-            let c: string;
-
-            for (let i: number = 0; i < caLen; i += 1) {
-                c = ca[i].replace(/^\s+/g, '');
-                if (c.indexOf(cookieName) == 0) {
-                    return c.substring(cookieName.length, c.length);
-                }
-            }
-            return '';
-        }
-
-        let project = findcookie("season-wiz-project");
+        let project = this.cookie("season-wiz-project");
         if (project) return project;
         return "main";
     }
@@ -69,18 +51,47 @@ export default class Wiz {
         return this.baseuri + "/api/" + this.namespace + "/" + function_name;
     }
 
-    public call(function_name: string, data = {}, options = {}) {
-        let ajax = {
-            url: this.url(function_name),
-            type: "POST",
-            data: data,
-            ...options
-        };
+    private async parseResponse(response: Response) {
+        try {
+            return await response.clone().json();
+        } catch (error) {
+            const data = await response.text();
+            if (response.status !== 200) {
+                return { code: response.status, data: data || response.statusText };
+            }
+            return { code: response.status, data };
+        }
+    }
 
-        return new Promise((resolve) => {
-            $.ajax(ajax).always(function (res) {
-                resolve(res);
-            });
-        });
+    public async call(function_name: string, body: any = {}, options: RequestInit = {}) {
+        const uri = this.url(function_name);
+
+        try {
+            if (body) {
+                const headers = new Headers(options.headers || {});
+                const requestOptions: RequestInit = {
+                    ...options,
+                    method: options.method || "POST"
+                };
+
+                if (body instanceof FormData || body instanceof URLSearchParams || body instanceof Blob) {
+                    requestOptions.body = body;
+                } else {
+                    if (!headers.has('Content-Type')) {
+                        headers.set('Content-Type', 'application/json');
+                    }
+                    requestOptions.body = JSON.stringify(body);
+                }
+
+                requestOptions.headers = headers;
+                const response = await fetch(uri, requestOptions);
+                return await this.parseResponse(response);
+            }
+
+            const response = await fetch(uri, options);
+            return await this.parseResponse(response);
+        } catch (error) {
+            return { code: 500, data: error };
+        }
     }
 }

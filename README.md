@@ -3,6 +3,10 @@
 WIZ 프레임워크 기반 샘플 프로젝트입니다.  
 게시판, 사용자 관리, 대시보드 등의 기본 기능을 **Struct 패턴**과 **Portal 패키지** 구조로 구현한 레퍼런스 애플리케이션입니다.
 
+## 업그레이드 문서
+
+- Angular 21 및 WIZ 변경 요약: [docs/angular-21-upgrade.md](docs/angular-21-upgrade.md)
+
 ---
 
 ## 데모 계정

@@ -1,10 +1,40 @@
-import $ from 'jquery';
-
 export default class File {
 
-    public filenode: any = null;
+    public filenode: HTMLInputElement | null = null;
 
     constructor() { }
+
+    private createInput(opts: any = {}) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        if (opts.accept) input.accept = opts.accept;
+        if (opts.multiple) input.multiple = true;
+        return input;
+    }
+
+    private createFolderInput() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.setAttribute('webkitdirectory', '');
+        input.setAttribute('mozdirectory', '');
+        input.setAttribute('msdirectory', '');
+        input.setAttribute('odirectory', '');
+        input.setAttribute('directory', '');
+        return input;
+    }
+
+    private parseUploadResponse(xhr: XMLHttpRequest) {
+        const text = xhr.responseText || '';
+        try {
+            return JSON.parse(text);
+        } catch (error) {
+            if (xhr.status !== 200) {
+                return { code: xhr.status, data: text || xhr.statusText };
+            }
+            return text;
+        }
+    }
 
     public async resize(file, width, quality) {
         let fn: any = () => new Promise((resolve) => {
@@ -65,31 +95,28 @@ export default class File {
 
     public async upload(url: string, fd: any, callback: any = null) {
         let uploader = () => new Promise((resolve) => {
-            $.ajax({
-                url: url,
-                type: 'POST',
-                data: fd,
-                cache: false,
-                contentType: false,
-                processData: false,
-                xhr: () => {
-                    let myXhr = $.ajaxSettings.xhr();
-                    if (myXhr.upload) {
-                        myXhr.upload.addEventListener('progress', async (event) => {
-                            let percent = 0;
-                            let position = event.loaded || event.position;
-                            let total = event.total;
-                            if (event.lengthComputable) {
-                                percent = Math.round(position / total * 10000) / 100;
-                                if (callback) await callback(percent, total, position);
-                            }
-                        }, false);
-                    }
-                    return myXhr;
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', url, true);
+
+            xhr.upload.addEventListener('progress', async (event) => {
+                let percent = 0;
+                let position = event.loaded;
+                let total = event.total;
+                if (event.lengthComputable) {
+                    percent = Math.round(position / total * 10000) / 100;
+                    if (callback) await callback(percent, total, position);
                 }
-            }).always(function (res) {
-                resolve(res);
-            });
+            }, false);
+
+            xhr.onload = () => {
+                resolve(this.parseUploadResponse(xhr));
+            };
+
+            xhr.onerror = () => {
+                resolve({ code: 500, data: xhr.statusText || 'Network Error' });
+            };
+
+            xhr.send(fd);
         });
         return await uploader();
     }
@@ -150,8 +177,7 @@ export default class File {
             opts[key] = uopts[key];
         }
 
-        let filenode = $(`<input type='file' ${opts.accept ? `accept='${opts.accept}'` : ''} ${opts.multiple ? 'multiple' : ''} />`);
-        return filenode[0];
+        return this.createInput(opts);
     }
 
     public async select(uopts: any = {}) {
@@ -166,18 +192,15 @@ export default class File {
             opts[key] = uopts[key];
         }
 
-        let filenode = this.filenode = $(`<input type='file' ${opts.accept ? `accept='${opts.accept}'` : ''} ${opts.multiple ? 'multiple' : ''} />`);
-        if (opts.type == 'folder') {
-            filenode = this.filenode = $(`<input type='file' webkitdirectory mozdirectory msdirectory odirectory directory multiple/>`);
-        }
+        let filenode = this.filenode = opts.type == 'folder' ? this.createFolderInput() : this.createInput(opts);
 
         let fn: any = () => new Promise((resolve) => {
-            filenode.change(async () => {
-                let res = filenode.prop('files');
+            filenode.addEventListener('change', async () => {
+                let res = filenode.files;
                 filenode.remove();
                 delete this.filenode;
                 resolve(res);
-            });
+            }, { once: true });
 
             filenode.click();
         });
@@ -199,9 +222,9 @@ export default class File {
             opts[key] = uopts[key];
         }
 
-        let filenode = this.filenode = $(`<input type='file' ${opts.accept ? `accept='${opts.accept}'` : ''} ${opts.multiple ? 'multiple' : ''} />`);
+        let filenode = this.filenode = this.createInput(opts);
 
-        let result = {};
+        let result: any = {};
 
         result.text = () => new Promise((resolve) => {
             let targetLoader = (target) => new Promise((_resolve) => {
@@ -215,13 +238,13 @@ export default class File {
             let loader = async () => {
                 if (opts.multiple) {
                     let result = [];
-                    let files = filenode.prop('files');
+                    let files = filenode.files;
                     for (let i = 0; i < files.length; i++)
                         result.push(await targetLoader(files[i]));
                     return resolve(result);
                 }
 
-                resolve(await targetLoader(filenode.prop('files')[0]));
+                resolve(await targetLoader(filenode.files[0]));
             }
 
             loader();
@@ -231,7 +254,7 @@ export default class File {
             let targetLoader = (target) => new Promise((_resolve) => {
                 let fr = new FileReader();
                 fr.onload = async () => {
-                    let data = fr.result;
+                    let data: any = fr.result;
                     data = JSON.parse(data);
                     _resolve(data);
                 };
@@ -241,13 +264,13 @@ export default class File {
             let loader = async () => {
                 if (opts.multiple) {
                     let result = [];
-                    let files = filenode.prop('files');
+                    let files = filenode.files;
                     for (let i = 0; i < files.length; i++)
                         result.push(await targetLoader(files[i]));
                     return resolve(result);
                 }
 
-                resolve(await targetLoader(filenode.prop('files')[0]));
+                resolve(await targetLoader(filenode.files[0]));
             }
 
             loader();
@@ -255,18 +278,18 @@ export default class File {
 
         result.image = async () => {
             let ifn: any = () => new Promise((resolve, reject) => {
-                let file = filenode.prop('files')[0];
+                let file = filenode.files[0];
                 if (!opts.width) opts.width = 512;
                 if (!opts.quality) opts.quality = 0.8;
                 if (opts.limit) {
-                    if (file.length > opts.limit) {
+                    if (file.size > opts.limit) {
                         reject("Exceeded maximum file size");
                     }
                 }
                 resolve(file);
             });
 
-            let file = await ifn();
+            let file: any = await ifn();
             file = await this.resize(file, opts.width, opts.quality);
             return file;
         }
@@ -274,12 +297,12 @@ export default class File {
         if (!result[opts.type]) opts.type = 'text';
 
         let fn: any = () => new Promise((resolve) => {
-            filenode.change(async () => {
+            filenode.addEventListener('change', async () => {
                 let res = await result[opts.type]();
                 filenode.remove();
                 delete this.filenode;
                 resolve(res);
-            });
+            }, { once: true });
 
             filenode.click();
         });

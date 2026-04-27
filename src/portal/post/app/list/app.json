@@ -5,7 +5,7 @@
     "namespace": "list",
     "category": "editor",
     "viewuri": "",
-    "controller": "",
+    "controller": "base",
     "template": "wiz-portal-post-list()",
     "type": "app"
 }
