@@ -72,12 +72,12 @@
                             "src/libs/portal/season/base/number.js",
                             "src/libs/portal/season/base/string.js"
                         ],
-                        "aot": false
+                        "aot": true
                     },
                     "configurations": {
                         "production": {
                             "outputHashing": "all",
-                            "aot": false
+                            "aot": true
                         },
                         "development": {
                             "buildOptimizer": false,
@@ -85,7 +85,7 @@
                             "extractLicenses": false,
                             "sourceMap": true,
                             "namedChunks": true,
-                            "aot": false
+                            "aot": true
                         }
                     },
                     "defaultConfiguration": "production"

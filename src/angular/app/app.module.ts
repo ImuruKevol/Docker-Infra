@@ -1,8 +1,10 @@
 import { AppRoutingModule } from './app-routing.module';
 import { AppComponent } from './app.component';
-import { NgModule, Pipe, PipeTransform, provideZonelessChangeDetection } from '@angular/core';
+import { NgModule, Pipe, PipeTransform } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
 import { FormsModule, COMPOSITION_BUFFER_MODE } from '@angular/forms';
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
+import { RouterModule, RouterOutlet } from '@angular/router';
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap';
 import { NuMonacoEditorComponent, provideNuMonacoEditorConfig } from '@ng-util/monaco-editor';
 import { SortablejsModule } from "@wiz/libs/portal/season/ngx-sortablejs";
@@ -19,12 +21,7 @@ export class SafePipe implements PipeTransform {
 
 // translate libs
 import { TranslateLoader, TranslateModule } from '@ngx-translate/core';
-import { TranslateHttpLoader } from '@ngx-translate/http-loader'
-import { HttpClient, HttpClientModule } from '@angular/common/http';
-
-export function createTranslateLoader(http: HttpClient) {
-    return new TranslateHttpLoader(http, './assets/lang/', '.json');
-}
+import { TranslateHttpLoader, TRANSLATE_HTTP_LOADER_CONFIG } from '@ngx-translate/http-loader'
 
 // initialize ng module
 @NgModule({
@@ -35,25 +32,32 @@ export function createTranslateLoader(http: HttpClient) {
     imports: [
         BrowserModule,
         AppRoutingModule,
+        RouterModule,
+        RouterOutlet,
         FormsModule,
         NgbModule,
         SortablejsModule,
         KeyboardShortcutsModule.forRoot(),
         NuMonacoEditorComponent,
-        HttpClientModule,
         TranslateModule.forRoot({
             loader: {
                 provide: TranslateLoader,
-                useFactory: (createTranslateLoader),
-                deps: [HttpClient]
+                useClass: TranslateHttpLoader
             },
-            defaultLanguage: 'en'
+            fallbackLang: 'en'
         }),
         '@wiz.imports'
     ],
     providers: [
-        provideZonelessChangeDetection(),
+        provideHttpClient(withInterceptorsFromDi()),
         provideNuMonacoEditorConfig({ baseUrl: `lib` }),
+        {
+            provide: TRANSLATE_HTTP_LOADER_CONFIG,
+            useValue: {
+                prefix: './assets/lang/',
+                suffix: '.json'
+            }
+        },
         {
             provide: COMPOSITION_BUFFER_MODE,
             useValue: false
