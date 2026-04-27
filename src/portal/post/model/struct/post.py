@@ -33,6 +33,16 @@ class Post:
         self.id = None
         self.data = None
 
+    def _format(self, row):
+        if row is None:
+            return None
+        data = dict(row)
+        data['author'] = data.get('author') or data.get('author_name') or ''
+        if not data.get('summary'):
+            content = data.get('content') or ''
+            data['summary'] = content[:120]
+        return data
+
     def __call__(self, id):
         """게시물 인스턴스 생성 (ID로 데이터 로드)
 
@@ -58,7 +68,7 @@ class Post:
         """
         if id is None:
             id = self.id
-        return self.db.get(id=id)
+        return self._format(self.db.get(id=id))
 
     def create(self, data):
         """게시물 생성
@@ -137,6 +147,7 @@ class Post:
         )
         total = self.db.count(like=like, **kwargs) or 0
 
+        rows = [self._format(row) for row in rows]
         return rows, total
 
     def categories(self):

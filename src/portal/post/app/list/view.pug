@@ -8,7 +8,6 @@ nav(class="sticky top-0 z-20 bg-white shadow")
                     span 게시물
 
             div(class="flex items-center gap-2")
-                //- Search Input
                 div(class="w-56 flex rounded-lg ring-1 ring-inset ring-gray-300 focus-within:ring-2 focus-within:ring-inset focus-within:ring-indigo-600")
                     input(
                         type="text",
@@ -23,7 +22,6 @@ nav(class="sticky top-0 z-20 bg-white shadow")
                     span 새 글 작성
 
 div(class="max-w-6xl pt-4 px-8 mb-6")
-    //- Category Filter Tags
     div(class="flex flex-wrap items-center gap-2 mb-4", *ngIf="categories.length > 0")
         span(class="text-xs text-gray-400 mr-1") 카테고리:
         button(
@@ -38,7 +36,6 @@ div(class="max-w-6xl pt-4 px-8 mb-6")
             [ngClass]="selectedCategory === cat ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'")
             | {{cat}}
 
-    //- Active filter badge
     div(class="flex flex-wrap items-center gap-2 mb-3", *ngIf="selectedCategory")
         span(class="text-xs text-gray-400") 필터:
         span(class="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-xs font-medium text-indigo-700")
@@ -47,7 +44,6 @@ div(class="max-w-6xl pt-4 px-8 mb-6")
                 svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="2", stroke="currentColor", class="size-3")
                     path(stroke-linecap="round", stroke-linejoin="round", d="M6 18 18 6M6 6l12 12")
 
-    //- Table
     div(class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 sm:rounded-lg")
         table(class="w-full divide-y divide-gray-300")
             thead(class="bg-gray-50")
@@ -77,14 +73,13 @@ div(class="max-w-6xl pt-4 px-8 mb-6")
                             td(class="w-1 whitespace-nowrap px-3 py-2.5 text-[13px] text-gray-500")
                                 div(class="flex items-center gap-2")
                                     div(class="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold")
-                                        | {{item.author?.charAt(0) || '?'}}
-                                    span {{item.author}}
+                                        | {{(item.author || item.author_name)?.charAt(0) || '?'}}
+                                    span {{item.author || item.author_name}}
                             td(class="w-1 whitespace-nowrap px-3 py-2.5 text-[13px]")
                                 span(class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium", [ngClass]="statusClass(item.status)")
                                     | {{item.status}}
                             td(class="w-1 whitespace-nowrap px-3 py-2.5 text-[13px] text-gray-500") {{item.created}}
 
-    //- Pagination
     .px-4.pb-4(*ngIf="pagination.start > 0")
         wiz-portal-season-pagination(
             [current]="pagination.current",

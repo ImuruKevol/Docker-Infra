@@ -6,6 +6,7 @@ import Event from './src/event';
 import Lang from './src/lang';
 import Modal from './src/modal';
 import Status from './src/status';
+import Theme from './src/theme';
 
 import Crypto from './util/crypto';
 import File from './util/file';
@@ -22,6 +23,7 @@ export class Service {
     public event: Event;
     public lang: Lang;
     public status: Status;
+    public theme: Theme;
 
     public crypto: Crypto;
     public file: File;
@@ -43,6 +45,7 @@ export class Service {
             this.modal = new Modal(this);
             this.status = new Status(this);
             this.event = new Event(this);
+            this.theme = new Theme(this);
 
             if (this.app.translate) {
                 this.lang = new Lang(this);

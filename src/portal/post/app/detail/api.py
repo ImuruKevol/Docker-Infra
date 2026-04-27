@@ -12,6 +12,11 @@ def get():
     if post is None:
         wiz.response.status(404, message="게시물을 찾을 수 없습니다.")
 
+    post = dict(post)
+    post['author'] = post.get('author') or post.get('author_name') or ''
+    if not post.get('summary'):
+        content = post.get('content') or ''
+        post['summary'] = content[:120]
     wiz.response.status(200, post)
 
 def save():
@@ -22,13 +27,15 @@ def save():
     post_id = data.get("id", "")
 
     if not post_id or post_id == "new":
-        # 신규 생성
         post_id = struct.post.create(data)
         data["id"] = post_id
     else:
-        # 수정
         struct.post.update(data, id=post_id)
 
+    data['author'] = data.get('author') or data.get('author_name') or ''
+    if not data.get('summary'):
+        content = data.get('content') or ''
+        data['summary'] = content[:120]
     wiz.response.status(200, data)
 
 def delete():

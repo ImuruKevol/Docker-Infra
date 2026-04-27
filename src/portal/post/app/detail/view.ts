@@ -7,25 +7,57 @@ export class Component implements OnInit, OnDestroy {
     public tab: string = 'view';
     public data: any = null;
     public saving: boolean = false;
+    public editorOptions: any = {};
 
     public tabs: any[] = [
-        { key: 'view', label: '내용 보기', icon: '📄' },
-        { key: 'edit', label: '수정', icon: '✏️' },
-        { key: 'settings', label: '설정', icon: '⚙️' },
+        { key: 'view', labelKey: 'post.detail.tabs.view', icon: '📄' },
+        { key: 'edit', labelKey: 'post.detail.tabs.edit', icon: '✏️' },
+        { key: 'settings', labelKey: 'post.detail.tabs.settings', icon: '⚙️' },
+    ];
+
+    public categories: any[] = [
+        { value: '공지사항', labelKey: 'post.category.notice' },
+        { value: '가이드', labelKey: 'post.category.guide' },
+        { value: '기술 블로그', labelKey: 'post.category.tech' },
+        { value: '회의록', labelKey: 'post.category.minutes' },
+        { value: '자유게시판', labelKey: 'post.category.free' },
+    ];
+
+    public statuses: any[] = [
+        { value: 'draft', labelKey: 'post.status.draft' },
+        { value: 'published', labelKey: 'post.status.published' },
+        { value: 'archived', labelKey: 'post.status.archived' },
     ];
 
     private basePath: string = '/posts';
     private routerSub: any;
+    private themeChangeHandler: any;
+    private fallbackText: any = {
+        'post.detail.sampleContent': '# 새 글 작성 예시\n\nMonaco Editor로 Markdown 콘텐츠를 작성해보세요.\n\n- 다크 모드 전환\n- ko/en 다국어 라벨\n- Angular 21 WIZ NgModule scope 예시',
+        'post.detail.validationTitle': '제목을 입력해주세요.',
+        'post.detail.saveSuccess': '저장되었습니다.',
+        'post.detail.saveFail': '저장에 실패했습니다.',
+        'post.detail.deleteTitle': '게시물 삭제',
+        'post.detail.deleteMessage': '정말 이 게시물을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
+        'post.detail.deleteAction': '삭제',
+        'post.detail.cancel': '취소'
+    };
 
     constructor(public service: Service, private router: Router) {
         this.id = WizRoute.segment.id;
         this.tab = WizRoute.segment.tab || 'view';
+        this.refreshEditorOptions();
     }
 
     public async ngOnInit() {
         await this.service.init();
+        this.refreshEditorOptions();
+        this.themeChangeHandler = async () => {
+            this.refreshEditorOptions();
+            await this.service.render();
+        };
+        this.service.event.bind('theme.change', this.themeChangeHandler);
 
-        // 탭 전환 감지: NavigationEnd 구독
         this.routerSub = this.router.events.subscribe(async (event) => {
             if (event instanceof NavigationEnd) {
                 const newId = WizRoute.segment.id;
@@ -42,7 +74,6 @@ export class Component implements OnInit, OnDestroy {
             }
         });
 
-        // tab 없이 접근 시 기본 탭으로 리다이렉트
         if (!WizRoute.segment.tab) {
             this.service.href(`${this.basePath}/${this.id}/view`);
             return;
@@ -53,15 +84,25 @@ export class Component implements OnInit, OnDestroy {
 
     public ngOnDestroy() {
         if (this.routerSub) this.routerSub.unsubscribe();
+        if (this.themeChangeHandler) this.service.event.unbind('theme.change', this.themeChangeHandler);
     }
 
     public isNewPost() {
         return this.id === 'new';
     }
 
+    public isDarkMode() {
+        return this.service.theme && this.service.theme.isDark();
+    }
+
     public async load() {
         if (this.isNewPost()) {
-            this.data = { title: '', content: '', category: '', status: 'draft' };
+            this.data = {
+                title: '',
+                content: await this.translate('post.detail.sampleContent'),
+                category: '',
+                status: 'draft'
+            };
             this.tab = 'edit';
             await this.service.render();
             return;
@@ -81,7 +122,7 @@ export class Component implements OnInit, OnDestroy {
 
     public async save() {
         if (!this.data.title) {
-            await this.service.modal.error("제목을 입력해주세요.");
+            await this.service.modal.error(await this.translate('post.detail.validationTitle'));
             return;
         }
 
@@ -95,13 +136,13 @@ export class Component implements OnInit, OnDestroy {
         this.saving = false;
 
         if (code === 200) {
-            await this.service.modal.success("저장되었습니다.");
+            await this.service.modal.success(await this.translate('post.detail.saveSuccess'));
             if (this.isNewPost() && data.id) {
                 this.id = data.id;
                 this.service.href(`${this.basePath}/${this.id}/view`);
             }
         } else {
-            await this.service.modal.error(data || "저장에 실패했습니다.");
+            await this.service.modal.error(data || await this.translate('post.detail.saveFail'));
         }
 
         await this.service.render();
@@ -109,9 +150,10 @@ export class Component implements OnInit, OnDestroy {
 
     public async remove() {
         let res = await this.service.modal.show({
-            title: "게시물 삭제",
-            message: "정말 이 게시물을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
-            action: "삭제",
+            title: await this.translate('post.detail.deleteTitle'),
+            message: await this.translate('post.detail.deleteMessage'),
+            action: await this.translate('post.detail.deleteAction'),
+            cancel: await this.translate('post.detail.cancel'),
             actionBtn: "error",
             status: "error"
         });
@@ -121,5 +163,28 @@ export class Component implements OnInit, OnDestroy {
         if (code === 200) {
             this.service.href(this.basePath);
         }
+    }
+
+    private refreshEditorOptions() {
+        this.editorOptions = {
+            language: 'markdown',
+            theme: this.isDarkMode() ? 'vs-dark' : 'vs',
+            automaticLayout: true,
+            minimap: { enabled: false },
+            wordWrap: 'on',
+            lineNumbers: 'on',
+            scrollBeyondLastLine: false,
+            fontSize: 13,
+            tabSize: 2,
+            padding: { top: 12, bottom: 12 },
+            renderWhitespace: 'selection'
+        };
+    }
+
+    private async translate(key: string) {
+        if (!this.service.lang) return this.fallbackText[key] || key;
+        const value = await this.service.lang.translate(key);
+        if (!value || value === key) return this.fallbackText[key] || key;
+        return value;
     }
 }

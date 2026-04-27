@@ -13,8 +13,4 @@ export class Component implements OnInit {
     public clickout() {
         this.service.status.toggle('navbar', false);
     }
-
-    public isActive(link: string) {
-        return location.pathname.indexOf(link) === 0
-    }
 }

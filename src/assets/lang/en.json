@@ -1,1 +1,62 @@
-{}
+{
+    "nav": {
+        "brand": "Sample",
+        "myPage": "My Page",
+        "logout": "Logout",
+        "language": "Language",
+        "darkMode": "Dark mode",
+        "menu": "Menu",
+        "dashboard": "Dashboard",
+        "posts": "Posts",
+        "members": "Members"
+    },
+    "post": {
+        "detail": {
+            "newPost": "New Post",
+            "editPost": "Edit Post",
+            "loading": "Loading...",
+            "tabs": {
+                "view": "View",
+                "edit": "Edit",
+                "settings": "Settings"
+            },
+            "editorHelp": "A sample that combines Monaco Editor, dark mode, and multilingual labels.",
+            "language": "Language",
+            "darkMode": "Dark mode",
+            "titleLabel": "Title",
+            "titlePlaceholder": "Enter a post title",
+            "categoryLabel": "Category",
+            "categoryPlaceholder": "Select a category",
+            "contentLabel": "Content",
+            "cancel": "Cancel",
+            "save": "Save",
+            "saveSettings": "Save settings",
+            "settingsTitle": "Post settings",
+            "statusLabel": "Visibility",
+            "metaInfo": "Metadata",
+            "postId": "Post ID",
+            "author": "Author",
+            "created": "Created",
+            "updated": "Updated",
+            "deleteAction": "Delete",
+            "deleteTitle": "Delete post",
+            "deleteMessage": "Are you sure you want to delete this post? This action cannot be undone.",
+            "validationTitle": "Please enter a title.",
+            "saveSuccess": "Saved.",
+            "saveFail": "Failed to save.",
+            "sampleContent": "# New post example\n\nWrite Markdown content with Monaco Editor.\n\n- Toggle dark mode\n- Switch ko/en labels\n- Angular 21 WIZ NgModule scope example"
+        },
+        "category": {
+            "notice": "Notice",
+            "guide": "Guide",
+            "tech": "Tech blog",
+            "minutes": "Minutes",
+            "free": "Community"
+        },
+        "status": {
+            "draft": "Draft",
+            "published": "Published",
+            "archived": "Archived"
+        }
+    }
+}

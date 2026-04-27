@@ -15,4 +15,10 @@ def search():
     category = wiz.request.query("category", "")
 
     rows, total = struct.post.search(text=text, category=category, page=page, dump=dump)
+    rows = [dict(row) for row in rows]
+    for row in rows:
+        row['author'] = row.get('author') or row.get('author_name') or ''
+        if not row.get('summary'):
+            content = row.get('content') or ''
+            row['summary'] = content[:120]
     wiz.response.status(200, rows=rows, total=total)

@@ -233,6 +233,30 @@ const text = await this.service.lang.translate("common.save");
 
 ---
 
+### service.theme (Theme)
+
+전역 라이트/다크 테마 상태를 관리한다. 현재 값은 `localStorage`에 저장되고, `html`/`body`에 `dark` 클래스로 반영된다.
+
+```typescript
+// 다크 모드 설정
+await this.service.theme.set(true);
+
+// 토글
+await this.service.theme.toggle();
+
+// 현재 테마 확인
+this.service.theme.isDark();
+this.service.theme.dark;
+```
+
+화면 스타일은 Tailwind `dark:` variant를 우선 사용한다.
+
+```pug
+div(class="bg-white text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100")
+```
+
+---
+
 ### service.file (File)
 
 파일 선택, 읽기, 업로드, 다운로드 유틸리티.
