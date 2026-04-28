@@ -15,6 +15,10 @@ export class Component implements OnInit {
     public showInviteModal: boolean = false;
     public inviteData: any = { email: '', role: 'viewer' };
 
+    public showDetailModal: boolean = false;
+    public detailMember: any = null;
+    public detailLoading: boolean = false;
+
     constructor(public service: Service) { }
 
     public async ngOnInit() {
@@ -64,13 +68,7 @@ export class Component implements OnInit {
     }
 
     public async removeMember(member: any) {
-        let res = await this.service.modal.show({
-            title: "멤버 제거",
-            message: `${member.name}님을 멤버에서 제거하시겠습니까?`,
-            action: "제거",
-            actionBtn: "error",
-            status: "error"
-        });
+        let res = await this.service.modal.error(`${member.name}님을 멤버에서 제거하시겠습니까?`, "취소", "제거");
         if (!res) return;
 
         const { code } = await wiz.call("remove", { id: member.id });
@@ -86,5 +84,26 @@ export class Component implements OnInit {
             case 'viewer': return 'bg-gray-100 text-gray-600';
             default: return 'bg-gray-100 text-gray-600';
         }
+    }
+
+    public async openDetail(member: any) {
+        this.detailMember = member;
+        this.showDetailModal = true;
+        this.detailLoading = true;
+        await this.service.render();
+
+        const { code, data } = await wiz.call("detail", { id: member.id });
+        if (code === 200) {
+            this.detailMember = data;
+        }
+
+        this.detailLoading = false;
+        await this.service.render();
+    }
+
+    public closeDetail() {
+        this.showDetailModal = false;
+        this.detailMember = null;
+        this.detailLoading = false;
     }
 }

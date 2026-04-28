@@ -43,6 +43,17 @@ def invite():
 
     wiz.response.status(200)
 
+def detail():
+    id = wiz.request.query("id", "")
+    if not id:
+        wiz.response.status(400, message="ID가 필요합니다.")
+
+    user = struct.user.get(id=id)
+    if not user:
+        wiz.response.status(404, message="사용자를 찾을 수 없습니다.")
+
+    wiz.response.status(200, user)
+
 def remove():
     id = wiz.request.query("id", "")
     if not id:

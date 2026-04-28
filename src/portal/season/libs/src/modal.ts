@@ -48,9 +48,9 @@ export default class Modal {
         return await fn();
     }
 
-    public async error(message: string, cancel: any = false, action: string = 'OK') {
+    public async error(message: string, action: string = 'OK', cancel: any = null, title: string = "") {
         return await this.show({
-            title: "",
+            title: title,
             message: message,
             cancel: cancel,
             actionBtn: 'error',
@@ -59,9 +59,9 @@ export default class Modal {
         });
     }
 
-    public async success(message: string, cancel: any = false, action: string = 'OK') {
+    public async success(message: string, action: string = 'OK', cancel: any = null, title: string = "") {
         return await this.show({
-            title: "",
+            title: title,
             message: message,
             cancel: cancel,
             actionBtn: 'success',
@@ -70,9 +70,9 @@ export default class Modal {
         });
     }
 
-    public async warning(message: string, cancel: any = false, action: string = 'OK') {
+    public async warning(message: string, action: string = 'OK', cancel: any = null, title: string = "") {
         return await this.show({
-            title: "",
+            title: title,
             message: message,
             cancel: cancel,
             actionBtn: 'warning',

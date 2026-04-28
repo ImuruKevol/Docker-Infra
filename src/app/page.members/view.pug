@@ -53,10 +53,15 @@ div(class="max-w-5xl pt-4 px-8 mb-6")
 
                 div(class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between")
                     span(class="text-[11px] text-gray-400") 가입일: {{member.joined}}
-                    button(
-                        (click)="removeMember(member); $event.stopPropagation()",
-                        class="text-[11px] text-gray-400 hover:text-red-500 transition-colors")
-                        | 제거
+                    div(class="flex items-center gap-2")
+                        button(
+                            (click)="openDetail(member)",
+                            class="text-[11px] text-indigo-600 hover:text-indigo-800 transition-colors font-medium")
+                            | 상세
+                        button(
+                            (click)="removeMember(member); $event.stopPropagation()",
+                            class="text-[11px] text-gray-400 hover:text-red-500 transition-colors")
+                            | 제거
 
 //- Invite Modal
 div(*ngIf="showInviteModal", class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm")
@@ -90,3 +95,61 @@ div(*ngIf="showInviteModal", class="fixed inset-0 z-50 flex items-center justify
             button(
                 (click)="invite()",
                 class="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-indigo-500") 초대
+
+//- Detail Modal
+div(*ngIf="showDetailModal", class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm")
+    div(class="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 overflow-hidden")
+        div(class="px-6 py-5 border-b border-gray-100 flex items-center justify-between")
+            div(class="flex items-center gap-3")
+                svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-6 text-indigo-600")
+                    path(stroke-linecap="round", stroke-linejoin="round", d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z")
+                h3(class="text-[15px] font-semibold text-gray-900") 사용자 상세 정보
+            button(
+                (click)="closeDetail()",
+                class="text-gray-400 hover:text-gray-600 transition-colors")
+                svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-5")
+                    path(stroke-linecap="round", stroke-linejoin="round", d="M6 18L18 6M6 6l12 12")
+
+        ng-container(*ngIf="detailLoading")
+            div(class="px-6 py-12 text-center text-[13px] text-gray-400") 로딩 중...
+
+        ng-container(*ngIf="!detailLoading && detailMember")
+            div(class="px-6 py-6")
+                div(class="flex items-center gap-4 mb-6")
+                    div(class="flex-shrink-0 flex items-center justify-center w-14 h-14 rounded-full text-lg font-bold", [ngClass]="detailMember.avatarColor || 'bg-indigo-100 text-indigo-700'")
+                        | {{detailMember.name?.charAt(0) || '?'}}
+                    div(class="min-w-0")
+                        p(class="text-[15px] font-semibold text-gray-900") {{detailMember.name}}
+                        p(class="text-[13px] text-gray-500") {{detailMember.email}}
+                    span(class="ml-auto inline-flex items-center rounded-full px-3 py-1 text-xs font-medium capitalize", [ngClass]="roleClass(detailMember.role)")
+                        | {{detailMember.role}}
+
+            div(class="space-y-4 px-6 pb-6")
+                div(class="border-t border-gray-100 pt-4")
+                    div(class="grid grid-cols-3 gap-4")
+                        div
+                            p(class="text-xs text-gray-400 mb-1") 이름
+                            p(class="text-[13px] font-medium text-gray-900") {{detailMember.name || '-'}}
+                        div
+                            p(class="text-xs text-gray-400 mb-1") 이메일
+                            p(class="text-[13px] font-medium text-gray-900 truncate") {{detailMember.email || '-'}}
+                        div
+                            p(class="text-xs text-gray-400 mb-1") 역할
+                            p(class="text-[13px] font-medium text-gray-900 capitalize") {{detailMember.role || '-'}}
+
+                div(class="border-t border-gray-100 pt-4")
+                    div(class="grid grid-cols-3 gap-4")
+                        div
+                            p(class="text-xs text-gray-400 mb-1") 전화번호
+                            p(class="text-[13px] font-medium text-gray-900") {{detailMember.mobile || '-'}}
+                        div
+                            p(class="text-xs text-gray-400 mb-1") 가입일
+                            p(class="text-[13px] font-medium text-gray-900") {{detailMember.created ? (detailMember.created | date: 'yyyy-MM-dd') : '-'}}
+                        div
+                            p(class="text-xs text-gray-400 mb-1") 마지막 수정
+                            p(class="text-[13px] font-medium text-gray-900") {{detailMember.updated ? (detailMember.updated | date: 'yyyy-MM-dd HH:mm') : '-'}}
+
+            div(class="px-6 py-5 bg-gray-50 border-t border-gray-100 flex justify-end")
+                button(
+                    (click)="closeDetail()",
+                    class="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-indigo-500") 닫기
