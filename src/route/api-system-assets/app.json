@@ -1,0 +1,8 @@
+{
+    "id": "api-system-assets",
+    "title": "System Assets API",
+    "route": "/api/system/assets",
+    "category": "",
+    "viewuri": "",
+    "controller": "user"
+}

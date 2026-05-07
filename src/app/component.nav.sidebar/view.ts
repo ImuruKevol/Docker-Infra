@@ -1,15 +1,7 @@
 import { OnInit } from '@angular/core';
 import { HostListener } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
-
-const DEFAULT_INTEGRATION_STATE = {
-    harbor: true,
-    gitlab: true,
-    cloudflare: true
-};
-
-let sidebarSettingsCache: any = null;
-let sidebarSettingsPromise: Promise<any> | null = null;
+import { AppearanceRuntime } from '@wiz/libs/portal/season/appearance';
 
 export class Component implements OnInit {
     public allMenuItems = [
@@ -24,12 +16,17 @@ export class Component implements OnInit {
         { link: '/tools', label: 'nav.tools', icon: 'fa-toolbox' },
     ];
     public menuItems = this.allMenuItems;
-    public integrationEnabled: any = { ...DEFAULT_INTEGRATION_STATE };
+    public appearance: any = {
+        browser_title: 'Docker Infra',
+        favicon_url: '',
+        logo_url: ''
+    };
 
     constructor(public service: Service) { }
 
     public async ngOnInit() {
         await this.service.init();
+        this.refreshAppearance();
         await this.loadMenuState();
         await this.service.render();
     }
@@ -74,42 +71,25 @@ export class Component implements OnInit {
         return "group flex gap-x-2 items-center rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-50";
     }
 
-    public settingValue(settings: any[], key: string, fallback: any) {
-        const found = settings.find((item: any) => item.key === key);
-        if (!found) return fallback;
-        return found.value;
+    public logoTitle() {
+        return this.appearance?.browser_title || 'Docker Infra';
     }
 
-    private normalizeIntegrationState(settings: any[]) {
-        return {
-            harbor: this.settingValue(settings, 'integration.harbor.enabled', false) === true,
-            gitlab: this.settingValue(settings, 'integration.gitlab.enabled', false) === true,
-            cloudflare: this.settingValue(settings, 'integration.cloudflare.enabled', false) === true
-        };
-    }
-
-    private async fetchSidebarSettings() {
-        if (sidebarSettingsCache) return sidebarSettingsCache;
-        if (!sidebarSettingsPromise) {
-            sidebarSettingsPromise = (async () => {
-                try {
-                    const response = await fetch('/api/system/settings');
-                    if (!response.ok) return { ...DEFAULT_INTEGRATION_STATE };
-                    const payload = await response.json();
-                    const settings = payload?.data?.settings || [];
-                    return this.normalizeIntegrationState(settings);
-                } catch (error) {
-                    return { ...DEFAULT_INTEGRATION_STATE };
-                }
-            })();
-        }
-        sidebarSettingsCache = await sidebarSettingsPromise;
-        return sidebarSettingsCache;
+    public hasLogo() {
+        return !!this.appearance?.logo_url;
     }
 
     public async loadMenuState() {
-        this.integrationEnabled = await this.fetchSidebarSettings();
         this.menuItems = this.allMenuItems;
+    }
+
+    @HostListener('window:docker-infra:appearance-changed', ['$event'])
+    public handleAppearanceChanged(event: any) {
+        this.appearance = event?.detail || AppearanceRuntime.read();
+    }
+
+    private refreshAppearance() {
+        this.appearance = AppearanceRuntime.read();
     }
 
     public async logout() {

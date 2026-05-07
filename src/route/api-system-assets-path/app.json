@@ -1,0 +1,8 @@
+{
+    "id": "api-system-assets-path",
+    "title": "System Asset File API",
+    "route": "/api/system/assets/<path:path>",
+    "category": "",
+    "viewuri": "",
+    "controller": "base"
+}

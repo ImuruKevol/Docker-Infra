@@ -390,20 +390,23 @@ Reference: 설계 문서 §3, §13, §14
 작업:
 
 - 일반 설정: favicon, browser title, logo image
-- Harbor/GitLab/Cloudflare enabled 상태 저장
-- 연동 enabled 상태별 메뉴 표시 제어
-- secret 값 masking 조회
+- Harbor/GitLab 설정 저장과 연결 테스트
+- favicon/logo 업로드와 runtime 즉시 반영
+- Cloudflare 설정을 시스템 화면이 아니라 도메인 화면으로 분리
+- generic settings API의 secret masking 유지
 
 완료 조건:
 
-- disabled integration 메뉴/버튼이 숨겨짐
-- secret 원문이 API 응답과 UI에 노출되지 않음
+- 일반 설정이 로그인 화면, sidebar, 브라우저 title/favicon에 실제 반영됨
+- 업로드 파일이 WIZ workspace data 디렉토리에 저장됨
+- Harbor/GitLab 연결 테스트가 성공/실패 원인을 화면에 보여줌
 
 테스트:
 
 - API: 설정 저장/조회/수정/삭제
-- API: secret 응답 masking 비교
-- UI: Playwright로 설정 toggle 후 메뉴 변화 확인
+- API: generic secret 응답 masking 비교
+- API: Harbor/GitLab 연결 테스트
+- UI: Playwright로 설정 저장 후 title/logo/favicon 적용 확인
 - cleanup: 설정 row와 업로드 파일 삭제
 
 ## 6. P4. Job Queue와 로그
@@ -805,14 +808,15 @@ Reference: 설계 문서 §11.1, §14
 완료 조건:
 
 - DNS record는 Docker Infra 실행 서버 public IP를 바라봄
-- API token은 조회 응답에서 masking
-- 연동 disabled 시 Cloudflare 메뉴/버튼 숨김
+- zone별 token과 Zone ID를 도메인 화면에서 관리 가능
+- sync 후 `cloudflare_dns_records`와 마지막 동기화 상태가 DB에 저장됨
+- Cloudflare zone이 없어도 도메인 화면은 수동/캐시 모드로 유지됨
 
 테스트:
 
 - API: staging Cloudflare zone에 테스트 record 생성/수정/삭제
-- API: token masking과 disabled 상태 response 비교
-- UI: Playwright로 Cloudflare enabled/disabled 메뉴 변화 확인
+- API: zone sync 후 record cache/last_sync 반영 확인
+- UI: Playwright로 zone 추가, 동기화, record 수정 흐름 확인
 - cleanup: 테스트 DNS record 삭제, zone setting row 삭제
 
 ### TODO P8-04. SSL 인증서

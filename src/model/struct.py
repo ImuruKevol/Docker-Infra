@@ -20,8 +20,16 @@ class Struct:
         return self._load("auth")
 
     @property
+    def appearance(self):
+        return self._load("appearance")
+
+    @property
     def compose_validator(self):
         return self._load("compose_validator")
+
+    @property
+    def domains(self):
+        return self._load("domains")
 
     @property
     def jobs(self):
@@ -32,6 +40,9 @@ class Struct:
         return self._load("infra_catalog")
 
     @property
+    def integrations(self):
+        return self._load("integrations")
+
     def local_executor(self):
         return self._load("local_executor")
 
@@ -66,6 +77,10 @@ class Struct:
     @property
     def system(self):
         return self._load("system")
+
+    @property
+    def webserver(self):
+        return self._load("webserver")
 
     def __getattr__(self, name):
         if name.startswith('_'):

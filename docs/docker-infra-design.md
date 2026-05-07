@@ -124,6 +124,7 @@ PostgreSQL 16을 사용한다. 프로젝트 기준 개발 DB 컨테이너는 `do
 | `integration_harbor` | `url`, `username`, `password_enc`, `enabled` | Harbor 연동 설정 |
 | `integration_gitlab` | `url`, `token_enc`, `enabled` | GitLab 연동 설정 |
 | `cloudflare_zones` | `domain`, `zone_id`, `api_token_enc`, `usable_for_service`, `enabled` | 도메인별 Cloudflare 설정 |
+| `cloudflare_dns_records` | `zone_config_id`, `cloudflare_record_id`, `record_type`, `record_name`, `content`, `proxied`, `ttl` | Cloudflare DNS 레코드 캐시와 마지막 동기화 값 |
 | `nodes` | `name`, `role`, `host`, `ssh_port`, `auth_type`, `status`, `swarm_node_id`, `is_local_master` | Docker Infra host와 슬레이브 서버 정보 |
 | `node_credentials` | `node_id`, `username`, `key_file`, `ssh_fingerprint` | 슬레이브 SSH 접속용 관리 key file과 fingerprint 정보 |
 | `node_metrics` | `node_id`, `cpu`, `memory`, `storage`, `containers`, `reported_at` | 서버 상태 시계열 요약 |

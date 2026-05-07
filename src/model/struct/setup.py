@@ -20,7 +20,6 @@ SETUP_COMPLETED_AT_KEY = "setup.completed_at"
 SETUP_DEFAULT_PROXY_KEY = "setup.default_proxy"
 SETUP_TEMPLATE_ROOT_KEY = "setup.template_root"
 SETUP_ADVERTISE_ADDRESS_KEY = "setup.advertise_address"
-SETUP_PUBLIC_URL_KEY = "setup.public_url"
 ALLOWED_PROXY_TYPES = {"nginx", "apache2", "none"}
 
 
@@ -81,7 +80,6 @@ class SetupService:
             SETUP_DEFAULT_PROXY_KEY,
             SETUP_TEMPLATE_ROOT_KEY,
             SETUP_ADVERTISE_ADDRESS_KEY,
-            SETUP_PUBLIC_URL_KEY,
         ]
         with connection.cursor() as cursor:
             cursor.execute("SELECT key, value_json FROM system_settings WHERE key = ANY(%s)", (keys,))
@@ -104,7 +102,6 @@ class SetupService:
                     "default_proxy": None,
                     "template_root": None,
                     "advertise_address": None,
-                    "public_url": None,
                 },
                 "local_master": None,
                 "checks": detect_local_environment(env=env) if include_checks else None,
@@ -125,7 +122,6 @@ class SetupService:
                     "default_proxy": _setting_value(settings.get(SETUP_DEFAULT_PROXY_KEY)),
                     "template_root": _setting_value(settings.get(SETUP_TEMPLATE_ROOT_KEY)),
                     "advertise_address": _setting_value(settings.get(SETUP_ADVERTISE_ADDRESS_KEY)),
-                    "public_url": _setting_value(settings.get(SETUP_PUBLIC_URL_KEY)),
                 },
                 "local_master": local_master,
                 "checks": detect_local_environment(env=env) if include_checks else None,
@@ -236,7 +232,6 @@ class SetupService:
         checks = detect_local_environment(env=env)
         advertise_address = payload.get("advertise_address") or checks["advertise_address"]
         template_root = payload.get("template_root") or ".runtime/dev/templates"
-        public_url = payload.get("public_url")
         proxy_type = self._choose_proxy(payload.get("proxy_type"), checks)
         test_run_id = payload.get("test_run_id")
         completed_at = utcnow().isoformat().replace("+00:00", "Z")
@@ -259,8 +254,6 @@ class SetupService:
                 self._upsert_setting(cursor, SETUP_DEFAULT_PROXY_KEY, proxy_type, "string", test_run_id)
                 self._upsert_setting(cursor, SETUP_TEMPLATE_ROOT_KEY, template_root, "path", test_run_id)
                 self._upsert_setting(cursor, SETUP_ADVERTISE_ADDRESS_KEY, advertise_address, "string", test_run_id)
-                if public_url:
-                    self._upsert_setting(cursor, SETUP_PUBLIC_URL_KEY, public_url, "url", test_run_id)
                 local_master = self._upsert_local_master(cursor, advertise_address, test_run_id, checks)
 
         return {

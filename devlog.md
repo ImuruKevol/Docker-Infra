@@ -43,3 +43,10 @@
 | 2026-05-07 | 041 | 서버 상세 웹 터미널 집중 보기 토글과 전체 폭 확장 레이아웃 적용 | [상세](devlog/2026-05-07/041-web-terminal-expand-toggle.md) |
 | 2026-05-07 | 042 | devlog 내 테스트 비밀번호 등 민감값을 placeholder로 정리 | [상세](devlog/2026-05-07/042-devlog-sensitive-redaction.md) |
 | 2026-05-07 | 043 | 운영 콘솔 앱 셸 브랜딩/사이드바 정리와 누락 devlog 보강 | [상세](devlog/2026-05-07/043-app-shell-sidebar-catchup.md) |
+| 2026-05-07 | 044 | 시스템 설정 실적용, Harbor/GitLab 연결 테스트, Cloudflare 도메인 관리 화면과 DNS 캐시 구조 추가 | [상세](devlog/2026-05-07/044-system-settings-domains-cloudflare.md) |
+| 2026-05-07 | 045 | appearance 로딩을 auth 체크에서 분리하고 Angular 초기 1회 로드로 최적화 | [상세](devlog/2026-05-07/045-appearance-app-initializer.md) |
+| 2026-05-07 | 046 | 시스템 설정 화면의 파일 업로드 template ref 오류를 제거해 Angular 런타임 예외 수정 | [상세](devlog/2026-05-07/046-system-page-upload-ref-fix.md) |
+| 2026-05-07 | 047 | 시스템 설정 웹서버/브랜딩 정리, 도메인 관리 필터/SSL 개선, 공통 모달 취소 라벨 정비 | [상세](devlog/2026-05-07/047-system-domains-webserver-modal-cleanup.md) |
+| 2026-05-07 | 048 | 시스템 설정 SVG/지연 업로드, 로컬 경로 선택 모달, 도메인 A 레코드 공통 검색 선택 적용 | [상세](devlog/2026-05-07/048-system-assets-path-picker-domain-search-select.md) |
+| 2026-05-07 | 049 | 브랜딩 자산 고정 라우트와 시스템 설정 URL 입력 제거 적용 | [상세](devlog/2026-05-07/049-fixed-branding-asset-routes.md) |
+| 2026-05-07 | 050 | 시스템 설정 인증서 UUID fallback, 파일 경로 선택 parent fallback, 파일 트리 모달 스크롤 제한 적용 | [상세](devlog/2026-05-07/050-system-path-picker-and-certificate-modal-fixes.md) |

@@ -4,10 +4,11 @@ import uuid
 
 
 connect = wiz.model("db/postgres").connect
-settings = wiz.model("struct/settings")
 setup = wiz.model("struct/setup")
 system = wiz.model("struct/system")
 local_command_catalog = wiz.model("struct/local_command_catalog")
+integrations_model = wiz.model("struct/integrations")
+domains_model = wiz.model("struct/domains")
 
 
 def _serialize(value):
@@ -34,25 +35,6 @@ def _count(cursor, table):
     return int(cursor.fetchone()["count"])
 
 
-def _setting_map():
-    return {row["key"]: row for row in settings.list()}
-
-
-def _setting_value(mapped, key, fallback=None):
-    row = mapped.get(key)
-    if row is None:
-        return fallback
-    value = row.get("value")
-    return fallback if value is None else value
-
-
-def _secret_configured(mapped, key):
-    row = mapped.get(key)
-    if row is None:
-        return False
-    return bool((row.get("secret") or {}).get("is_configured"))
-
-
 class InfraCatalog:
     def counts(self):
         with connect() as connection:
@@ -70,33 +52,32 @@ class InfraCatalog:
                 }
 
     def integrations(self):
-        mapped = _setting_map()
-        return [
-            {
-                "key": "harbor",
-                "label": "Harbor",
-                "enabled": bool(_setting_value(mapped, "integration.harbor.enabled", False)),
-                "primary": _setting_value(mapped, "integration.harbor.url", ""),
-                "secondary": _setting_value(mapped, "integration.harbor.username", ""),
-                "secret_configured": _secret_configured(mapped, "integration.harbor.password"),
-            },
-            {
-                "key": "gitlab",
-                "label": "GitLab",
-                "enabled": bool(_setting_value(mapped, "integration.gitlab.enabled", False)),
-                "primary": _setting_value(mapped, "integration.gitlab.url", ""),
-                "secondary": "",
-                "secret_configured": _secret_configured(mapped, "integration.gitlab.token"),
-            },
+        items = []
+        for integration in integrations_model.load():
+            items.append(
+                {
+                    "key": integration["key"],
+                    "label": integration["label"],
+                    "enabled": bool(integration["enabled"]),
+                    "primary": integration["fields"].get("url", ""),
+                    "secondary": integration["fields"].get("username", "") or integration["fields"].get("project", ""),
+                    "secret_configured": bool(integration.get("secret_configured")),
+                }
+            )
+        domain_overview = domains_model.load()
+        zones = domain_overview.get("zones", [])
+        first_zone = zones[0] if zones else {}
+        items.append(
             {
                 "key": "cloudflare",
                 "label": "Cloudflare",
-                "enabled": bool(_setting_value(mapped, "integration.cloudflare.enabled", False)),
-                "primary": _setting_value(mapped, "integration.cloudflare.domain", ""),
-                "secondary": _setting_value(mapped, "integration.cloudflare.zone_id", ""),
-                "secret_configured": _secret_configured(mapped, "integration.cloudflare.api_token"),
-            },
-        ]
+                "enabled": len([zone for zone in zones if zone.get("enabled")]) > 0,
+                "primary": first_zone.get("domain", ""),
+                "secondary": first_zone.get("zone_id", ""),
+                "secret_configured": len([zone for zone in zones if zone.get("secret_configured")]) > 0,
+            }
+        )
+        return items
 
     def dashboard(self):
         counts = self.counts()

@@ -64,6 +64,29 @@ class SettingsRepository:
                 cursor.execute("SELECT * FROM system_settings WHERE key = %s", (key,))
                 return _row_to_setting(cursor.fetchone())
 
+    def get_secret_value(self, key, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        is_secret,
+                        secret_enc,
+                        CASE
+                            WHEN is_secret = true AND secret_enc IS NOT NULL
+                                THEN pgp_sym_decrypt(decode(secret_enc, 'base64'), %s)
+                            ELSE NULL
+                        END AS secret_value
+                    FROM system_settings
+                    WHERE key = %s
+                    """,
+                    (_secret_key(env), key),
+                )
+                row = cursor.fetchone()
+                if row is None or row["is_secret"] is not True:
+                    return None
+                return row["secret_value"]
+
     def upsert(
         self,
         key,

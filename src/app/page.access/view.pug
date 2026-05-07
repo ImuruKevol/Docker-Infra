@@ -3,9 +3,11 @@ div(class="min-h-full bg-zinc-100 px-5 py-6 text-zinc-950 dark:bg-zinc-950 dark:
         section(class="flex flex-col justify-between border-b border-zinc-200 bg-zinc-950 p-8 text-white dark:border-zinc-800 lg:border-b-0 lg:border-r")
             div
                 div(class="flex items-center gap-3")
-                    div(class="flex h-10 w-10 items-center justify-center rounded-md bg-white text-sm font-black text-zinc-950") DI
+                    div(*ngIf="!hasLogo()", class="flex h-10 w-10 items-center justify-center rounded-md bg-white text-sm font-black text-zinc-950") DI
+                    div(*ngIf="hasLogo()", class="flex h-10 w-10 items-center justify-center overflow-hidden rounded-md bg-white")
+                        img([src]="appearance.logo_url", [alt]="title()", class="h-full w-full object-contain")
                     div
-                        p(class="text-sm font-semibold") Docker Infra
+                        p(class="text-sm font-semibold") {{title()}}
                         p(class="text-xs text-zinc-400") Operator console
                 div(class="mt-10 space-y-4")
                     h1(class="max-w-md text-3xl font-semibold leading-tight") Docker host, Swarm, registry 상태를 한 화면에서 운영합니다.

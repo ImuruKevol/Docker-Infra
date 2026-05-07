@@ -12,6 +12,7 @@ export default class Modal {
         action: "Delete",
         actionBtn: "error",
         cancel: true,
+        cancelLabel: '취소',
         status: 'error'
     };
     public opts: any = {};
@@ -23,6 +24,10 @@ export default class Modal {
         this.opts = JSON.parse(JSON.stringify(this.default_opts));
         for (let key in mopts)
             this.opts[key] = mopts[key];
+        if (typeof this.opts.cancel === 'string' && !mopts.cancelLabel)
+            this.opts.cancelLabel = this.opts.cancel;
+        if (this.opts.cancel === true && !this.opts.cancelLabel)
+            this.opts.cancelLabel = '취소';
         await this.service.render();
 
         let fn = () => new Promise((resolve) => {

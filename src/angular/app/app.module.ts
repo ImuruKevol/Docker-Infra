@@ -10,6 +10,7 @@ import { NuMonacoEditorComponent, provideNuMonacoEditorConfig } from '@ng-util/m
 import { SortablejsModule } from "@wiz/libs/portal/season/ngx-sortablejs";
 import { KeyboardShortcutsModule } from 'ng-keyboard-shortcuts';
 import { DomSanitizer } from '@angular/platform-browser';
+import { APPEARANCE_INITIALIZER_PROVIDER } from './appearance.initializer';
 
 @Pipe({ name: 'safe' })
 export class SafePipe implements PipeTransform {
@@ -61,7 +62,8 @@ import { TranslateHttpLoader, TRANSLATE_HTTP_LOADER_CONFIG } from '@ngx-translat
         {
             provide: COMPOSITION_BUFFER_MODE,
             useValue: false
-        }
+        },
+        APPEARANCE_INITIALIZER_PROVIDER
     ],
     bootstrap: [AppComponent]
 })

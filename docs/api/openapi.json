@@ -676,8 +676,7 @@
                                                 "completed_at": "2026-05-06T00:00:00Z",
                                                 "default_proxy": "none",
                                                 "template_root": ".runtime/dev/templates",
-                                                "advertise_address": "127.0.0.1",
-                                                "public_url": null
+                                                "advertise_address": "127.0.0.1"
                                             },
                                             "local_master": {
                                                 "id": "00000000-0000-0000-0000-000000000000",
@@ -767,8 +766,7 @@
                                                 "completed_at": "2026-05-06T00:00:00Z",
                                                 "default_proxy": "none",
                                                 "template_root": ".runtime/dev/templates",
-                                                "advertise_address": "127.0.0.1",
-                                                "public_url": null
+                                                "advertise_address": "127.0.0.1"
                                             },
                                             "local_master": {
                                                 "id": "00000000-0000-0000-0000-000000000000",
@@ -3177,8 +3175,7 @@
                             "completed_at",
                             "default_proxy",
                             "template_root",
-                            "advertise_address",
-                            "public_url"
+                            "advertise_address"
                         ],
                         "additionalProperties": false,
                         "properties": {
@@ -3198,10 +3195,6 @@
                                 "nullable": true
                             },
                             "advertise_address": {
-                                "type": "string",
-                                "nullable": true
-                            },
-                            "public_url": {
                                 "type": "string",
                                 "nullable": true
                             }
@@ -3278,10 +3271,6 @@
                     "template_root": {
                         "type": "string",
                         "example": ".runtime/dev/templates"
-                    },
-                    "public_url": {
-                        "type": "string",
-                        "nullable": true
                     },
                     "test_run_id": {
                         "type": "string",

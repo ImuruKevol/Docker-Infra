@@ -1,0 +1,8 @@
+{
+    "id": "api-system-appearance",
+    "title": "System Appearance",
+    "route": "/api/system/appearance",
+    "category": "",
+    "viewuri": "",
+    "controller": "base"
+}

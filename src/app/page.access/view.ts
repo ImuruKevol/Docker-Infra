@@ -1,10 +1,16 @@
-import { OnInit, signal } from '@angular/core';
+import { HostListener, OnInit, signal } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
+import { AppearanceRuntime } from '@wiz/libs/portal/season/appearance';
 
 export class Component implements OnInit {
     public loading = signal<boolean>(true);
     public setup = signal<any>(null);
     public advancedSetup = signal<boolean>(false);
+    public appearance: any = {
+        browser_title: 'Docker Infra',
+        favicon_url: '',
+        logo_url: ''
+    };
     public data: any = {
         password: '',
         setup: {
@@ -20,6 +26,7 @@ export class Component implements OnInit {
 
     public async ngOnInit() {
         await this.service.init();
+        this.refreshAppearance();
         if (await this.redirectAuthenticated()) return;
         await this.loadSetupStatus();
     }
@@ -111,5 +118,22 @@ export class Component implements OnInit {
             return;
         }
         await this.alert(data.message || "설치를 완료할 수 없습니다.", 'error');
+    }
+
+    public hasLogo() {
+        return !!this.appearance?.logo_url;
+    }
+
+    public title() {
+        return this.appearance?.browser_title || 'Docker Infra';
+    }
+
+    @HostListener('window:docker-infra:appearance-changed', ['$event'])
+    public handleAppearanceChanged(event: any) {
+        this.appearance = event?.detail || AppearanceRuntime.read();
+    }
+
+    private refreshAppearance() {
+        this.appearance = AppearanceRuntime.read();
     }
 }

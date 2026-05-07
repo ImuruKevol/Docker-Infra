@@ -18,4 +18,12 @@ export class Component implements OnInit {
             return 'inline-flex w-full justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 sm:ml-3 sm:w-auto';
         return 'inline-flex w-full justify-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500 sm:ml-3 sm:w-auto';
     }
+
+    public cancelText() {
+        if (typeof this.model?.opts?.cancelLabel === 'string' && this.model.opts.cancelLabel.trim() !== '')
+            return this.model.opts.cancelLabel;
+        if (typeof this.model?.opts?.cancel === 'string' && this.model.opts.cancel.trim() !== '')
+            return this.model.opts.cancel;
+        return '취소';
+    }
 }

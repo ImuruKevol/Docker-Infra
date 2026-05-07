@@ -10,6 +10,7 @@ DEFAULT_DB_USER = "docker_infra"
 DEFAULT_DB_SCHEMA = "public"
 DEFAULT_SECRET_KEY = "docker-infra-development-secret"
 DEFAULT_SSH_KEY_DIR = ".runtime/ssh"
+DEFAULT_DATA_DIR = "data"
 CONFIG_ENV_NAME = "config.env"
 LOCAL_EXECUTOR_ALLOWLIST_ENV = "DOCKER_INFRA_LOCAL_EXECUTOR_ALLOWLIST"
 DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
@@ -121,6 +122,18 @@ def ssh_key_dir(env=None):
     if path.is_absolute():
         return str(path)
     return str(_workspace_root() / path)
+
+
+def data_dir(env=None):
+    raw = runtime_env(env).get("DOCKER_INFRA_DATA_DIR") or DEFAULT_DATA_DIR
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str(_workspace_root() / path)
+
+
+def system_assets_dir(env=None):
+    return str(Path(data_dir(env)) / "system-assets")
 
 
 def advertise_address(env=None):

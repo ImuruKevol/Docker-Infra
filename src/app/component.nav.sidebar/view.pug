@@ -1,8 +1,10 @@
 div(class="flex shrink-0 items-center px-3 pb-4 pt-5")
     a(routerLink="/dashboard", class="flex min-w-0 items-center gap-3")
-        div(class="flex h-9 w-9 flex-none items-center justify-center rounded-md bg-zinc-950 text-sm font-black text-white dark:bg-zinc-100 dark:text-zinc-950") DI
+        div(*ngIf="!hasLogo()", class="flex h-9 w-9 flex-none items-center justify-center rounded-md bg-zinc-950 text-sm font-black text-white dark:bg-zinc-100 dark:text-zinc-950") DI
+        div(*ngIf="hasLogo()", class="flex h-9 w-9 flex-none items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950")
+            img([src]="appearance.logo_url", [alt]="logoTitle()", class="h-full w-full object-contain")
         div(class="min-w-0")
-            p(class="truncate text-[15px] font-bold text-zinc-950 dark:text-zinc-50") Docker Infra
+            p(class="truncate text-[15px] font-bold text-zinc-950 dark:text-zinc-50") {{logoTitle()}}
             p(class="truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400") Operator console
 
 div(class="mx-2 mb-4 rounded-md border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950")

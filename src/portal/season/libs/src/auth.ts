@@ -1,8 +1,14 @@
 import Service from '../service';
 import Request from '../util/request';
+import { AppearanceRuntime } from '../appearance';
 
 export default class Auth {
     public verified: string | null = null;
+    public appearance: any = {
+        browser_title: 'Docker Infra',
+        favicon_url: '',
+        logo_url: ''
+    };
 
     public timestamp: number = 0;
     public status: any = null;
@@ -14,18 +20,23 @@ export default class Auth {
     }
 
     public async init() {
+        this.appearance = AppearanceRuntime.read();
+        AppearanceRuntime.apply(this.appearance);
         try {
             let { code, data } = await this.request.post('/auth/check');
-            let { status, session } = data;
-            this.verified = session.verified;
             this.loading = true;
             if (code != 200)
                 return this;
+            let status = data?.status;
+            let session = data?.session || {};
+            this.verified = session?.verified || null;
             this.timestamp = new Date().getTime();
             this.session = session;
             this.status = status;
+            this.appearance = AppearanceRuntime.read();
         } catch (e) {
             this.loading = true;
+            this.appearance = AppearanceRuntime.read();
         }
         return this;
     }
