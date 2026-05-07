@@ -5,6 +5,7 @@ export class Component implements OnInit {
     public loading = signal<boolean>(true);
     public busy = signal<boolean>(false);
     public detailLoading = signal<boolean>(false);
+    public templateLoading = signal<boolean>(false);
     public error = signal<string>('');
     public services = signal<any[]>([]);
     public templates = signal<any[]>([]);
@@ -23,6 +24,7 @@ export class Component implements OnInit {
     public filePreviewBusy = signal<boolean>(false);
     public filePreviewTitle = signal<string>('');
     public filePreviewContent = signal<string>('');
+    public selectedTemplateId = signal<string>('');
     public serviceForm: any = this.emptyForm();
     public compose: any = this.emptyCompose();
 
@@ -129,6 +131,8 @@ export class Component implements OnInit {
         this.advancedCompose.set(mode === 'direct_compose');
         this.validation.set(null);
         this.lastCreated.set(null);
+        this.selectedTemplateId.set('');
+        this.templateLoading.set(false);
         this.serviceForm = this.emptyForm();
         this.compose = this.emptyCompose();
         this.refreshCompose(true);
@@ -141,7 +145,64 @@ export class Component implements OnInit {
 
     public setServiceMode(mode: 'basic_web' | 'direct_compose') {
         this.serviceMode.set(mode);
+        if (this.selectedTemplateId()) {
+            this.selectedTemplateId.set('');
+        }
         this.advancedCompose.set(mode === 'direct_compose');
+        this.refreshCompose(true);
+    }
+
+    public templateSelectorItems() {
+        return this.templates()
+            .filter((item: any) => item?.enabled !== false)
+            .map((item: any) => ({
+                value: item.id,
+                label: item.name,
+                description: `${item.namespace} · ${item.description || '설명 없음'}`,
+                badge: item?.metadata?.category || 'template',
+                badgeClass: this.templateCategoryBadgeClass(item?.metadata?.category || 'template'),
+            }));
+    }
+
+    public selectedTemplateRecord() {
+        return this.templates().find((item: any) => item.id === this.selectedTemplateId()) || null;
+    }
+
+    public async selectTemplate(templateId: string) {
+        this.selectedTemplateId.set(templateId || '');
+        if (!templateId) {
+            this.refreshCompose(true);
+            return;
+        }
+        this.templateLoading.set(true);
+        const { code, data } = await wiz.call('template_detail', { template_id: templateId });
+        if (code === 200) {
+            const values = data?.preview?.values || {};
+            this.serviceForm.name = data?.template?.name || this.serviceForm.name;
+            this.serviceForm.namespace = String(values.namespace || data?.template?.namespace || this.serviceForm.namespace || '').trim();
+            this.serviceForm.service_name = String(values.service_name || this.serviceForm.service_name || 'web').trim();
+            this.serviceForm.image = String(values.image || data?.template?.metadata?.primary_image || this.serviceForm.image || 'nginx:alpine').trim();
+            this.serviceForm.port = Number(values.service_port || this.serviceForm.port || 80);
+            this.normalizeNamespace();
+            this.compose.namespace = this.serviceForm.namespace || 'my_service';
+            this.compose.filename = 'docker-compose.yaml';
+            this.compose.content = data?.preview?.rendered_compose || data?.files?.['docker-compose.yaml'] || '';
+            this.advancedCompose.set(true);
+            this.validation.set(null);
+        } else {
+            this.selectedTemplateId.set('');
+            await this.alert(data?.message || '템플릿을 불러올 수 없습니다.');
+        }
+        this.templateLoading.set(false);
+        await this.service.render();
+    }
+
+    public clearSelectedTemplate() {
+        this.selectedTemplateId.set('');
+        this.serviceForm = this.emptyForm();
+        this.compose = this.emptyCompose();
+        this.advancedCompose.set(this.serviceMode() === 'direct_compose');
+        this.validation.set(null);
         this.refreshCompose(true);
     }
 
@@ -207,6 +268,11 @@ export class Component implements OnInit {
             ...this.serviceForm,
             filename: this.compose.filename,
             content: this.compose.content,
+            source: this.selectedTemplateId() ? 'template_catalog' : undefined,
+            source_ref: this.selectedTemplateId() ? {
+                template_id: this.selectedTemplateId(),
+                template_namespace: this.selectedTemplateRecord()?.namespace || '',
+            } : undefined,
         };
         const { code, data } = await wiz.call('create_service', payload);
         if (code === 200) {
@@ -308,6 +374,7 @@ export class Component implements OnInit {
         const labels: any = {
             ui_wizard: '화면에서 생성',
             server_compose_import: '서버 Compose 가져오기',
+            template_catalog: '템플릿에서 생성',
         };
         return labels[source] || source || '-';
     }
@@ -340,9 +407,29 @@ export class Component implements OnInit {
     }
 
     public createModeDescription() {
+        if (this.selectedTemplateRecord()) {
+            return `${this.selectedTemplateRecord()?.name} 템플릿으로 Compose 초안을 채워서 시작합니다.`;
+        }
         return this.serviceMode() === 'basic_web'
             ? '기본 웹 서비스 템플릿으로 Compose를 자동 생성합니다.'
             : 'Compose 초안을 직접 조정하면서 서비스 초안을 저장합니다.';
+    }
+
+    public templateCategoryBadgeClass(category: string) {
+        const value = String(category || '').toLowerCase();
+        if (['service', 'web'].includes(value)) {
+            return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
+        }
+        if (['was', 'api'].includes(value)) {
+            return 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300';
+        }
+        if (['db', 'database'].includes(value)) {
+            return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
+        }
+        if (['cache', 'queue'].includes(value)) {
+            return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300';
     }
 
     public formatDate(value: any) {

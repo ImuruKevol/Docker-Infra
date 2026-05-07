@@ -50,3 +50,6 @@
 | 2026-05-07 | 048 | 시스템 설정 SVG/지연 업로드, 로컬 경로 선택 모달, 도메인 A 레코드 공통 검색 선택 적용 | [상세](devlog/2026-05-07/048-system-assets-path-picker-domain-search-select.md) |
 | 2026-05-07 | 049 | 브랜딩 자산 고정 라우트와 시스템 설정 URL 입력 제거 적용 | [상세](devlog/2026-05-07/049-fixed-branding-asset-routes.md) |
 | 2026-05-07 | 050 | 시스템 설정 인증서 UUID fallback, 파일 경로 선택 parent fallback, 파일 트리 모달 스크롤 제한 적용 | [상세](devlog/2026-05-07/050-system-path-picker-and-certificate-modal-fixes.md) |
+| 2026-05-07 | 051 | 이미지/템플릿 관리 화면 완성과 기본 템플릿 seed, 서비스 생성 템플릿 연동 적용 | [상세](devlog/2026-05-07/051-images-templates-catalog-and-service-template-flow.md) |
+| 2026-05-08 | 052 | 이미지/템플릿 화면 Angular templateUrl 해석 오류 수정 | [상세](devlog/2026-05-08/052-images-templates-component-resolution-fix.md) |
+| 2026-05-08 | 053 | 이미지 관리 초기 로딩 분리·Harbor 삭제/태그 표시 보강, 템플릿 릴리즈 UI·저장 경로·기본 seed 확장 | [상세](devlog/2026-05-08/053-images-performance-template-release-ui.md) |

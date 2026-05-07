@@ -74,6 +74,13 @@ def _docker_container_restart_command(params):
     return ["docker", "restart", *_container_ids(params)]
 
 
+def _docker_image_remove_command(params):
+    image_ref = str((params or {}).get("image_ref") or "").strip()
+    if not image_ref:
+        raise LocalCommandError(400, "image_ref가 필요합니다.", "IMAGE_REF_REQUIRED")
+    return ["docker", "image", "rm", image_ref]
+
+
 def _filesystem_target(params, required_type=None):
     target = str((params or {}).get("path") or "/").strip() or "/"
     script = (
@@ -133,14 +140,25 @@ storage_json=$(df -Pk / | awk 'NR==2 { gsub("%", "", $5); printf "\"total\":%d,\
 printf '{"cpu_percent":%s,"memory":{"total":%s,"used":%s,"available":%s,"used_percent":%s},"storage":{%s}}\n' "$cpu_percent" "$mem_total" "$mem_used" "$mem_available" "$mem_percent" "$storage_json"
 """
 
+DOCKER_IMAGE_USAGE_SCRIPT = r"""
+ids=$(docker container ls -aq --no-trunc)
+if [ -z "$ids" ]; then
+  exit 0
+fi
+docker inspect --format '{{json .}}' $ids
+"""
+
 
 COMMAND_SPECS = {
     "docker.version": {"category": "docker", "argv": ["docker", "version", "--format", "{{json .}}"]},
     "docker.info": {"category": "docker", "argv": ["docker", "info", "--format", "{{json .}}"]},
     "docker.containers": {"category": "docker", "argv": ["docker", "ps", "-a", "--format", "{{json .}}"]},
+    "docker.images": {"category": "docker", "argv": ["docker", "image", "ls", "--digests", "--no-trunc", "--format", "{{json .}}"]},
+    "docker.images.usage": {"category": "docker", "argv": ["sh", "-lc", DOCKER_IMAGE_USAGE_SCRIPT]},
     "docker.container.start": {"category": "docker", "factory": _docker_container_start_command, "destructive": True},
     "docker.container.stop": {"category": "docker", "factory": _docker_container_stop_command, "destructive": True},
     "docker.container.restart": {"category": "docker", "factory": _docker_container_restart_command, "destructive": True},
+    "docker.image.remove": {"category": "docker", "factory": _docker_image_remove_command, "destructive": True},
     "system.metrics": {"category": "system", "argv": ["sh", "-lc", SYSTEM_METRICS_SCRIPT]},
     "filesystem.list": {"category": "filesystem", "factory": _filesystem_list_command},
     "filesystem.read": {"category": "filesystem", "factory": _filesystem_read_command},

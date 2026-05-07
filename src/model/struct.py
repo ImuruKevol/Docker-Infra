@@ -40,6 +40,10 @@ class Struct:
         return self._load("infra_catalog")
 
     @property
+    def images(self):
+        return self._load("images")
+
+    @property
     def integrations(self):
         return self._load("integrations")
 
@@ -69,6 +73,10 @@ class Struct:
     @property
     def setup(self):
         return self._load("setup")
+
+    @property
+    def templates(self):
+        return self._load("templates")
 
     @property
     def ssh_executor(self):

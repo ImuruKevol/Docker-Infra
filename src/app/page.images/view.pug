@@ -14,57 +14,188 @@ main(class="space-y-5 px-5 py-5")
     div(*ngIf="error()", class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300") {{error()}}
 
     div(*ngIf="!loading() && !error()", class="space-y-5")
-        div(*ngIf="!integration('harbor').enabled", class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
-            i(class="fa-solid fa-circle-info mr-2")
-            | Harbor 자동 연동은 꺼져 있습니다. 이미지 관리는 로컬/저장된 이미지 목록 중심으로 계속 사용할 수 있습니다.
-        section(class="grid grid-cols-1 gap-3 md:grid-cols-3")
-            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
-                div(class="flex items-center justify-between")
-                    div
-                        p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") Harbor
-                        p(class="mt-2 truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{integration('harbor').primary || '-'}}
-                    span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(integration('harbor').enabled)") {{integration('harbor').enabled ? '사용 중' : '꺼짐'}}
-            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
-                div(class="flex items-center justify-between")
-                    div
-                        p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") GitLab
-                        p(class="mt-2 truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{integration('gitlab').primary || '-'}}
-                    span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(integration('gitlab').enabled)") {{integration('gitlab').enabled ? '사용 중' : '꺼짐'}}
-            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
-                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") Stored images
-                p(class="mt-2 text-3xl font-semibold text-zinc-950 dark:text-zinc-50") {{images().length}}
+        section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+            div(class="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                button(type="button", (click)="setTab('local')", class="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold", [ngClass]="activeTab() === 'local' ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200'")
+                    i(class="fa-solid fa-hard-drive")
+                    span 서버 로컬 저장소
+                button(type="button", (click)="setTab('harbor')", class="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold", [ngClass]="activeTab() === 'harbor' ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200'")
+                    i(class="fa-solid fa-boxes-stacked")
+                    span Harbor
 
-        section(class="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_420px]")
-            div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-                div(class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                    h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") Image inventory
-                div(class="overflow-x-auto")
-                    table(class="min-w-full divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
-                        thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
-                            tr
-                                th(class="px-4 py-2 text-left font-semibold") Registry
-                                th(class="px-4 py-2 text-left font-semibold") Image
-                                th(class="px-4 py-2 text-left font-semibold") Tag
-                                th(class="px-4 py-2 text-left font-semibold") Source
-                                th(class="px-4 py-2 text-left font-semibold") Created
-                        tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                            tr(*ngFor="let image of images()")
-                                td(class="px-4 py-3 text-zinc-600 dark:text-zinc-300") {{image.registry}}
-                                td(class="px-4 py-3 font-semibold text-zinc-950 dark:text-zinc-50") {{image.name}}
-                                td(class="px-4 py-3 text-zinc-600 dark:text-zinc-300") {{image.tag}}
-                                td(class="px-4 py-3")
-                                    span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(image.source)") {{image.source}}
-                                td(class="px-4 py-3 text-zinc-500 dark:text-zinc-400") {{formatDate(image.created_at)}}
-                            tr(*ngIf="images().length === 0")
-                                td(colspan="5", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 이미지 없음
+            div(*ngIf="activeTab() === 'harbor'", class="grid grid-cols-1 gap-5 p-4 xl:grid-cols-[320px_1fr]")
+                aside(class="rounded-md border border-zinc-200 dark:border-zinc-800")
+                    div(class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                        div(class="flex items-start justify-between gap-3")
+                            div
+                                h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") Harbor 프로젝트
+                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") Project별 저장소와 태그를 관리합니다.
+                            span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(harbor().enabled ? 'enabled' : 'disabled')") {{harbor().enabled ? '사용 중' : '꺼짐'}}
+                    div(*ngIf="!harbor().enabled", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400") Harbor 연동이 꺼져 있습니다. 시스템 설정에서 Harbor를 먼저 켜주세요.
+                    div(*ngIf="harbor().enabled && harborOverviewBusy()", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400")
+                        i(class="fa-solid fa-spinner fa-spin mr-1")
+                        | Harbor 프로젝트 목록을 불러오는 중입니다.
+                    div(*ngIf="harbor().enabled && harborError()", class="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{harborError()}}
+                    div(*ngIf="harbor().enabled && harborProjects().length === 0 && !harborError()", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400") Harbor 프로젝트가 없습니다.
+                    div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                        button(*ngFor="let project of harborProjects()", type="button", (click)="loadHarborDetail(project.name)", class="block w-full px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800", [ngClass]="selectedProject() === project.name ? 'bg-sky-50 dark:bg-sky-950/30' : ''")
+                            div(class="flex items-start justify-between gap-3")
+                                div(class="min-w-0")
+                                    p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{project.name}}
+                                    p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") 저장소 {{project.repo_count || 0}} · Pull {{project.pull_count || 0}}
+                                span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="statusClass(project.public ? 'enabled' : 'warning')") {{project.public ? 'public' : 'private'}}
 
-            div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-                div(class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                    h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 빌드 이력
-                div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                    div(*ngFor="let build of builds()", class="px-4 py-3")
-                        div(class="flex items-center justify-between gap-3")
-                            p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{build.image_name || build.compose_file_path}}
-                            span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(build.status)") {{build.status}}
-                        p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400") {{build.service_name || '-'}} · {{formatDate(build.created_at)}}
-                    div(*ngIf="builds().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 빌드 기록 없음
+                section(class="rounded-md border border-zinc-200 dark:border-zinc-800")
+                    div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 lg:flex-row lg:items-start lg:justify-between")
+                        div
+                            h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{selectedProject() || 'Harbor 프로젝트 선택'}}
+                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 저장소 목록과 태그를 직접 확인하고 삭제할 수 있습니다.
+                        span(*ngIf="harborBusy()", class="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400")
+                            i(class="fa-solid fa-spinner fa-spin")
+                            span Harbor 동기화 중
+                    div(*ngIf="!selectedProject()", class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400") 왼쪽에서 Harbor 프로젝트를 선택하세요.
+                    div(*ngIf="selectedProject()", class="space-y-4 p-4")
+                        div(class="grid grid-cols-1 gap-3 md:grid-cols-3")
+                            div(class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
+                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 저장소 수
+                                p(class="mt-2 text-xl font-semibold text-zinc-950 dark:text-zinc-50") {{projectSummary().repository_count || 0}}
+                            div(class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
+                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 태그 수
+                                p(class="mt-2 text-xl font-semibold text-zinc-950 dark:text-zinc-50") {{projectSummary().tag_count || 0}}
+                            div(class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
+                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 접속 계정
+                                p(class="mt-2 truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{harbor().username || '-'}}
+                        div(class="flex flex-wrap items-center justify-between gap-2")
+                            p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") Harbor 이미지 버전
+                            div(class="flex flex-wrap items-center gap-2")
+                                button(type="button", (click)="deleteSelectedHarborTags()", [disabled]="harborBusy() || selectedHarborTagCount() === 0", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                    i(class="fa-solid fa-trash")
+                                    span 선택 삭제 ({{selectedHarborTagCount()}})
+                                button(type="button", (click)="deleteHarborProject()", [disabled]="harborBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                    i(class="fa-solid fa-folder-minus")
+                                    span 프로젝트 삭제
+                        div(class="space-y-2")
+                            p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 포함 이미지 저장소
+                            div(class="overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800")
+                                table(class="min-w-full divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
+                                    thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
+                                        tr
+                                            th(class="px-4 py-2 text-left font-semibold") 저장소
+                                            th(class="px-4 py-2 text-left font-semibold") 이미지 수
+                                            th(class="px-4 py-2 text-left font-semibold") Pull
+                                            th(class="px-4 py-2 text-left font-semibold") 최근 갱신
+                                    tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                                        tr(*ngFor="let item of harborRepositories()", (click)="selectedRepository.set(item.name)", class="cursor-pointer", [ngClass]="selectedRepository() === item.name ? 'bg-sky-50 dark:bg-sky-950/20' : ''")
+                                            td(class="px-4 py-3 font-semibold text-zinc-950 dark:text-zinc-50") {{item.display_name}}
+                                            td(class="px-4 py-3 text-zinc-700 dark:text-zinc-200") {{item.artifact_count || 0}}
+                                            td(class="px-4 py-3 text-zinc-500 dark:text-zinc-400") {{item.pull_count || 0}}
+                                            td(class="px-4 py-3 text-zinc-500 dark:text-zinc-400") {{formatDate(item.update_time)}}
+                                        tr(*ngIf="harborRepositories().length === 0")
+                                            td(colspan="4", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 포함된 이미지 저장소가 없습니다.
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 태그 검색
+                            input(type="text", [ngModel]="harborSearch()", (ngModelChange)="harborSearch.set($event)", placeholder="저장소명, 태그, digest 검색", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        div(class="overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800")
+                            table(class="min-w-full divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
+                                thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
+                                    tr
+                                        th(class="px-4 py-2 text-left font-semibold")
+                                            input(type="checkbox", [checked]="allVisibleHarborTagsSelected()", (change)="toggleAllHarborTags($any($event.target).checked)")
+                                        th(class="px-4 py-2 text-left font-semibold") 저장소
+                                        th(class="px-4 py-2 text-left font-semibold") Tag
+                                        th(class="px-4 py-2 text-left font-semibold") Size
+                                        th(class="px-4 py-2 text-left font-semibold") Digest
+                                        th(class="px-4 py-2 text-left font-semibold") Push 시간
+                                        th(class="px-4 py-2 text-left font-semibold") 작업
+                                tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                                    tr(*ngFor="let item of filteredHarborTags()")
+                                        td(class="px-4 py-3")
+                                            input(type="checkbox", [checked]="isHarborTagSelected(item)", (change)="toggleHarborTagSelection(item, $any($event.target).checked)")
+                                        td(class="px-4 py-3 font-semibold text-zinc-950 dark:text-zinc-50") {{item.repository_name}}
+                                        td(class="px-4 py-3 text-zinc-700 dark:text-zinc-200") {{item.tag}}
+                                        td(class="px-4 py-3 text-zinc-500 dark:text-zinc-400") {{formatBytes(item.size)}}
+                                        td(class="px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400") {{item.digest}}
+                                        td(class="px-4 py-3 text-zinc-500 dark:text-zinc-400") {{formatDate(item.push_time)}}
+                                        td(class="px-4 py-3")
+                                            button(type="button", (click)="deleteHarborTag(item)", [disabled]="harborBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                                i(class="fa-solid fa-trash")
+                                                span 삭제
+                                    tr(*ngIf="filteredHarborTags().length === 0")
+                                        td(colspan="7", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 표시할 Harbor 태그가 없습니다.
+
+            div(*ngIf="activeTab() === 'local'", class="grid grid-cols-1 gap-5 p-4 xl:grid-cols-[320px_1fr]")
+                aside(class="rounded-md border border-zinc-200 dark:border-zinc-800")
+                    div(class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 서버 로컬 이미지
+                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 각 서버의 Docker image 저장소를 직접 확인합니다.
+                    div(*ngIf="nodes().length === 0", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400") 등록된 서버가 없습니다.
+                    div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                        button(*ngFor="let node of nodes()", type="button", (click)="loadLocalDetail(node.id)", class="block w-full px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800", [ngClass]="selectedNodeId() === node.id ? 'bg-sky-50 dark:bg-sky-950/30' : ''")
+                            div(class="flex items-start justify-between gap-3")
+                                div(class="min-w-0")
+                                    p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{node.name}}
+                                    p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") {{node.host}}
+                                span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="statusClass(node.is_local_master ? 'enabled' : 'configured')") {{node.is_local_master ? 'master' : 'node'}}
+
+                section(class="rounded-md border border-zinc-200 dark:border-zinc-800")
+                    div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 lg:flex-row lg:items-start lg:justify-between")
+                        div
+                            h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{selectedNodeName()}}
+                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{selectedNodeHost()}}
+                        span(*ngIf="localBusy()", class="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400")
+                            i(class="fa-solid fa-spinner fa-spin")
+                            span 로컬 저장소 조회 중
+                    div(*ngIf="!selectedNodeId()", class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400") 왼쪽에서 서버를 선택하세요.
+                    div(*ngIf="selectedNodeId()", class="space-y-4 p-4")
+                        div(*ngIf="isLocalDockerUnavailable()", class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
+                            i(class="fa-solid fa-triangle-exclamation mr-2")
+                            | {{localDockerMessage()}}
+                        div(*ngIf="isLocalDockerAvailable()", class="space-y-4")
+                            div(class="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_auto_auto]")
+                                label(class="block")
+                                    span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 이미지 검색
+                                    input(type="text", [ngModel]="localSearch()", (ngModelChange)="localSearch.set($event)", placeholder="이미지명, tag, digest, image id 검색", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                div(class="block")
+                                    span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 사용 여부
+                                    div(class="flex h-10 items-center rounded-md border border-zinc-300 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-950")
+                                        button(type="button", (click)="setLocalUsageFilter('all')", class="inline-flex h-8 items-center rounded-md px-3 text-xs font-semibold", [ngClass]="localUsageFilter() === 'all' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 전체
+                                        button(type="button", (click)="setLocalUsageFilter('used')", class="inline-flex h-8 items-center rounded-md px-3 text-xs font-semibold", [ngClass]="localUsageFilter() === 'used' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 사용 중
+                                        button(type="button", (click)="setLocalUsageFilter('unused')", class="inline-flex h-8 items-center rounded-md px-3 text-xs font-semibold", [ngClass]="localUsageFilter() === 'unused' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 미사용
+                                label(class="block")
+                                    span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 정렬
+                                    select([ngModel]="localSort()", (ngModelChange)="setLocalSort($event)", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                        option(*ngFor="let option of localSortOptions()", [value]="option.value") {{option.label}}
+                            div(class="overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800")
+                                table(class="min-w-full divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
+                                    thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
+                                        tr
+                                            th(class="px-4 py-2 text-left font-semibold") 이미지
+                                            th(class="px-4 py-2 text-left font-semibold") Tag
+                                            th(class="px-4 py-2 text-left font-semibold") 사용 상태
+                                            th(class="px-4 py-2 text-left font-semibold") 최근 사용
+                                            th(class="px-4 py-2 text-left font-semibold") Digest / ID
+                                            th(class="px-4 py-2 text-left font-semibold") 생성일 / 용량
+                                            th(class="px-4 py-2 text-left font-semibold") 작업
+                                    tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                                        tr(*ngFor="let item of filteredLocalImages()")
+                                            td(class="px-4 py-3 font-semibold text-zinc-950 dark:text-zinc-50") {{displayImageField(item.repository)}}
+                                            td(class="px-4 py-3 text-zinc-700 dark:text-zinc-200") {{displayImageField(item.tag)}}
+                                            td(class="px-4 py-3")
+                                                div(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap", [ngClass]="localUsageBadgeClass(item)") {{localUsageLabel(item)}}
+                                                div(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{localRunningLabel(item)}}
+                                            td(class="px-4 py-3 text-zinc-500 dark:text-zinc-400")
+                                                div {{formatDate(item.last_used_at)}}
+                                                div(class="mt-1 text-xs") 연결 {{item.usage_count || 0}}개
+                                            td(class="px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400")
+                                                div {{item.digest || '-'}}
+                                                div(class="mt-1") {{item.image_id}}
+                                            td(class="px-4 py-3 text-zinc-500 dark:text-zinc-400")
+                                                div {{formatDate(item.created_at)}}
+                                                div(class="mt-1 text-xs") {{item.size || '-'}}
+                                                div(class="mt-1 text-xs") {{item.created_since || '-'}}
+                                            td(class="px-4 py-3")
+                                                button(type="button", (click)="deleteLocalImage(item)", [disabled]="localBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                                    i(class="fa-solid fa-trash")
+                                                    span 삭제
+                                        tr(*ngIf="filteredLocalImages().length === 0")
+                                            td(colspan="7", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 표시할 로컬 이미지가 없습니다.

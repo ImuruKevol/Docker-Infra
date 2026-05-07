@@ -19,6 +19,7 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "docker.container.start",
     "docker.container.stop",
     "docker.container.restart",
+    "docker.image.remove",
 ]
 
 

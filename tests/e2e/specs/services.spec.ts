@@ -14,9 +14,8 @@ test.describe('services page', () => {
     await page.waitForLoadState('networkidle').catch(() => undefined);
     await expect(page.getByText('서비스 관리').first()).toBeVisible();
     await expect(page.getByTestId('services-list')).toBeVisible();
-    await page.getByRole('button', { name: '새 서비스' }).click();
+    await page.getByRole('banner').getByRole('button', { name: '새 서비스' }).click();
     await expect(page.getByTestId('service-create-modal')).toBeVisible();
     await expect(page.getByText('기본 웹 서비스').first()).toBeVisible();
-    await page.getByRole('button', { name: '취소' }).click();
   });
 });
