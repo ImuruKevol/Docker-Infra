@@ -55,6 +55,20 @@ test.describe('server detail', () => {
     await expect(page.getByRole('button', { name: '터미널 연결' })).toBeVisible({ timeout: 10000 });
   });
 
+  test('expands the web terminal to use the server list area and restores the default layout', async ({ page }) => {
+    await loginOrSkipIfAuthPending(page);
+    await page.goto(`${e2eEnv.baseURL}/servers`);
+    await page.waitForLoadState('domcontentloaded');
+
+    await page.getByRole('button', { name: '웹 터미널' }).click();
+    await expect(page.getByTestId('servers-node-list')).toBeVisible();
+    await page.getByTestId('servers-terminal-expand-toggle').click();
+    await expect(page.getByTestId('servers-node-list')).toBeHidden();
+    await expect(page.getByTestId('servers-terminal-host')).toBeVisible();
+    await page.getByTestId('servers-terminal-expand-toggle').click();
+    await expect(page.getByTestId('servers-node-list')).toBeVisible();
+  });
+
   test('opens compose browser in the server home directory and supports direct path jump', async ({ page }) => {
     await loginOrSkipIfAuthPending(page);
     await page.goto(`${e2eEnv.baseURL}/servers`);

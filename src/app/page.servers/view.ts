@@ -47,6 +47,7 @@ export class Component implements OnInit, OnDestroy {
     public terminalConnected = signal<boolean>(false);
     public terminalStatus = signal<string>('연결되지 않음');
     public terminalError = signal<string>('');
+    public terminalExpanded = signal<boolean>(false);
     public serverForm: any = this.emptyServerForm();
     public macroForm: any = this.emptyMacroForm();
     public macroEditorOptions: any = {
@@ -170,6 +171,7 @@ export class Component implements OnInit, OnDestroy {
         this.disconnectTerminal(true);
         this.setSelectedNode(node || null);
         this.applyContainerPanel({ summary: { total: 0, running: 0, stopped: 0 }, service_groups: [], unmanaged_containers: [] });
+        this.terminalExpanded.set(false);
         this.globalMacros.set([]);
         this.nodeMacros.set([]);
         this.macros.set([]);
@@ -661,6 +663,9 @@ export class Component implements OnInit, OnDestroy {
 
     public setDetailTab(tab: string) {
         this.detailTab.set(tab);
+        if (tab !== 'terminal') {
+            this.terminalExpanded.set(false);
+        }
         if (tab === 'terminal') {
             void this.service.render(0).then(() => this.fitTerminal());
         }
@@ -668,6 +673,16 @@ export class Component implements OnInit, OnDestroy {
 
     public isDetailTab(tab: string) {
         return this.detailTab() === tab;
+    }
+
+    public terminalExpandedView() {
+        return this.isDetailTab('terminal') && this.terminalExpanded();
+    }
+
+    public async toggleTerminalExpanded() {
+        this.terminalExpanded.set(!this.terminalExpanded());
+        await this.service.render(0);
+        this.fitTerminal();
     }
 
     private terminalTheme() {
@@ -752,6 +767,10 @@ export class Component implements OnInit, OnDestroy {
             return '선택한 서버의 실제 로그인 셸 세션이 연결되어 있습니다. 서버 기본 zsh/bash 설정과 ANSI 색상을 그대로 사용합니다.';
         }
         return '선택한 서버의 실제 로그인 셸에 연결합니다. 서버 기본 zsh/bash 설정과 ANSI 색상을 그대로 사용합니다.';
+    }
+
+    public terminalExpandLabel() {
+        return this.terminalExpandedView() ? '기본 레이아웃' : '터미널 넓게 보기';
     }
 
     public disconnectTerminal(silent: boolean = false) {

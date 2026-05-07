@@ -40,3 +40,6 @@
 | 2026-05-07 | 038 | 서버 상세 매크로 선택 뱃지 정렬과 실행 인자 기본 비활성 UX 적용 | [상세](devlog/2026-05-07/038-macro-badge-args-default-off.md) |
 | 2026-05-07 | 039 | 서버 상세 CPU/Memory/Storage 프로그레스바와 부드러운 갱신 애니메이션 추가 | [상세](devlog/2026-05-07/039-server-metric-progress-bars.md) |
 | 2026-05-07 | 040 | 전역 매크로 목록 버튼 위치 조정과 서버 상세 매크로 실행 로그 스트리밍 적용 | [상세](devlog/2026-05-07/040-macros-button-streaming.md) |
+| 2026-05-07 | 041 | 서버 상세 웹 터미널 집중 보기 토글과 전체 폭 확장 레이아웃 적용 | [상세](devlog/2026-05-07/041-web-terminal-expand-toggle.md) |
+| 2026-05-07 | 042 | devlog 내 테스트 비밀번호 등 민감값을 placeholder로 정리 | [상세](devlog/2026-05-07/042-devlog-sensitive-redaction.md) |
+| 2026-05-07 | 043 | 운영 콘솔 앱 셸 브랜딩/사이드바 정리와 누락 devlog 보강 | [상세](devlog/2026-05-07/043-app-shell-sidebar-catchup.md) |
