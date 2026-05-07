@@ -2,10 +2,13 @@ node_modules/
 .vscode/
 /cache/
 /bundle/
-/config/
 /build/
 /test/
+/.runtime/
 package-lock.json
+
+# Docker Infra local compose/runtime files
+docker/compose/*.env
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

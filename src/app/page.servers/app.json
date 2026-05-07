@@ -1,0 +1,11 @@
+{
+    "mode": "page",
+    "id": "page.servers",
+    "title": "/servers",
+    "namespace": "servers",
+    "viewuri": "/servers",
+    "category": "infra",
+    "controller": "user",
+    "layout": "layout.sidebar",
+    "template": "wiz-page-servers()"
+}

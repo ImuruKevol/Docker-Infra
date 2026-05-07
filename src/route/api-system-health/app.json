@@ -1,0 +1,8 @@
+{
+    "id": "api-system-health",
+    "title": "/api/system/health",
+    "route": "/api/system/health",
+    "category": "system",
+    "viewuri": "",
+    "controller": "base"
+}

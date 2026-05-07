@@ -1,0 +1,67 @@
+<div class="relative">
+    <button
+        type="button"
+        (click)="toggle($event)"
+        [disabled]="disabled"
+        class="flex h-10 w-full items-center justify-between gap-3 rounded-md border border-zinc-300 bg-white px-3 text-left text-sm text-zinc-900 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+    >
+        <span class="min-w-0 flex-1" [ngClass]="selectedItem() ? '' : 'text-zinc-400 dark:text-zinc-500'">
+            <span *ngIf="!selectedItem()" class="truncate">{{ placeholder }}</span>
+            <span *ngIf="selectedItem()" class="flex min-w-0 items-center gap-2">
+                <span class="truncate">{{ itemLabel(selectedItem()) }}</span>
+                <span
+                    *ngIf="itemBadge(selectedItem())"
+                    class="inline-flex shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold"
+                    [ngClass]="itemBadgeClass(selectedItem())"
+                >
+                    {{ itemBadge(selectedItem()) }}
+                </span>
+            </span>
+        </span>
+        <div class="flex shrink-0 items-center gap-2">
+            <i class="fa-solid text-xs text-zinc-400 dark:text-zinc-500" [ngClass]="open ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+        </div>
+    </button>
+
+    <div *ngIf="open" class="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+        <div class="border-b border-zinc-200 p-3 dark:border-zinc-800">
+            <input
+                data-search-select-input
+                type="text"
+                [(ngModel)]="query"
+                [placeholder]="searchPlaceholder"
+                class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+        </div>
+        <div class="max-h-72 overflow-auto">
+            <button
+                *ngFor="let item of filteredItems()"
+                type="button"
+                (click)="selectItem(item)"
+                [disabled]="itemDisabled(item)"
+                class="flex w-full items-start justify-between gap-3 border-b border-zinc-100 px-3 py-3 text-left hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:hover:bg-zinc-900"
+                [ngClass]="itemValue(item) === value ? 'bg-zinc-50 dark:bg-zinc-900' : ''"
+            >
+                <div class="min-w-0">
+                    <div class="flex min-w-0 items-center gap-2">
+                        <p class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50">{{ itemLabel(item) }}</p>
+                        <span
+                            *ngIf="itemBadge(item)"
+                            class="inline-flex shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold"
+                            [ngClass]="itemBadgeClass(item)"
+                        >
+                            {{ itemBadge(item) }}
+                        </span>
+                    </div>
+                    <p *ngIf="itemDescription(item)" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ itemDescription(item) }}</p>
+                </div>
+                <div class="flex shrink-0 items-center gap-2">
+                    <i *ngIf="itemValue(item) === value" class="fa-solid fa-check text-xs text-zinc-400 dark:text-zinc-500"></i>
+                </div>
+            </button>
+            <div *ngIf="filteredItems().length === 0" class="px-3 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                {{ emptyText }}
+            </div>
+        </div>
+    </div>
+</div>

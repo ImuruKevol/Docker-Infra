@@ -1,36 +1,89 @@
-div(class="flex min-h-full flex-col justify-center px-6 py-12 lg:px-8")
-    div(class="sm:mx-auto sm:w-full sm:max-w-sm")
-        div(class="flex justify-center")
-            div(class="flex items-center justify-center w-12 h-12 rounded-xl bg-indigo-600 text-white")
-                svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-7")
-                    path(stroke-linecap="round", stroke-linejoin="round", d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9")
-        h2(class="mt-6 text-center text-xl font-bold text-gray-900") 서비스 로그인
-        p(class="mt-2 text-center text-[13px] text-gray-500") 계정 정보를 입력하여 로그인하세요.
-
-    div(class="mt-8 sm:mx-auto sm:w-full sm:max-w-sm")
-        div(class="space-y-5")
+div(class="min-h-full bg-zinc-100 px-5 py-6 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50")
+    div(class="mx-auto grid min-h-[calc(100vh-3rem)] max-w-6xl grid-cols-1 overflow-hidden rounded-md border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900 lg:grid-cols-[0.9fr_1.1fr]")
+        section(class="flex flex-col justify-between border-b border-zinc-200 bg-zinc-950 p-8 text-white dark:border-zinc-800 lg:border-b-0 lg:border-r")
             div
-                label(class="block text-[13px] font-medium text-gray-700 mb-1") 이메일
-                input(
-                    type="email",
-                    autocomplete="email",
-                    [(ngModel)]="data.email",
-                    placeholder="name@example.com",
-                    class="block w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px] text-gray-900 placeholder:text-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none")
+                div(class="flex items-center gap-3")
+                    div(class="flex h-10 w-10 items-center justify-center rounded-md bg-white text-sm font-black text-zinc-950") DI
+                    div
+                        p(class="text-sm font-semibold") Docker Infra
+                        p(class="text-xs text-zinc-400") Operator console
+                div(class="mt-10 space-y-4")
+                    h1(class="max-w-md text-3xl font-semibold leading-tight") Docker host, Swarm, registry 상태를 한 화면에서 운영합니다.
+                    div(class="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3")
+                        div(class="rounded-md border border-white/10 bg-white/5 px-3 py-2")
+                            p(class="text-[11px] font-semibold text-zinc-400") DB
+                            p(class="mt-1 text-sm font-semibold") PostgreSQL
+                        div(class="rounded-md border border-white/10 bg-white/5 px-3 py-2")
+                            p(class="text-[11px] font-semibold text-zinc-400") Runtime
+                            p(class="mt-1 text-sm font-semibold") WIZ daemon
+                        div(class="rounded-md border border-white/10 bg-white/5 px-3 py-2")
+                            p(class="text-[11px] font-semibold text-zinc-400") Mode
+                            p(class="mt-1 text-sm font-semibold") Password-only
+            p(class="mt-8 text-xs text-zinc-500") docker_infra_session · SameSite=Lax
 
-            div
-                label(class="block text-[13px] font-medium text-gray-700 mb-1") 비밀번호
-                input(
-                    type="password",
-                    autocomplete="current-password",
-                    [(ngModel)]="data.password",
-                    (keyup.enter)="login()",
-                    placeholder="비밀번호 입력",
-                    class="block w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px] text-gray-900 placeholder:text-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none")
+        section(class="flex items-center justify-center p-5 md:p-8")
+            div(class="w-full max-w-xl")
+                div(*ngIf="loading()", class="rounded-md border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400") 정보를 불러오는 중입니다.
 
-            button(
-                (click)="login()",
-                class="flex w-full justify-center rounded-lg bg-indigo-600 px-3 py-2.5 text-[13px] font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 transition-colors")
-                | 로그인
+                div(*ngIf="!loading() && requiresSetup()", class="space-y-5")
+                    div(class="flex items-center justify-between gap-4")
+                        div
+                            h2(class="text-xl font-semibold text-zinc-950 dark:text-zinc-50") 설치 마법사
+                            p(class="mt-1 text-sm text-zinc-500 dark:text-zinc-400") Local master와 운영자 접속 정보를 설정합니다.
+                        span(class="inline-flex rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300") Setup
 
-        p(class="mt-8 text-center text-xs text-gray-400") &copy; 2026 Sample Service. All rights reserved.
+                    div(class="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200")
+                        div(class="flex items-start gap-3")
+                            i(class="fa-solid fa-wand-magic-sparkles mt-0.5 text-sky-600 dark:text-sky-300")
+                            div
+                                p(class="font-semibold") 서버 환경은 자동으로 감지했습니다.
+                                p(class="mt-1 text-xs leading-5 text-sky-800 dark:text-sky-300") 특별한 구성이 아니면 비밀번호만 정하고 설치를 완료하세요. IP, proxy, 저장 경로는 필요할 때만 고급 설정에서 바꿉니다.
+
+                    div(class="grid grid-cols-1 gap-3 md:grid-cols-2")
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 관리자 비밀번호
+                            input(type="password", autocomplete="new-password", data-testid="setup-password-input", [(ngModel)]="data.setup.password", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 비밀번호 확인
+                            input(type="password", autocomplete="new-password", data-testid="setup-confirm-password-input", [(ngModel)]="data.setup.confirm_password", (keyup.enter)="completeSetup()", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+
+                    div(class="grid grid-cols-2 gap-2 md:grid-cols-4")
+                        div(*ngFor="let check of setupChecks()", class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                            p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") {{check.label}}
+                            p(class="mt-1 truncate text-sm font-semibold", [ngClass]="check.ok ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'") {{check.value}}
+
+                    button(type="button", (click)="toggleAdvancedSetup()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                        i(class="fa-solid", [ngClass]="advancedSetup() ? 'fa-chevron-up' : 'fa-chevron-down'")
+                        span 고급 설정 {{advancedSetup() ? '닫기' : '열기'}}
+
+                    div(*ngIf="advancedSetup()", class="grid grid-cols-1 gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950 md:grid-cols-2")
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서버 IP 또는 advertise address
+                            input(type="text", data-testid="setup-advertise-address", [(ngModel)]="data.setup.advertise_address", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 기본 proxy
+                            select(data-testid="setup-proxy-type", [(ngModel)]="data.setup.proxy_type", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                option(value="auto") 자동 선택
+                                option(value="nginx") nginx
+                                option(value="apache2") apache2
+                                option(value="none") 사용 안 함
+                        label(class="block md:col-span-2")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Compose/Template 저장 경로
+                            input(type="text", data-testid="setup-template-root", [(ngModel)]="data.setup.template_root", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+
+                    button(type="button", data-testid="setup-submit", (click)="completeSetup()", class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                        i(class="fa-solid fa-check")
+                        span 설치 완료
+
+                div(*ngIf="!loading() && !requiresSetup()", class="space-y-5")
+                    div
+                        h2(class="text-xl font-semibold text-zinc-950 dark:text-zinc-50") 운영자 접속
+                        p(class="mt-1 text-sm text-zinc-500 dark:text-zinc-400") 단일 운영자 비밀번호를 입력합니다.
+
+                    label(class="block")
+                        span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 비밀번호
+                        input(type="password", autocomplete="current-password", aria-label="비밀번호", data-testid="password-input", [(ngModel)]="data.password", (keyup.enter)="login()", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+
+                    button(type="button", data-testid="login-submit", (click)="login()", class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                        i(class="fa-solid fa-arrow-right-to-bracket")
+                        span 접속

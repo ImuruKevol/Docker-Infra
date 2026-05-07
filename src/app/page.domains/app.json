@@ -1,0 +1,11 @@
+{
+    "mode": "page",
+    "id": "page.domains",
+    "title": "/domains",
+    "namespace": "domains",
+    "viewuri": "/domains",
+    "category": "infra",
+    "controller": "user",
+    "layout": "layout.sidebar",
+    "template": "wiz-page-domains()"
+}

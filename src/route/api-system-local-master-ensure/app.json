@@ -1,0 +1,8 @@
+{
+    "id": "api-system-local-master-ensure",
+    "title": "System Local Master Ensure",
+    "route": "/api/system/local-master/ensure",
+    "category": "system",
+    "viewuri": "",
+    "controller": "user"
+}

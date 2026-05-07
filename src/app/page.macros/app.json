@@ -1,0 +1,12 @@
+{
+    "id": "page.macros",
+    "mode": "page",
+    "title": "/macros",
+    "namespace": "macros",
+    "category": "infra",
+    "viewuri": "/macros",
+    "preview": "",
+    "controller": "user",
+    "layout": "layout.sidebar",
+    "template": "wiz-page-macros()"
+}

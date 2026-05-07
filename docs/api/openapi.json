@@ -1,0 +1,4857 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "Docker Infra API",
+        "version": "0.1.0",
+        "description": "Initial API contract for Docker Infra. Secret values are never included in examples."
+    },
+    "servers": [
+        {
+            "url": "/"
+        }
+    ],
+    "tags": [
+        {
+            "name": "system",
+            "description": "System health, OpenAPI, and Swagger UI"
+        },
+        {
+            "name": "auth",
+            "description": "Password-only authentication"
+        },
+        {
+            "name": "dashboard",
+            "description": "Dashboard overview"
+        },
+        {
+            "name": "jobs",
+            "description": "Job queue, step status, and logs"
+        },
+        {
+            "name": "nodes",
+            "description": "Local master and Swarm slave node management"
+        },
+        {
+            "name": "compose",
+            "description": "Compose validation and normalization"
+        }
+    ],
+    "paths": {
+        "/openapi.json": {
+            "get": {
+                "summary": "Return the OpenAPI document",
+                "tags": [
+                    "system"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OpenAPI document",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/swagger": {
+            "get": {
+                "summary": "Return Swagger UI",
+                "tags": [
+                    "system"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Swagger UI HTML",
+                        "content": {
+                            "text/html": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/system/health": {
+            "get": {
+                "summary": "Return Docker Infra API health",
+                "tags": [
+                    "system"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "API health response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "status": "ok",
+                                        "service": "docker-infra",
+                                        "version": "0.1.0",
+                                        "timestamp": "2026-05-06T00:00:00Z",
+                                        "checks": {
+                                            "api": {
+                                                "status": "ok"
+                                            },
+                                            "database": {
+                                                "status": "not_configured",
+                                                "schema_version": null
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/wiz/api/page.dashboard/overview": {
+            "post": {
+                "summary": "Return the initial Docker Infra dashboard overview",
+                "tags": [
+                    "dashboard"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Dashboard overview",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DashboardOverviewResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "stats": [
+                                            {
+                                                "label": "등록 서버",
+                                                "value": "0",
+                                                "tone": "blue"
+                                            }
+                                        ],
+                                        "checklist": [
+                                            {
+                                                "label": "샘플 소스 정리",
+                                                "status": "done"
+                                            },
+                                            {
+                                                "label": "OpenAPI/Swagger 기반",
+                                                "status": "done"
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/wiz/api/page.access/login": {
+            "post": {
+                "summary": "Password-only login for the access page",
+                "tags": [
+                    "auth"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/LoginRequest"
+                            },
+                            "example": {
+                                "password": "<redacted>"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Authenticated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthLoginResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "authenticated": true,
+                                        "session": {
+                                            "id": "00000000-0000-0000-0000-000000000000",
+                                            "actor": "operator",
+                                            "authenticated": true,
+                                            "expires_at": "2026-05-06T12:00:00Z",
+                                            "last_seen_at": "2026-05-06T00:00:00Z",
+                                            "created_at": "2026-05-06T00:00:00Z"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Password is missing",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 400,
+                                    "data": {
+                                        "message": "비밀번호를 입력해주세요.",
+                                        "error_code": "PASSWORD_REQUIRED"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid password",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 401,
+                                    "data": {
+                                        "message": "비밀번호가 올바르지 않습니다.",
+                                        "error_code": "INVALID_PASSWORD"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "423": {
+                        "description": "Setup required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 423,
+                                    "data": {
+                                        "message": "설치 마법사를 먼저 완료해주세요.",
+                                        "error_code": "SETUP_REQUIRED"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limited",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 429,
+                                    "data": {
+                                        "message": "로그인 실패가 반복되어 잠시 후 다시 시도해주세요.",
+                                        "error_code": "AUTH_RATE_LIMITED",
+                                        "retry_after_seconds": 900
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/system/settings": {
+            "get": {
+                "summary": "List or read system settings",
+                "tags": [
+                    "system"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "test_run_id",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Settings response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SystemSettingsListResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "settings": [
+                                            {
+                                                "id": "00000000-0000-0000-0000-000000000000",
+                                                "key": "browser_title",
+                                                "value": "Docker Infra",
+                                                "value_type": "string",
+                                                "is_secret": false,
+                                                "secret": null,
+                                                "description": "Browser title",
+                                                "test_run_id": "di-test-run",
+                                                "metadata": {},
+                                                "created_at": "2026-05-06T00:00:00Z",
+                                                "updated_at": "2026-05-06T00:00:00Z"
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create or update a system setting",
+                "tags": [
+                    "system"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SystemSettingUpsertRequest"
+                            },
+                            "example": {
+                                "key": "harbor_token",
+                                "value": "<redacted>",
+                                "value_type": "secret",
+                                "is_secret": true,
+                                "test_run_id": "di-test-run",
+                                "metadata": {}
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Setting saved",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SystemSettingResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "setting": {
+                                            "id": "00000000-0000-0000-0000-000000000000",
+                                            "key": "harbor_token",
+                                            "value": null,
+                                            "value_type": "secret",
+                                            "is_secret": true,
+                                            "secret": {
+                                                "is_configured": true,
+                                                "masked_value": "********",
+                                                "last_updated_at": "2026-05-06T00:00:00Z"
+                                            },
+                                            "description": null,
+                                            "test_run_id": "di-test-run",
+                                            "metadata": {},
+                                            "created_at": "2026-05-06T00:00:00Z",
+                                            "updated_at": "2026-05-06T00:00:00Z"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Delete a system setting",
+                "tags": [
+                    "system"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Setting deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DeleteResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "deleted": true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/login": {
+            "post": {
+                "summary": "Password-only login",
+                "tags": [
+                    "auth"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/LoginRequest"
+                            },
+                            "example": {
+                                "password": "<redacted>"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Authenticated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthLoginResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "authenticated": true,
+                                        "session": {
+                                            "id": "00000000-0000-0000-0000-000000000000",
+                                            "actor": "operator",
+                                            "authenticated": true,
+                                            "expires_at": "2026-05-06T12:00:00Z",
+                                            "last_seen_at": "2026-05-06T00:00:00Z",
+                                            "created_at": "2026-05-06T00:00:00Z"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Password is missing",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 400,
+                                    "data": {
+                                        "message": "비밀번호를 입력해주세요.",
+                                        "error_code": "PASSWORD_REQUIRED"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid password",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 401,
+                                    "data": {
+                                        "message": "비밀번호가 올바르지 않습니다.",
+                                        "error_code": "INVALID_PASSWORD"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "423": {
+                        "description": "Setup required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 423,
+                                    "data": {
+                                        "message": "설치 마법사를 먼저 완료해주세요.",
+                                        "error_code": "SETUP_REQUIRED"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limited",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 429,
+                                    "data": {
+                                        "message": "로그인 실패가 반복되어 잠시 후 다시 시도해주세요.",
+                                        "error_code": "AUTH_RATE_LIMITED",
+                                        "retry_after_seconds": 900
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/logout": {
+            "post": {
+                "summary": "Logout the current password-only session",
+                "tags": [
+                    "auth"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Logged out",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthLogoutResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "authenticated": false,
+                                        "revoked": true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/session": {
+            "get": {
+                "summary": "Return current session state",
+                "tags": [
+                    "auth"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Session state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthSessionResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "authenticated": true,
+                                        "session": {
+                                            "id": "00000000-0000-0000-0000-000000000000",
+                                            "actor": "operator",
+                                            "authenticated": true,
+                                            "expires_at": "2026-05-06T12:00:00Z",
+                                            "last_seen_at": "2026-05-06T00:00:00Z",
+                                            "created_at": "2026-05-06T00:00:00Z"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Revoke current session",
+                "tags": [
+                    "auth"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Session revoked",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthLogoutResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "authenticated": false,
+                                        "revoked": true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/system/setup": {
+            "get": {
+                "summary": "Return setup wizard status",
+                "tags": [
+                    "system"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Setup status",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SetupStatusResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "setup": {
+                                            "configured": true,
+                                            "database_configured": true,
+                                            "requires_setup": false,
+                                            "settings": {
+                                                "completed": true,
+                                                "completed_at": "2026-05-06T00:00:00Z",
+                                                "default_proxy": "none",
+                                                "template_root": ".runtime/dev/templates",
+                                                "advertise_address": "127.0.0.1",
+                                                "public_url": null
+                                            },
+                                            "local_master": {
+                                                "id": "00000000-0000-0000-0000-000000000000",
+                                                "name": "local-master",
+                                                "role": "local_master",
+                                                "host": "127.0.0.1",
+                                                "ssh_port": null,
+                                                "auth_type": null,
+                                                "status": "active",
+                                                "swarm_node_id": null,
+                                                "is_local_master": true,
+                                                "labels": {
+                                                    "scope": "local"
+                                                },
+                                                "test_run_id": "di-test-run",
+                                                "metadata": {},
+                                                "created_at": "2026-05-06T00:00:00Z",
+                                                "updated_at": "2026-05-06T00:00:00Z"
+                                            },
+                                            "checks": {
+                                                "advertise_address": "127.0.0.1",
+                                                "docker": {
+                                                    "installed": true,
+                                                    "daemon": "ok",
+                                                    "swarm": {
+                                                        "state": "active",
+                                                        "manager": true
+                                                    }
+                                                },
+                                                "proxy": {
+                                                    "nginx": {
+                                                        "status": "missing"
+                                                    },
+                                                    "apache2": {
+                                                        "status": "missing"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Complete the initial setup wizard",
+                "tags": [
+                    "system"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SetupRequest"
+                            },
+                            "example": {
+                                "password": "<redacted>",
+                                "confirm_password": "<redacted>",
+                                "advertise_address": "127.0.0.1",
+                                "proxy_type": "none",
+                                "template_root": ".runtime/dev/templates",
+                                "test_run_id": "di-test-run"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Setup completed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SetupCompleteResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "setup": {
+                                            "configured": true,
+                                            "database_configured": true,
+                                            "requires_setup": false,
+                                            "settings": {
+                                                "completed": true,
+                                                "completed_at": "2026-05-06T00:00:00Z",
+                                                "default_proxy": "none",
+                                                "template_root": ".runtime/dev/templates",
+                                                "advertise_address": "127.0.0.1",
+                                                "public_url": null
+                                            },
+                                            "local_master": {
+                                                "id": "00000000-0000-0000-0000-000000000000",
+                                                "name": "local-master",
+                                                "role": "local_master",
+                                                "host": "127.0.0.1",
+                                                "ssh_port": null,
+                                                "auth_type": null,
+                                                "status": "active",
+                                                "swarm_node_id": null,
+                                                "is_local_master": true,
+                                                "labels": {
+                                                    "scope": "local"
+                                                },
+                                                "test_run_id": "di-test-run",
+                                                "metadata": {},
+                                                "created_at": "2026-05-06T00:00:00Z",
+                                                "updated_at": "2026-05-06T00:00:00Z"
+                                            },
+                                            "checks": {
+                                                "advertise_address": "127.0.0.1",
+                                                "docker": {
+                                                    "installed": true,
+                                                    "daemon": "ok",
+                                                    "swarm": {
+                                                        "state": "active",
+                                                        "manager": true
+                                                    }
+                                                },
+                                                "proxy": {
+                                                    "nginx": {
+                                                        "status": "missing"
+                                                    },
+                                                    "apache2": {
+                                                        "status": "missing"
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        "local_master": {
+                                            "id": "00000000-0000-0000-0000-000000000000",
+                                            "name": "local-master",
+                                            "role": "local_master",
+                                            "host": "127.0.0.1",
+                                            "ssh_port": null,
+                                            "auth_type": null,
+                                            "status": "active",
+                                            "swarm_node_id": null,
+                                            "is_local_master": true,
+                                            "labels": {
+                                                "scope": "local"
+                                            },
+                                            "test_run_id": "di-test-run",
+                                            "metadata": {},
+                                            "created_at": "2026-05-06T00:00:00Z",
+                                            "updated_at": "2026-05-06T00:00:00Z"
+                                        },
+                                        "authenticated": true,
+                                        "session": {
+                                            "id": "00000000-0000-0000-0000-000000000000",
+                                            "actor": "operator",
+                                            "authenticated": true,
+                                            "expires_at": "2026-05-06T12:00:00Z",
+                                            "last_seen_at": "2026-05-06T00:00:00Z",
+                                            "created_at": "2026-05-06T00:00:00Z"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Setup already completed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 409,
+                                    "data": {
+                                        "message": "이미 설치가 완료되었습니다.",
+                                        "error_code": "SETUP_ALREADY_COMPLETED"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/jobs": {
+            "get": {
+                "summary": "List jobs",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "$ref": "#/components/schemas/JobStatus"
+                        }
+                    },
+                    {
+                        "name": "test_run_id",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "default": 50
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Job list",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobListResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "jobs": [
+                                            {
+                                                "id": "00000000-0000-0000-0000-000000000001",
+                                                "type": "test.deploy",
+                                                "status": "pending",
+                                                "requested_payload": {
+                                                    "service": "demo"
+                                                },
+                                                "result_payload": {},
+                                                "test_run_id": "di-test-run",
+                                                "metadata": {},
+                                                "started_at": null,
+                                                "finished_at": null,
+                                                "created_at": "2026-05-06T00:00:00Z",
+                                                "updated_at": "2026-05-06T00:00:00Z"
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create a job",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/JobCreateRequest"
+                            },
+                            "example": {
+                                "type": "test.deploy",
+                                "steps": [
+                                    {
+                                        "name": "prepare"
+                                    },
+                                    {
+                                        "name": "deploy"
+                                    }
+                                ],
+                                "requested_payload": {
+                                    "service": "demo"
+                                },
+                                "test_run_id": "di-test-run",
+                                "metadata": {}
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Job created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobDetailResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "job": {
+                                            "id": "00000000-0000-0000-0000-000000000001",
+                                            "type": "test.deploy",
+                                            "status": "pending",
+                                            "requested_payload": {
+                                                "service": "demo"
+                                            },
+                                            "result_payload": {},
+                                            "test_run_id": "di-test-run",
+                                            "metadata": {},
+                                            "started_at": null,
+                                            "finished_at": null,
+                                            "created_at": "2026-05-06T00:00:00Z",
+                                            "updated_at": "2026-05-06T00:00:00Z",
+                                            "steps": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000101",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "name": "deploy",
+                                                    "status": "pending",
+                                                    "order_no": 1,
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "started_at": null,
+                                                    "finished_at": null,
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ],
+                                            "logs": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000201",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "step_id": "00000000-0000-0000-0000-000000000101",
+                                                    "stream": "stdout",
+                                                    "message": "deploy started",
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/jobs/{job_id}": {
+            "get": {
+                "summary": "Get job detail",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Job detail",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobDetailResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "job": {
+                                            "id": "00000000-0000-0000-0000-000000000001",
+                                            "type": "test.deploy",
+                                            "status": "pending",
+                                            "requested_payload": {
+                                                "service": "demo"
+                                            },
+                                            "result_payload": {},
+                                            "test_run_id": "di-test-run",
+                                            "metadata": {},
+                                            "started_at": null,
+                                            "finished_at": null,
+                                            "created_at": "2026-05-06T00:00:00Z",
+                                            "updated_at": "2026-05-06T00:00:00Z",
+                                            "steps": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000101",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "name": "deploy",
+                                                    "status": "pending",
+                                                    "order_no": 1,
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "started_at": null,
+                                                    "finished_at": null,
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ],
+                                            "logs": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000201",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "step_id": "00000000-0000-0000-0000-000000000101",
+                                                    "stream": "stdout",
+                                                    "message": "deploy started",
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/jobs/{job_id}/status": {
+            "post": {
+                "summary": "Transition job status",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/JobStatusUpdateRequest"
+                            },
+                            "example": {
+                                "status": "running",
+                                "result_payload": {}
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Job status updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobDetailResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "job": {
+                                            "id": "00000000-0000-0000-0000-000000000001",
+                                            "type": "test.deploy",
+                                            "status": "pending",
+                                            "requested_payload": {
+                                                "service": "demo"
+                                            },
+                                            "result_payload": {},
+                                            "test_run_id": "di-test-run",
+                                            "metadata": {},
+                                            "started_at": null,
+                                            "finished_at": null,
+                                            "created_at": "2026-05-06T00:00:00Z",
+                                            "updated_at": "2026-05-06T00:00:00Z",
+                                            "steps": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000101",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "name": "deploy",
+                                                    "status": "pending",
+                                                    "order_no": 1,
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "started_at": null,
+                                                    "finished_at": null,
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ],
+                                            "logs": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000201",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "step_id": "00000000-0000-0000-0000-000000000101",
+                                                    "stream": "stdout",
+                                                    "message": "deploy started",
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/jobs/{job_id}/steps/{step_ref}/status": {
+            "post": {
+                "summary": "Transition job step status",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "step_ref",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/JobStepStatusUpdateRequest"
+                            },
+                            "example": {
+                                "status": "succeeded",
+                                "metadata": {}
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Step status updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobDetailResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "job": {
+                                            "id": "00000000-0000-0000-0000-000000000001",
+                                            "type": "test.deploy",
+                                            "status": "pending",
+                                            "requested_payload": {
+                                                "service": "demo"
+                                            },
+                                            "result_payload": {},
+                                            "test_run_id": "di-test-run",
+                                            "metadata": {},
+                                            "started_at": null,
+                                            "finished_at": null,
+                                            "created_at": "2026-05-06T00:00:00Z",
+                                            "updated_at": "2026-05-06T00:00:00Z",
+                                            "steps": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000101",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "name": "deploy",
+                                                    "status": "pending",
+                                                    "order_no": 1,
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "started_at": null,
+                                                    "finished_at": null,
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ],
+                                            "logs": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000201",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "step_id": "00000000-0000-0000-0000-000000000101",
+                                                    "stream": "stdout",
+                                                    "message": "deploy started",
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/jobs/{job_id}/logs": {
+            "post": {
+                "summary": "Append a job log entry",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/JobLogAppendRequest"
+                            },
+                            "example": {
+                                "message": "deploy started",
+                                "stream": "stdout",
+                                "order_no": 1,
+                                "metadata": {}
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Log appended",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobLogResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "log": {
+                                            "id": "00000000-0000-0000-0000-000000000201",
+                                            "job_id": "00000000-0000-0000-0000-000000000001",
+                                            "step_id": "00000000-0000-0000-0000-000000000101",
+                                            "stream": "stdout",
+                                            "message": "deploy started",
+                                            "test_run_id": "di-test-run",
+                                            "metadata": {},
+                                            "created_at": "2026-05-06T00:00:00Z",
+                                            "updated_at": "2026-05-06T00:00:00Z"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/jobs/{job_id}/cancel": {
+            "post": {
+                "summary": "Cancel a pending or running job",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Job canceled",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobDetailResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "job": {
+                                            "id": "00000000-0000-0000-0000-000000000001",
+                                            "type": "test.deploy",
+                                            "status": "canceled",
+                                            "requested_payload": {
+                                                "service": "demo"
+                                            },
+                                            "result_payload": {},
+                                            "test_run_id": "di-test-run",
+                                            "metadata": {},
+                                            "started_at": null,
+                                            "finished_at": null,
+                                            "created_at": "2026-05-06T00:00:00Z",
+                                            "updated_at": "2026-05-06T00:00:00Z",
+                                            "steps": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000101",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "name": "deploy",
+                                                    "status": "pending",
+                                                    "order_no": 1,
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "started_at": null,
+                                                    "finished_at": null,
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ],
+                                            "logs": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000201",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "step_id": "00000000-0000-0000-0000-000000000101",
+                                                    "stream": "stdout",
+                                                    "message": "deploy started",
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/jobs/{job_id}/retry": {
+            "post": {
+                "summary": "Retry a failed job as a new job",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Retry job created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobRetryResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "original_job_id": "00000000-0000-0000-0000-000000000001",
+                                        "retried_job": {
+                                            "id": "00000000-0000-0000-0000-000000000002",
+                                            "type": "test.deploy",
+                                            "status": "pending",
+                                            "requested_payload": {
+                                                "service": "demo"
+                                            },
+                                            "result_payload": {},
+                                            "test_run_id": "di-test-run",
+                                            "metadata": {
+                                                "retry_of": "00000000-0000-0000-0000-000000000001",
+                                                "retry_attempt": 1
+                                            },
+                                            "started_at": null,
+                                            "finished_at": null,
+                                            "created_at": "2026-05-06T00:00:00Z",
+                                            "updated_at": "2026-05-06T00:00:00Z",
+                                            "steps": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000101",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "name": "deploy",
+                                                    "status": "pending",
+                                                    "order_no": 1,
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "started_at": null,
+                                                    "finished_at": null,
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ],
+                                            "logs": [
+                                                {
+                                                    "id": "00000000-0000-0000-0000-000000000201",
+                                                    "job_id": "00000000-0000-0000-0000-000000000001",
+                                                    "step_id": "00000000-0000-0000-0000-000000000101",
+                                                    "stream": "stdout",
+                                                    "message": "deploy started",
+                                                    "test_run_id": "di-test-run",
+                                                    "metadata": {},
+                                                    "created_at": "2026-05-06T00:00:00Z",
+                                                    "updated_at": "2026-05-06T00:00:00Z"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/jobs/{job_id}/logs/search": {
+            "post": {
+                "summary": "Search masked job logs",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/JobLogSearchRequest"
+                            },
+                            "example": {
+                                "query": "********",
+                                "stream": "stderr",
+                                "limit": 100
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Masked job log search results",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobLogSearchResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "logs": [
+                                            {
+                                                "id": "00000000-0000-0000-0000-000000000201",
+                                                "job_id": "00000000-0000-0000-0000-000000000001",
+                                                "step_id": "00000000-0000-0000-0000-000000000101",
+                                                "stream": "stderr",
+                                                "message": "deploy token=******** keep-context",
+                                                "test_run_id": "di-test-run",
+                                                "metadata": {
+                                                    "masked": true
+                                                },
+                                                "created_at": "2026-05-06T00:00:00Z",
+                                                "updated_at": "2026-05-06T00:00:00Z"
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/jobs/{job_id}/logs/download": {
+            "get": {
+                "summary": "Download masked job logs as text content",
+                "tags": [
+                    "jobs"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Masked job log download content",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/JobLogDownloadResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "download": {
+                                            "job_id": "00000000-0000-0000-0000-000000000001",
+                                            "filename": "job-00000000-0000-0000-0000-000000000001.log",
+                                            "content_type": "text/plain; charset=utf-8",
+                                            "content": "2026-05-06T00:00:00 stderr step=00000000-0000-0000-0000-000000000101 deploy token=******** keep-context\n"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/system/local-command/check": {
+            "get": {
+                "summary": "Run a safe local command check on the Docker Infra host",
+                "tags": [
+                    "system"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "target",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string",
+                            "default": "docker.version"
+                        }
+                    },
+                    {
+                        "name": "timeout_seconds",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "default": 10
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Local command check result",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/LocalCommandCheckResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "result": {
+                                            "command_id": "docker.version",
+                                            "category": "docker",
+                                            "command": [
+                                                "docker",
+                                                "version",
+                                                "--format",
+                                                "{{json .}}"
+                                            ],
+                                            "command_display": "docker version --format '{{json .}}'",
+                                            "destructive": false,
+                                            "status": "ok",
+                                            "exit_code": 0,
+                                            "stdout": "{\"Client\":{\"Version\":\"26.1.0\"}}\n",
+                                            "stderr": "",
+                                            "duration_ms": 25,
+                                            "timed_out": false
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Destructive command is not allowlisted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 403,
+                                    "data": {
+                                        "message": "destructive local command is not allowlisted",
+                                        "error_code": "LOCAL_COMMAND_NOT_ALLOWLISTED"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Run a local command check on the Docker Infra host",
+                "tags": [
+                    "system"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "requestBody": {
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/LocalCommandCheckRequest"
+                            },
+                            "example": {
+                                "target": "docker.version",
+                                "timeout_seconds": 10
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Local command check result",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/LocalCommandCheckResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "result": {
+                                            "command_id": "docker.version",
+                                            "category": "docker",
+                                            "command": [
+                                                "docker",
+                                                "version",
+                                                "--format",
+                                                "{{json .}}"
+                                            ],
+                                            "command_display": "docker version --format '{{json .}}'",
+                                            "destructive": false,
+                                            "status": "ok",
+                                            "exit_code": 0,
+                                            "stdout": "{\"Client\":{\"Version\":\"26.1.0\"}}\n",
+                                            "stderr": "",
+                                            "duration_ms": 25,
+                                            "timed_out": false
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Destructive command is not allowlisted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "code": 403,
+                                    "data": {
+                                        "message": "destructive local command is not allowlisted",
+                                        "error_code": "LOCAL_COMMAND_NOT_ALLOWLISTED"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/system/local-master/ensure": {
+            "get": {
+                "summary": "Ensure local master using default options",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/LocalMasterEnsureResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Ensure local Docker Infra host is the Swarm manager and overlay network exists",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "requestBody": {
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/LocalMasterEnsureRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/LocalMasterEnsureResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes": {
+            "get": {
+                "summary": "List nodes",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "test_run_id",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NodeListResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Register or update a managed node",
+                "description": "Create a new managed node when `node_id` is omitted. Update an existing non-master node when `node_id` is supplied. Password is required for first-time registration and optional when reusing a stored SSH key during update.",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/NodeRegisterRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NodeResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{node_id}": {
+            "get": {
+                "summary": "Read node detail",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "node_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NodeResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{node_id}/check": {
+            "post": {
+                "summary": "Check slave SSH and Docker daemon status",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "node_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NodeCheckResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{node_id}/join": {
+            "post": {
+                "summary": "Create and run a Swarm join job for a slave node",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "node_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/NodeJoinRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NodeJoinResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{node_id}/reporter-token": {
+            "post": {
+                "summary": "Prepare automatic node status collection token",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "node_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ReporterTokenResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{node_id}/metrics": {
+            "get": {
+                "summary": "List node metrics ordered by latest report time",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "node_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "default": 50
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NodeMetricsResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{node_id}/containers": {
+            "get": {
+                "summary": "Return containers from the latest node metric",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "node_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NodeContainersResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/reporter/metrics": {
+            "post": {
+                "summary": "Ingest node metric from a reporter token",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "reporterBearer": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/MetricIngestRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/MetricIngestResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/compose/validate": {
+            "post": {
+                "summary": "Validate and normalize a Docker Compose document",
+                "tags": [
+                    "compose"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ComposeValidationRequest"
+                            },
+                            "example": {
+                                "namespace": "demo_app",
+                                "filename": "docker-compose.yaml",
+                                "content": "services:\n  web:\n    image: nginx:1.27\n    healthcheck:\n      test: [\"CMD-SHELL\", \"true\"]\n"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Compose validation passed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ComposeValidationResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "validation": {
+                                            "valid": true,
+                                            "namespace": "demo_app",
+                                            "stack_name": "demo_app",
+                                            "filename": "docker-compose.yaml",
+                                            "network": "docker_infra_overlay",
+                                            "job_health_check": false,
+                                            "normalized": {
+                                                "services": {
+                                                    "web": {
+                                                        "image": "nginx:1.27",
+                                                        "healthcheck": {
+                                                            "test": [
+                                                                "CMD-SHELL",
+                                                                "true"
+                                                            ]
+                                                        },
+                                                        "networks": [
+                                                            "docker_infra_overlay"
+                                                        ],
+                                                        "deploy": {
+                                                            "replicas": 1,
+                                                            "update_config": {
+                                                                "parallelism": 1,
+                                                                "delay": "10s",
+                                                                "failure_action": "rollback",
+                                                                "order": "start-first"
+                                                            },
+                                                            "rollback_config": {
+                                                                "parallelism": 1,
+                                                                "delay": "10s",
+                                                                "failure_action": "pause",
+                                                                "order": "stop-first"
+                                                            },
+                                                            "restart_policy": {
+                                                                "condition": "on-failure",
+                                                                "delay": "5s",
+                                                                "max_attempts": 3,
+                                                                "window": "120s"
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                "networks": {
+                                                    "docker_infra_overlay": {
+                                                        "external": true
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Compose validation failed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ComposeValidationErrorResponse"
+                                },
+                                "example": {
+                                    "code": 400,
+                                    "data": {
+                                        "message": "Compose validation failed.",
+                                        "error_code": "COMPOSE_VALIDATION_FAILED",
+                                        "details": [
+                                            {
+                                                "path": "services.web.container_name",
+                                                "error_code": "FORBIDDEN_CONTAINER_NAME",
+                                                "message": "container_name은 사용할 수 없습니다."
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "sessionCookie": {
+                "type": "apiKey",
+                "in": "cookie",
+                "name": "docker_infra_session",
+                "description": "Password-only login session cookie. The login API itself does not require a user ID."
+            },
+            "reporterBearer": {
+                "type": "http",
+                "scheme": "bearer"
+            }
+        },
+        "parameters": {
+            "PageParam": {
+                "name": "page",
+                "in": "query",
+                "required": false,
+                "schema": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 1
+                }
+            },
+            "PageSizeParam": {
+                "name": "page_size",
+                "in": "query",
+                "required": false,
+                "schema": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "default": 20
+                }
+            }
+        },
+        "schemas": {
+            "ErrorResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/ErrorData"
+                    }
+                }
+            },
+            "ErrorData": {
+                "type": "object",
+                "required": [
+                    "message"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "message": {
+                        "type": "string"
+                    },
+                    "error_code": {
+                        "type": "string"
+                    },
+                    "details": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ErrorDetail"
+                        }
+                    },
+                    "request_id": {
+                        "type": "string"
+                    },
+                    "retry_after_seconds": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "locked_until": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "ErrorDetail": {
+                "type": "object",
+                "required": [
+                    "field",
+                    "message"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "field": {
+                        "type": "string"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "error_code": {
+                        "type": "string"
+                    }
+                }
+            },
+            "PaginationMeta": {
+                "type": "object",
+                "required": [
+                    "page",
+                    "page_size",
+                    "total",
+                    "has_next"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "page": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "example": 1
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 200,
+                        "example": 20
+                    },
+                    "total": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "example": 0
+                    },
+                    "has_next": {
+                        "type": "boolean",
+                        "example": false
+                    }
+                }
+            },
+            "SecretMaskedValue": {
+                "type": "object",
+                "required": [
+                    "is_configured",
+                    "masked_value"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "is_configured": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "masked_value": {
+                        "type": "string",
+                        "description": "Masked placeholder only; never return the original secret.",
+                        "example": "********"
+                    },
+                    "last_updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                }
+            },
+            "SystemSetting": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "key",
+                    "value",
+                    "value_type",
+                    "is_secret",
+                    "secret",
+                    "description",
+                    "test_run_id",
+                    "metadata",
+                    "created_at",
+                    "updated_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "key": {
+                        "type": "string"
+                    },
+                    "value": {
+                        "nullable": true
+                    },
+                    "value_type": {
+                        "type": "string"
+                    },
+                    "is_secret": {
+                        "type": "boolean"
+                    },
+                    "secret": {
+                        "nullable": true,
+                        "$ref": "#/components/schemas/SecretMaskedValue"
+                    },
+                    "description": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "SystemSettingUpsertRequest": {
+                "type": "object",
+                "required": [
+                    "key"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "key": {
+                        "type": "string"
+                    },
+                    "value": {
+                        "nullable": true
+                    },
+                    "value_type": {
+                        "type": "string",
+                        "default": "string"
+                    },
+                    "is_secret": {
+                        "type": "boolean",
+                        "default": false
+                    },
+                    "description": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    }
+                }
+            },
+            "SystemSettingResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "setting"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "setting": {
+                                "$ref": "#/components/schemas/SystemSetting"
+                            }
+                        }
+                    }
+                }
+            },
+            "SystemSettingsListResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "settings"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "settings": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/SystemSetting"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "DeleteResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "deleted"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "deleted": {
+                                "type": "boolean"
+                            }
+                        }
+                    }
+                }
+            },
+            "JobStatus": {
+                "type": "string",
+                "enum": [
+                    "pending",
+                    "running",
+                    "succeeded",
+                    "failed",
+                    "canceled"
+                ]
+            },
+            "JobStepStatus": {
+                "type": "string",
+                "enum": [
+                    "pending",
+                    "running",
+                    "succeeded",
+                    "failed",
+                    "skipped",
+                    "canceled"
+                ]
+            },
+            "JobSummary": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "type",
+                    "status",
+                    "created_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "example": "job_01"
+                    },
+                    "type": {
+                        "type": "string",
+                        "example": "system.health_check"
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/JobStatus"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "started_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "finished_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                }
+            },
+            "JobStepSummary": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "name",
+                    "order_no",
+                    "status"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "example": "step_01"
+                    },
+                    "name": {
+                        "type": "string",
+                        "example": "Check Docker daemon"
+                    },
+                    "order_no": {
+                        "type": "integer",
+                        "example": 1
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/JobStepStatus"
+                    },
+                    "started_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "finished_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                }
+            },
+            "LoginRequest": {
+                "type": "object",
+                "required": [
+                    "password"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "password": {
+                        "type": "string",
+                        "format": "password",
+                        "writeOnly": true,
+                        "example": "<redacted>"
+                    }
+                }
+            },
+            "HealthResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer",
+                        "example": 200
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/HealthData"
+                    }
+                }
+            },
+            "HealthData": {
+                "type": "object",
+                "required": [
+                    "status",
+                    "service",
+                    "version",
+                    "timestamp",
+                    "checks"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "ok",
+                            "degraded",
+                            "error"
+                        ]
+                    },
+                    "service": {
+                        "type": "string",
+                        "example": "docker-infra"
+                    },
+                    "version": {
+                        "type": "string",
+                        "example": "0.1.0"
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "checks": {
+                        "type": "object",
+                        "required": [
+                            "api",
+                            "database"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "api": {
+                                "$ref": "#/components/schemas/HealthCheck"
+                            },
+                            "database": {
+                                "$ref": "#/components/schemas/HealthCheck"
+                            }
+                        }
+                    }
+                }
+            },
+            "HealthCheck": {
+                "type": "object",
+                "required": [
+                    "status"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "ok",
+                            "not_configured",
+                            "degraded",
+                            "error"
+                        ]
+                    },
+                    "schema_version": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "message": {
+                        "type": "string"
+                    }
+                }
+            },
+            "DashboardOverviewResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer",
+                        "example": 200
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "stats",
+                            "checklist"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "stats": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/DashboardStat"
+                                }
+                            },
+                            "checklist": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/DashboardChecklistItem"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "DashboardStat": {
+                "type": "object",
+                "required": [
+                    "label",
+                    "value",
+                    "tone"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "label": {
+                        "type": "string"
+                    },
+                    "value": {
+                        "type": "string"
+                    },
+                    "tone": {
+                        "type": "string"
+                    }
+                }
+            },
+            "DashboardChecklistItem": {
+                "type": "object",
+                "required": [
+                    "label",
+                    "status"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "label": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "pending",
+                            "in_progress",
+                            "done"
+                        ]
+                    }
+                }
+            },
+            "AuthSession": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "actor",
+                    "authenticated",
+                    "expires_at",
+                    "last_seen_at",
+                    "created_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "actor": {
+                        "type": "string",
+                        "enum": [
+                            "operator"
+                        ]
+                    },
+                    "authenticated": {
+                        "type": "boolean"
+                    },
+                    "expires_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "last_seen_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "AuthLoginResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "authenticated",
+                            "session"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "authenticated": {
+                                "type": "boolean"
+                            },
+                            "session": {
+                                "$ref": "#/components/schemas/AuthSession"
+                            }
+                        }
+                    }
+                }
+            },
+            "AuthSessionResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "authenticated",
+                            "session"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "authenticated": {
+                                "type": "boolean"
+                            },
+                            "session": {
+                                "nullable": true,
+                                "$ref": "#/components/schemas/AuthSession"
+                            }
+                        }
+                    }
+                }
+            },
+            "AuthLogoutResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "authenticated",
+                            "revoked"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "authenticated": {
+                                "type": "boolean"
+                            },
+                            "revoked": {
+                                "type": "boolean"
+                            }
+                        }
+                    }
+                }
+            },
+            "LocalMasterNode": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "name",
+                    "role",
+                    "host",
+                    "ssh_port",
+                    "auth_type",
+                    "status",
+                    "swarm_node_id",
+                    "is_local_master",
+                    "labels",
+                    "test_run_id",
+                    "metadata",
+                    "created_at",
+                    "updated_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "role": {
+                        "type": "string",
+                        "enum": [
+                            "local_master"
+                        ]
+                    },
+                    "host": {
+                        "type": "string"
+                    },
+                    "ssh_port": {
+                        "type": "integer",
+                        "nullable": true
+                    },
+                    "auth_type": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "swarm_node_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "is_local_master": {
+                        "type": "boolean"
+                    },
+                    "labels": {
+                        "type": "object"
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "SetupStatus": {
+                "type": "object",
+                "required": [
+                    "configured",
+                    "database_configured",
+                    "requires_setup",
+                    "settings",
+                    "local_master",
+                    "checks"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "configured": {
+                        "type": "boolean"
+                    },
+                    "database_configured": {
+                        "type": "boolean"
+                    },
+                    "requires_setup": {
+                        "type": "boolean"
+                    },
+                    "settings": {
+                        "type": "object",
+                        "required": [
+                            "completed",
+                            "completed_at",
+                            "default_proxy",
+                            "template_root",
+                            "advertise_address",
+                            "public_url"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "completed": {
+                                "type": "boolean"
+                            },
+                            "completed_at": {
+                                "type": "string",
+                                "nullable": true
+                            },
+                            "default_proxy": {
+                                "type": "string",
+                                "nullable": true
+                            },
+                            "template_root": {
+                                "type": "string",
+                                "nullable": true
+                            },
+                            "advertise_address": {
+                                "type": "string",
+                                "nullable": true
+                            },
+                            "public_url": {
+                                "type": "string",
+                                "nullable": true
+                            }
+                        }
+                    },
+                    "local_master": {
+                        "nullable": true,
+                        "$ref": "#/components/schemas/LocalMasterNode"
+                    },
+                    "checks": {
+                        "type": "object",
+                        "nullable": true
+                    }
+                }
+            },
+            "SetupStatusResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "setup"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "setup": {
+                                "$ref": "#/components/schemas/SetupStatus"
+                            }
+                        }
+                    }
+                }
+            },
+            "SetupRequest": {
+                "type": "object",
+                "required": [
+                    "password",
+                    "template_root"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "password": {
+                        "type": "string",
+                        "format": "password",
+                        "writeOnly": true,
+                        "example": "<redacted>"
+                    },
+                    "confirm_password": {
+                        "type": "string",
+                        "format": "password",
+                        "writeOnly": true,
+                        "example": "<redacted>"
+                    },
+                    "advertise_address": {
+                        "type": "string"
+                    },
+                    "proxy_type": {
+                        "type": "string",
+                        "enum": [
+                            "auto",
+                            "nginx",
+                            "apache2",
+                            "none"
+                        ],
+                        "default": "auto"
+                    },
+                    "template_root": {
+                        "type": "string",
+                        "example": ".runtime/dev/templates"
+                    },
+                    "public_url": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    }
+                }
+            },
+            "SetupCompleteResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "setup",
+                            "local_master",
+                            "authenticated",
+                            "session"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "setup": {
+                                "$ref": "#/components/schemas/SetupStatus"
+                            },
+                            "local_master": {
+                                "$ref": "#/components/schemas/LocalMasterNode"
+                            },
+                            "authenticated": {
+                                "type": "boolean"
+                            },
+                            "session": {
+                                "$ref": "#/components/schemas/AuthSession"
+                            }
+                        }
+                    }
+                }
+            },
+            "Job": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "type",
+                    "status",
+                    "requested_payload",
+                    "result_payload",
+                    "test_run_id",
+                    "metadata",
+                    "started_at",
+                    "finished_at",
+                    "created_at",
+                    "updated_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/JobStatus"
+                    },
+                    "requested_payload": {
+                        "type": "object"
+                    },
+                    "result_payload": {
+                        "type": "object"
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "started_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "finished_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "JobStep": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "job_id",
+                    "name",
+                    "status",
+                    "order_no",
+                    "test_run_id",
+                    "metadata",
+                    "started_at",
+                    "finished_at",
+                    "created_at",
+                    "updated_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "job_id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/JobStepStatus"
+                    },
+                    "order_no": {
+                        "type": "integer"
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "started_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "finished_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "JobLog": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "job_id",
+                    "step_id",
+                    "stream",
+                    "message",
+                    "test_run_id",
+                    "metadata",
+                    "created_at",
+                    "updated_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "job_id": {
+                        "type": "string"
+                    },
+                    "step_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "stream": {
+                        "type": "string",
+                        "enum": [
+                            "stdout",
+                            "stderr",
+                            "system"
+                        ]
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "JobDetail": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "type",
+                    "status",
+                    "requested_payload",
+                    "result_payload",
+                    "test_run_id",
+                    "metadata",
+                    "started_at",
+                    "finished_at",
+                    "created_at",
+                    "updated_at",
+                    "steps",
+                    "logs"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/JobStatus"
+                    },
+                    "requested_payload": {
+                        "type": "object"
+                    },
+                    "result_payload": {
+                        "type": "object"
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "started_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "finished_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/JobStep"
+                        }
+                    },
+                    "logs": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/JobLog"
+                        }
+                    }
+                }
+            },
+            "JobCreateRequest": {
+                "type": "object",
+                "required": [
+                    "type"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "type": {
+                        "type": "string"
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "name"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "order_no": {
+                                    "type": "integer"
+                                },
+                                "metadata": {
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "requested_payload": {
+                        "type": "object"
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    }
+                }
+            },
+            "JobStatusUpdateRequest": {
+                "type": "object",
+                "required": [
+                    "status"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "status": {
+                        "$ref": "#/components/schemas/JobStatus"
+                    },
+                    "result_payload": {
+                        "type": "object"
+                    }
+                }
+            },
+            "JobStepStatusUpdateRequest": {
+                "type": "object",
+                "required": [
+                    "status"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "status": {
+                        "$ref": "#/components/schemas/JobStepStatus"
+                    },
+                    "metadata": {
+                        "type": "object"
+                    }
+                }
+            },
+            "JobLogAppendRequest": {
+                "type": "object",
+                "required": [
+                    "message"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "message": {
+                        "type": "string"
+                    },
+                    "stream": {
+                        "type": "string",
+                        "enum": [
+                            "stdout",
+                            "stderr",
+                            "system"
+                        ]
+                    },
+                    "step_id": {
+                        "type": "string"
+                    },
+                    "order_no": {
+                        "type": "integer"
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "secret_values": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "writeOnly": true
+                    }
+                }
+            },
+            "JobListResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "jobs"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "jobs": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/Job"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "JobDetailResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "job"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "job": {
+                                "$ref": "#/components/schemas/JobDetail"
+                            }
+                        }
+                    }
+                }
+            },
+            "JobLogResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "log"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "log": {
+                                "$ref": "#/components/schemas/JobLog"
+                            }
+                        }
+                    }
+                }
+            },
+            "JobRetryResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "original_job_id",
+                            "retried_job"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "original_job_id": {
+                                "type": "string"
+                            },
+                            "retried_job": {
+                                "$ref": "#/components/schemas/JobDetail"
+                            }
+                        }
+                    }
+                }
+            },
+            "JobLogSearchRequest": {
+                "type": "object",
+                "required": [],
+                "additionalProperties": false,
+                "properties": {
+                    "query": {
+                        "type": "string"
+                    },
+                    "stream": {
+                        "type": "string",
+                        "enum": [
+                            "stdout",
+                            "stderr",
+                            "system"
+                        ]
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 100
+                    }
+                }
+            },
+            "JobLogSearchResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "logs"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "logs": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/JobLog"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "JobLogDownloadResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "download"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "download": {
+                                "type": "object",
+                                "required": [
+                                    "job_id",
+                                    "filename",
+                                    "content_type",
+                                    "content"
+                                ],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "job_id": {
+                                        "type": "string"
+                                    },
+                                    "filename": {
+                                        "type": "string"
+                                    },
+                                    "content_type": {
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "LocalCommandResult": {
+                "type": "object",
+                "required": [
+                    "command_id",
+                    "category",
+                    "command",
+                    "command_display",
+                    "destructive",
+                    "status",
+                    "exit_code",
+                    "stdout",
+                    "stderr",
+                    "duration_ms",
+                    "timed_out"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "command_id": {
+                        "type": "string"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": [
+                            "docker",
+                            "swarm",
+                            "proxy",
+                            "diagnostic"
+                        ]
+                    },
+                    "command": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "command_display": {
+                        "type": "string"
+                    },
+                    "destructive": {
+                        "type": "boolean"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "ok",
+                            "error",
+                            "missing",
+                            "timeout"
+                        ]
+                    },
+                    "exit_code": {
+                        "type": "integer",
+                        "nullable": true
+                    },
+                    "stdout": {
+                        "type": "string"
+                    },
+                    "stderr": {
+                        "type": "string"
+                    },
+                    "duration_ms": {
+                        "type": "integer"
+                    },
+                    "timed_out": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "LocalCommandCheckRequest": {
+                "type": "object",
+                "required": [],
+                "additionalProperties": false,
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "default": "docker.version"
+                    },
+                    "command_id": {
+                        "type": "string"
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "default": 10
+                    },
+                    "params": {
+                        "type": "object"
+                    },
+                    "job_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "step_ref": {
+                        "type": "string",
+                        "nullable": true
+                    }
+                }
+            },
+            "LocalCommandCheckResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "result"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "result": {
+                                "$ref": "#/components/schemas/LocalCommandResult"
+                            }
+                        }
+                    }
+                }
+            },
+            "NodeCredential": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "node_id",
+                    "username",
+                    "has_password",
+                    "has_private_key",
+                    "has_key_file",
+                    "key_file",
+                    "has_passphrase",
+                    "ssh_fingerprint",
+                    "test_run_id",
+                    "metadata",
+                    "created_at",
+                    "updated_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "node_id": {
+                        "type": "string"
+                    },
+                    "username": {
+                        "type": "string"
+                    },
+                    "has_password": {
+                        "type": "boolean"
+                    },
+                    "has_private_key": {
+                        "type": "boolean"
+                    },
+                    "has_passphrase": {
+                        "type": "boolean"
+                    },
+                    "ssh_fingerprint": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "has_key_file": {
+                        "type": "boolean"
+                    },
+                    "key_file": {
+                        "type": "string",
+                        "nullable": true
+                    }
+                }
+            },
+            "Node": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "name",
+                    "role",
+                    "host",
+                    "ssh_port",
+                    "auth_type",
+                    "status",
+                    "swarm_node_id",
+                    "is_local_master",
+                    "labels",
+                    "test_run_id",
+                    "metadata",
+                    "created_at",
+                    "updated_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "role": {
+                        "type": "string",
+                        "enum": [
+                            "local_master",
+                            "worker"
+                        ]
+                    },
+                    "host": {
+                        "type": "string"
+                    },
+                    "ssh_port": {
+                        "type": "integer",
+                        "nullable": true
+                    },
+                    "auth_type": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "swarm_node_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "is_local_master": {
+                        "type": "boolean"
+                    },
+                    "labels": {
+                        "type": "object"
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "credential": {
+                        "$ref": "#/components/schemas/NodeCredential",
+                        "nullable": true
+                    },
+                    "latest_metric": {
+                        "$ref": "#/components/schemas/NodeMetric",
+                        "nullable": true
+                    },
+                    "reporter": {
+                        "$ref": "#/components/schemas/ReporterStatus"
+                    }
+                }
+            },
+            "NodeRegisterRequest": {
+                "type": "object",
+                "required": [
+                    "host",
+                    "username"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "node_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "name": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "host": {
+                        "type": "string"
+                    },
+                    "ssh_port": {
+                        "type": "integer",
+                        "nullable": true,
+                        "default": 22
+                    },
+                    "username": {
+                        "type": "string"
+                    },
+                    "password": {
+                        "type": "string",
+                        "nullable": true,
+                        "writeOnly": true,
+                        "format": "password"
+                    },
+                    "labels": {
+                        "type": "object"
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    }
+                }
+            },
+            "NodeJoinRequest": {
+                "type": "object",
+                "required": [],
+                "additionalProperties": false,
+                "properties": {
+                    "manager_addr": {
+                        "type": "string"
+                    },
+                    "advertise_address": {
+                        "type": "string"
+                    }
+                }
+            },
+            "SSHCommandResult": {
+                "type": "object",
+                "required": [
+                    "host",
+                    "command",
+                    "command_display",
+                    "status",
+                    "exit_code",
+                    "stdout",
+                    "stderr",
+                    "duration_ms",
+                    "timed_out"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "host": {
+                        "type": "string"
+                    },
+                    "command": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "command_display": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "ok",
+                            "error",
+                            "missing",
+                            "timeout"
+                        ]
+                    },
+                    "exit_code": {
+                        "type": "integer",
+                        "nullable": true
+                    },
+                    "stdout": {
+                        "type": "string"
+                    },
+                    "stderr": {
+                        "type": "string"
+                    },
+                    "duration_ms": {
+                        "type": "integer"
+                    },
+                    "timed_out": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "NodeResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "node"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "node": {
+                                "$ref": "#/components/schemas/Node"
+                            }
+                        }
+                    }
+                }
+            },
+            "NodeListResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "nodes"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "nodes": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/Node"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "NodeJoinResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "job"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "job": {
+                                "$ref": "#/components/schemas/JobDetail"
+                            }
+                        }
+                    }
+                }
+            },
+            "NodeCheckResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "node",
+                            "ssh",
+                            "docker",
+                            "ok"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "node": {
+                                "$ref": "#/components/schemas/Node"
+                            },
+                            "ssh": {
+                                "$ref": "#/components/schemas/SSHCommandResult"
+                            },
+                            "docker": {
+                                "$ref": "#/components/schemas/SSHCommandResult",
+                                "nullable": true
+                            },
+                            "docker_info": {
+                                "type": "object"
+                            },
+                            "ok": {
+                                "type": "boolean"
+                            }
+                        }
+                    }
+                }
+            },
+            "LocalMasterEnsureRequest": {
+                "type": "object",
+                "required": [],
+                "additionalProperties": false,
+                "properties": {
+                    "advertise_address": {
+                        "type": "string"
+                    },
+                    "network_name": {
+                        "type": "string",
+                        "default": "docker_infra_overlay"
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "default": 10
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    }
+                }
+            },
+            "LocalMasterEnsureResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "local_master",
+                            "docker",
+                            "swarm",
+                            "overlay_network",
+                            "actions"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "local_master": {
+                                "$ref": "#/components/schemas/Node"
+                            },
+                            "docker": {
+                                "type": "object"
+                            },
+                            "swarm": {
+                                "type": "object"
+                            },
+                            "overlay_network": {
+                                "type": "object"
+                            },
+                            "actions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "NodeMetric": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "node_id",
+                    "cpu_percent",
+                    "memory",
+                    "storage",
+                    "containers",
+                    "reported_at",
+                    "test_run_id",
+                    "metadata",
+                    "created_at",
+                    "updated_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "node_id": {
+                        "type": "string"
+                    },
+                    "cpu_percent": {
+                        "type": "number",
+                        "nullable": true
+                    },
+                    "memory": {
+                        "type": "object"
+                    },
+                    "storage": {
+                        "type": "object"
+                    },
+                    "containers": {
+                        "type": "object"
+                    },
+                    "reported_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "test_run_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "ReporterStatus": {
+                "type": "object",
+                "required": [
+                    "configured",
+                    "issued_at",
+                    "last_used_at"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "configured": {
+                        "type": "boolean"
+                    },
+                    "issued_at": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "last_used_at": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "credential_id": {
+                        "type": "string"
+                    }
+                }
+            },
+            "ReporterTokenResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "node",
+                            "reporter",
+                            "token"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "node": {
+                                "$ref": "#/components/schemas/Node"
+                            },
+                            "reporter": {
+                                "$ref": "#/components/schemas/ReporterStatus"
+                            },
+                            "token": {
+                                "type": "string",
+                                "writeOnly": true
+                            }
+                        }
+                    }
+                }
+            },
+            "MetricIngestRequest": {
+                "type": "object",
+                "required": [
+                    "node_id"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "node_id": {
+                        "type": "string"
+                    },
+                    "cpu_percent": {
+                        "type": "number"
+                    },
+                    "memory": {
+                        "type": "object"
+                    },
+                    "storage": {
+                        "type": "object"
+                    },
+                    "containers": {
+                        "type": "object"
+                    },
+                    "reported_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "reporter_token": {
+                        "type": "string",
+                        "writeOnly": true
+                    }
+                }
+            },
+            "MetricIngestResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "node",
+                            "metric",
+                            "reporter"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "node": {
+                                "$ref": "#/components/schemas/Node"
+                            },
+                            "metric": {
+                                "$ref": "#/components/schemas/NodeMetric"
+                            },
+                            "reporter": {
+                                "$ref": "#/components/schemas/ReporterStatus"
+                            }
+                        }
+                    }
+                }
+            },
+            "NodeMetricsResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "metrics",
+                            "latest_metric"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "metrics": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/NodeMetric"
+                                }
+                            },
+                            "latest_metric": {
+                                "$ref": "#/components/schemas/NodeMetric",
+                                "nullable": true
+                            }
+                        }
+                    }
+                }
+            },
+            "NodeContainersResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "node_id",
+                            "latest_metric",
+                            "containers"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "node_id": {
+                                "type": "string"
+                            },
+                            "latest_metric": {
+                                "$ref": "#/components/schemas/NodeMetric",
+                                "nullable": true
+                            },
+                            "containers": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "ComposeValidationRequest": {
+                "type": "object",
+                "required": [
+                    "namespace"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "namespace": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9_]+$"
+                    },
+                    "filename": {
+                        "type": "string",
+                        "enum": [
+                            "docker-compose.yaml",
+                            "docker-compose.yml"
+                        ],
+                        "default": "docker-compose.yaml"
+                    },
+                    "content": {
+                        "type": "string"
+                    },
+                    "compose": {
+                        "type": "object"
+                    },
+                    "job_health_check": {
+                        "type": "object"
+                    },
+                    "health_check": {
+                        "type": "object"
+                    }
+                }
+            },
+            "ComposeValidationErrorDetail": {
+                "type": "object",
+                "required": [
+                    "path",
+                    "error_code",
+                    "message"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    },
+                    "error_code": {
+                        "type": "string"
+                    },
+                    "message": {
+                        "type": "string"
+                    }
+                }
+            },
+            "ComposeValidationResult": {
+                "type": "object",
+                "required": [
+                    "valid",
+                    "namespace",
+                    "stack_name",
+                    "filename",
+                    "network",
+                    "job_health_check",
+                    "normalized"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "valid": {
+                        "type": "boolean"
+                    },
+                    "namespace": {
+                        "type": "string"
+                    },
+                    "stack_name": {
+                        "type": "string"
+                    },
+                    "filename": {
+                        "type": "string"
+                    },
+                    "network": {
+                        "type": "string"
+                    },
+                    "job_health_check": {
+                        "type": "boolean"
+                    },
+                    "normalized": {
+                        "type": "object"
+                    }
+                }
+            },
+            "ComposeValidationResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "validation"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "validation": {
+                                "$ref": "#/components/schemas/ComposeValidationResult"
+                            }
+                        }
+                    }
+                }
+            },
+            "ComposeValidationErrorResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "message",
+                            "error_code",
+                            "details"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "message": {
+                                "type": "string"
+                            },
+                            "error_code": {
+                                "type": "string"
+                            },
+                            "details": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/ComposeValidationErrorDetail"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

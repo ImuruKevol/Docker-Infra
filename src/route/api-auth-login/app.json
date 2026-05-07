@@ -1,0 +1,8 @@
+{
+    "id": "api-auth-login",
+    "title": "Auth Login",
+    "route": "/api/auth/login",
+    "category": "auth",
+    "viewuri": "",
+    "controller": "base"
+}

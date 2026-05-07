@@ -85,6 +85,10 @@ app-root {
 a,
 button {
     cursor: pointer;
+
+    &:disabled {
+        cursor: not-allowed;
+    }
 }
 
 .text-orange-season {

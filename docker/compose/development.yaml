@@ -1,0 +1,38 @@
+name: docker-infra-dev
+
+x-docker-infra-runtime:
+  profile: development
+  database:
+    host: 127.0.0.1
+    port: ${DOCKER_INFRA_DEV_DB_PORT:-5432}
+    name: docker_infra
+    user: docker_infra
+  roots:
+    template: ../../.runtime/dev/templates
+    artifact: ../../.runtime/dev/artifacts
+    log: ../../.runtime/dev/logs
+  proxy_sandbox:
+    nginx_config_root: ../../docker/sandbox/nginx/conf.d
+    apache2_config_root: ../../docker/sandbox/apache2/sites-enabled
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: docker-infra-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: docker_infra
+      POSTGRES_PASSWORD: ${DOCKER_INFRA_DEV_DB_PASSWORD:-docker_infra_dev}
+      POSTGRES_DB: docker_infra
+    ports:
+      - "${DOCKER_INFRA_DEV_DB_PORT:-5432}:5432"
+    volumes:
+      - docker_infra_dev_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docker_infra -d docker_infra"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  docker_infra_dev_pgdata:

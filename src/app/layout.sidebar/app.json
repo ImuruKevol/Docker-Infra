@@ -5,6 +5,6 @@
     "namespace": "sidebar",
     "viewuri": "",
     "category": "",
-    "controller": "base",
+    "controller": "user",
     "template": "wiz-layout-sidebar()"
 }

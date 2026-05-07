@@ -1,0 +1,11 @@
+{
+    "mode": "page",
+    "id": "page.templates",
+    "title": "/templates",
+    "namespace": "templates",
+    "viewuri": "/templates",
+    "category": "infra",
+    "controller": "user",
+    "layout": "layout.sidebar",
+    "template": "wiz-page-templates()"
+}

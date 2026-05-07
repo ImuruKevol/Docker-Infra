@@ -1,15 +1,42 @@
 | 날짜 | ID | 작업 내용 | 상세 |
 |------|-----|----------|------|
-| 2026-02-21 | 001 | 기존 인프라 page 앱 전체 삭제 및 일반 서비스 샘플 page 앱 생성 | [상세](devlog/2026-02-21/001-sample-pages-rebuild.md) |
-| 2026-04-27 | 001 | Tailwind CSS v4 및 Angular PostCSS 빌드 경로로 전환 | [상세](devlog/2026-04-27/001-tailwind-v4-postcss-migration.md) |
-| 2026-04-27 | 002 | Tailwind CSS를 항상 minify 산출물로 생성하도록 빌드 경로 조정 | [상세](devlog/2026-04-27/002-tailwind-always-minify.md) |
-| 2026-04-27 | 003 | Angular 21 업그레이드 및 zoneless/fetch 전환 | [상세](devlog/2026-04-27/003-angular-21-zoneless-fetch.md) |
-| 2026-04-27 | 004 | Material/CDK 의존성 제거 및 signal 샘플 추가 | [상세](devlog/2026-04-27/004-remove-material-cdk-add-signals.md) |
-| 2026-04-27 | 005 | Angular 21 및 WIZ 변경 요약 문서 추가 | [상세](devlog/2026-04-27/005-angular-21-upgrade-docs.md) |
-| 2026-04-27 | 006 | Angular 21 런타임 부트스트랩 및 라우팅 렌더링 복구 | [상세](devlog/2026-04-27/006-angular-21-runtime-bootstrap-fix.md) |
-| 2026-04-27 | 007 | Dashboard 사이드바 직접 렌더링으로 빈 네비게이션 복구 | [상세](devlog/2026-04-27/007-dashboard-sidebar-inline-render.md) |
-| 2026-04-27 | 008 | Angular 21 중첩 WIZ 컴포넌트 렌더링 복구 | [상세](devlog/2026-04-27/008-angular-21-nested-component-scope-fix.md) |
-| 2026-04-27 | 009 | 글 작성 화면 Monaco/i18n/dark mode 샘플 의존성 명시화 | [상세](devlog/2026-04-27/009-monaco-i18n-darkmode-sample.md) |
-| 2026-04-28 | 001 | Navbar 전역 다국어·다크 모드 및 app.module 의존성 스코프 정리 | [상세](devlog/2026-04-28/001-global-navbar-i18n-theme.md) |
-| 2026-04-28 | 002 | Angular 21 WIZ 컴포넌트 NgModule 스코프 복원 | [상세](devlog/2026-04-28/002-angular21-ngmodule-scope.md) |
-| 2026-04-28 | 003 | Tailwind dark variant 기반 테마 적용 단순화 | [상세](devlog/2026-04-28/003-tailwind-dark-theme-simplification.md) |
+| 2026-05-06 | 001 | Docker Infra 핵심 설계 문서 추가 | [상세](devlog/2026-05-06/001-docker-infra-design-doc.md) |
+| 2026-05-06 | 002 | Docker Infra 마스터 노드와 Swarm 로드밸런싱 설계 반영 | [상세](devlog/2026-05-06/002-master-node-swarm-load-balancing.md) |
+| 2026-05-06 | 003 | Docker Infra 실제 개발 TODO 문서 추가 | [상세](devlog/2026-05-06/003-docker-infra-development-todo.md) |
+| 2026-05-06 | 004 | 샘플 소스 및 devlog 정리 후 Docker Infra 앱 골격 구성 | [상세](devlog/2026-05-06/004-sample-cleanup-docker-infra-shell.md) |
+| 2026-05-06 | 005 | Docker Infra conda 실행 환경 명시 | [상세](devlog/2026-05-06/005-conda-runtime-environment.md) |
+| 2026-05-06 | 006 | 시스템 health API 계약과 라우트 추가 | [상세](devlog/2026-05-06/006-system-health-api-contract.md) |
+| 2026-05-06 | 007 | 개발/테스트 compose와 runtime 격리 정책 추가 | [상세](devlog/2026-05-06/007-dev-test-compose-runtime-isolation.md) |
+| 2026-05-06 | 008 | OpenAPI/Swagger 공통 계약과 schema 검증 테스트 보강 | [상세](devlog/2026-05-06/008-openapi-swagger-common-contracts.md) |
+| 2026-05-06 | 009 | API 테스트 공통 클라이언트와 cleanup 하네스 추가 | [상세](devlog/2026-05-06/009-api-test-client-cleanup-harness.md) |
+| 2026-05-06 | 010 | Playwright E2E 테스트 기반 추가 | [상세](devlog/2026-05-06/010-playwright-e2e-foundation.md) |
+| 2026-05-06 | 011 | PostgreSQL migration 체계와 핵심 테이블 구현 | [상세](devlog/2026-05-06/011-postgresql-migrations-core-tables.md) |
+| 2026-05-06 | 012 | Password-only 인증과 설치 마법사 구현 | [상세](devlog/2026-05-06/012-password-auth-setup-wizard.md) |
+| 2026-05-06 | 013 | 시스템 설정 화면과 동적 메뉴 구현 | [상세](devlog/2026-05-06/013-system-settings-dynamic-menu.md) |
+| 2026-05-06 | 014 | Job/Step/Log 모델과 API 구현 | [상세](devlog/2026-05-06/014-job-step-log-api.md) |
+| 2026-05-06 | 015 | Secret masking과 로그 검색/다운로드 구현 | [상세](devlog/2026-05-06/015-secret-masking-log-retention.md) |
+| 2026-05-06 | 016 | Local Executor와 local command check API 구현 | [상세](devlog/2026-05-06/016-local-executor-command-check.md) |
+| 2026-05-06 | 017 | Local Master ensure와 Slave join 구현 | [상세](devlog/2026-05-06/017-local-master-slave-join.md) |
+| 2026-05-07 | 018 | Node Reporter와 서버 상세 API/UI 구현 | [상세](devlog/2026-05-07/018-node-reporter-server-detail.md) |
+| 2026-05-07 | 019 | Compose 검증기와 validation API 구현 | [상세](devlog/2026-05-07/019-compose-validator-api.md) |
+| 2026-05-07 | 020 | Docker Infra WIZ model/struct 구조 리팩토링 | [상세](devlog/2026-05-07/020-wiz-model-struct-refactor.md) |
+| 2026-05-07 | 021 | WIZ controller/API 응답 패턴과 Struct 경계 리팩토링 | [상세](devlog/2026-05-07/021-wiz-controller-api-response-structure.md) |
+| 2026-05-07 | 022 | Docker Infra 런타임 DB/env 설정을 WIZ config와 데몬 주입으로 정리 | [상세](devlog/2026-05-07/022-runtime-config-env-daemon.md) |
+| 2026-05-07 | 023 | Docker Infra 운영 콘솔 화면 구현 | [상세](devlog/2026-05-07/023-docker-infra-ui-console.md) |
+| 2026-05-07 | 024 | 관리자용 UX TODO 반영과 서버/서비스 화면 흐름 개선 | [상세](devlog/2026-05-07/024-admin-ux-service-flow.md) |
+| 2026-05-07 | 025 | 서버 관리 모달 UX와 관리용 SSH key 등록 흐름 보강 | [상세](devlog/2026-05-07/025-server-modal-ssh-key-flow.md) |
+| 2026-05-07 | 026 | 서버 수정 모달, master 고정 목록, 자동 갱신과 SSH 오류 안내 보강 | [상세](devlog/2026-05-07/026-server-edit-auto-refresh.md) |
+| 2026-05-07 | 027 | 서버 상세 metric 경량 갱신과 서비스/컨테이너 제어 흐름 보강 | [상세](devlog/2026-05-07/027-server-runtime-service-grouping.md) |
+| 2026-05-07 | 028 | 서비스 화면 모달 UX와 SSH 비밀번호 프롬프트 처리 보강 | [상세](devlog/2026-05-07/028-services-modal-ssh-password-fix.md) |
+| 2026-05-07 | 029 | 서버 상세 cached 초기 렌더와 미등록 Compose 등록 UX 최적화 | [상세](devlog/2026-05-07/029-server-cached-detail-compose-import.md) |
+| 2026-05-07 | 030 | 서버 목록 load API 경량화와 background 상세 분리 | [상세](devlog/2026-05-07/030-servers-load-api-fast-path.md) |
+| 2026-05-07 | 031 | Compose 파일 선택 모달 기본 홈 경로와 직접 경로 이동 추가 | [상세](devlog/2026-05-07/031-compose-browser-home-path.md) |
+| 2026-05-07 | 032 | 인증·설정 중복 호출 제거와 컨테이너 액션/Compose 오류 안내 보강 | [상세](devlog/2026-05-07/032-auth-settings-container-action-compose-errors.md) |
+| 2026-05-07 | 033 | 서버 상세 metric 응답 경량화와 Compose 경고/SSH 등록 흐름 보강 | [상세](devlog/2026-05-07/033-servers-metric-compose-ssh-flow.md) |
+| 2026-05-07 | 034 | Compose 파일 등록 모달에 서비스 이름 입력 추가 | [상세](devlog/2026-05-07/034-compose-import-service-name.md) |
+| 2026-05-07 | 035 | 서버 상세 race 방지, Docker 미설치 안내, SSH key 표시 정리와 서버 매크로 실행 기능 추가 | [상세](devlog/2026-05-07/035-servers-race-docker-macro-ui.md) |
+| 2026-05-07 | 036 | 전역 매크로 관리 화면, 서버 상세 탭형 매크로/웹 터미널, Monaco 다크모드·저장 단축키 적용 | [상세](devlog/2026-05-07/036-global-macros-terminal-tabs.md) |
+| 2026-05-07 | 037 | 공통 검색형 매크로 선택 컴포넌트와 서버 상세 매크로/웹 터미널 UX 보강 | [상세](devlog/2026-05-07/037-macro-select-terminal-ux.md) |
+| 2026-05-07 | 038 | 서버 상세 매크로 선택 뱃지 정렬과 실행 인자 기본 비활성 UX 적용 | [상세](devlog/2026-05-07/038-macro-badge-args-default-off.md) |
+| 2026-05-07 | 039 | 서버 상세 CPU/Memory/Storage 프로그레스바와 부드러운 갱신 애니메이션 추가 | [상세](devlog/2026-05-07/039-server-metric-progress-bars.md) |
+| 2026-05-07 | 040 | 전역 매크로 목록 버튼 위치 조정과 서버 상세 매크로 실행 로그 스트리밍 적용 | [상세](devlog/2026-05-07/040-macros-button-streaming.md) |

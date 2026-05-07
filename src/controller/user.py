@@ -1,12 +1,22 @@
-import season
+from flask import request
+
 
 class Controller(wiz.controller("base")):
     def __init__(self):
         super().__init__()
+        token = wiz.session.get("docker_infra_session_token", None)
 
-        if wiz.session.has("id") == False:
-            wiz.response.status(401)
+        try:
+            authenticated = wiz.model("struct").auth.is_session_valid(token)
+        except RuntimeError:
+            authenticated = False
+        except Exception:
+            authenticated = False
 
-        # TODO: 실제 구현 시 사용자 접근 권한 검증
-        # struct = wiz.model("portal/{pkg}/struct")
-        # struct.user(wiz.session.get("id")).access()
+        if authenticated:
+            return
+
+        if request.path.startswith("/api/") or request.path.startswith("/wiz/api/"):
+            wiz.response.status(401, message="로그인이 필요합니다.", error_code="AUTHENTICATION_REQUIRED")
+
+        wiz.response.redirect("/access")

@@ -1,0 +1,8 @@
+{
+    "id": "api-nodes",
+    "title": "Nodes API",
+    "route": "/api/nodes",
+    "category": "nodes",
+    "viewuri": "",
+    "controller": "user"
+}

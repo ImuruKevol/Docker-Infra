@@ -1,0 +1,8 @@
+{
+    "id": "api-system-settings",
+    "title": "/api/system/settings",
+    "route": "/api/system/settings",
+    "category": "system",
+    "viewuri": "",
+    "controller": "user"
+}

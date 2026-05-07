@@ -1,0 +1,8 @@
+{
+    "id": "swagger",
+    "title": "/swagger",
+    "route": "/swagger",
+    "viewuri": "",
+    "category": "system",
+    "controller": "base"
+}

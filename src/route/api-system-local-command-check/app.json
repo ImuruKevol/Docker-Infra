@@ -1,0 +1,8 @@
+{
+    "id": "api-system-local-command-check",
+    "title": "System Local Command Check",
+    "route": "/api/system/local-command/check",
+    "category": "system",
+    "viewuri": "",
+    "controller": "user"
+}

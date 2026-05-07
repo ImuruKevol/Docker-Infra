@@ -1,0 +1,8 @@
+{
+    "id": "api-compose-validate",
+    "title": "Compose Validate API",
+    "route": "/api/compose/validate",
+    "category": "compose",
+    "viewuri": "",
+    "controller": "user"
+}

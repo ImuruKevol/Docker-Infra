@@ -1,0 +1,8 @@
+{
+    "id": "api-jobs",
+    "title": "Jobs API",
+    "route": "/api/jobs",
+    "category": "jobs",
+    "viewuri": "",
+    "controller": "user"
+}

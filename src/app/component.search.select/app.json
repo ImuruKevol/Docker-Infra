@@ -1,0 +1,12 @@
+{
+    "id": "component.search.select",
+    "mode": "component",
+    "title": "search.select",
+    "namespace": "search.select",
+    "category": "infra",
+    "viewuri": "",
+    "preview": "",
+    "controller": "base",
+    "layout": "",
+    "template": "wiz-component-search-select([items]=\"\", [value]=\"\", [placeholder]=\"\", [searchPlaceholder]=\"\", [emptyText]=\"\", [disabled]=\"\", [valueKey]=\"\", [labelKey]=\"\", [descriptionKey]=\"\", [badgeKey]=\"\", [badgeClassKey]=\"\", [disabledKey]=\"\", (valueChange)=\"\")"
+}

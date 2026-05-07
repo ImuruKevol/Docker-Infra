@@ -1,0 +1,61 @@
+name: docker-infra-test
+
+x-docker-infra-runtime:
+  profile: test
+  test_run_id_env: DOCKER_INFRA_TEST_RUN_ID
+  database:
+    host: 127.0.0.1
+    port: ${DOCKER_INFRA_TEST_DB_PORT:-15432}
+    name: docker_infra_test
+    user: docker_infra_test
+    schema: docker_infra_test
+    reset: recreate-compose-service
+  roots:
+    template: ../../.runtime/test/templates
+    artifact: ../../.runtime/test/artifacts
+    log: ../../.runtime/test/logs
+  proxy_sandbox:
+    nginx_config_root: ../../docker/sandbox/nginx/conf.d
+    apache2_config_root: ../../docker/sandbox/apache2/sites-enabled
+  profiles:
+    api: PostgreSQL and API contract tests
+    swarm: Docker socket backed Swarm integration tests
+    proxy: nginx/apache2 sandbox config tests
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: docker-infra-postgres-test
+    profiles: ["api"]
+    environment:
+      POSTGRES_USER: docker_infra_test
+      POSTGRES_PASSWORD: ${DOCKER_INFRA_TEST_DB_PASSWORD:-docker_infra_test}
+      POSTGRES_DB: docker_infra_test
+    ports:
+      - "${DOCKER_INFRA_TEST_DB_PORT:-15432}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ../postgres/init-test.sql:/docker-entrypoint-initdb.d/001-init-test.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docker_infra_test -d docker_infra_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  docker-cli:
+    image: docker:27-cli
+    container_name: docker-infra-test-docker-cli
+    profiles: ["swarm"]
+    command: ["docker", "version"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  proxy-sandbox:
+    image: busybox:1.37
+    container_name: docker-infra-test-proxy-sandbox
+    profiles: ["proxy"]
+    command: ["sh", "-c", "find /sandbox -maxdepth 3 -type d | sort"]
+    volumes:
+      - ../../docker/sandbox/nginx:/sandbox/nginx
+      - ../../docker/sandbox/apache2:/sandbox/apache2

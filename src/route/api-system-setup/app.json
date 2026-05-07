@@ -1,0 +1,8 @@
+{
+    "id": "api-system-setup",
+    "title": "System Setup",
+    "route": "/api/system/setup",
+    "category": "system",
+    "viewuri": "",
+    "controller": "base"
+}

@@ -1,7 +1,4 @@
-import season
 import datetime
-import json
-import os
 from flask import request
 
 class Controller:

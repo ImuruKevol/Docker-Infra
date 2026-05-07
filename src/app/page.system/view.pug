@@ -1,0 +1,76 @@
+header(class="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95")
+    div(class="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between")
+        div
+            div(class="flex items-center gap-2 text-xs font-medium text-zinc-500 dark:text-zinc-400")
+                i(class="fa-solid fa-gear")
+                span System
+            h1(class="mt-1 text-xl font-semibold text-zinc-950 dark:text-zinc-50") 시스템 설정
+        button(type="button", (click)="load()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
+            i(class="fa-solid fa-rotate-right")
+            span 새로고침
+
+main(class="space-y-5 px-5 py-5")
+    div(*ngIf="loading()", class="h-32 rounded-md border border-zinc-200 bg-white p-5 text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400") 정보를 불러오는 중입니다.
+    div(*ngIf="error()", class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300") {{error()}}
+
+    div(*ngIf="!loading() && !error()", class="space-y-5")
+        div(class="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200")
+            div(class="flex items-start justify-between gap-3")
+                div
+                    p(class="font-semibold") 기본 설정은 자동 감지값을 우선 사용합니다.
+                    p(class="mt-1 text-xs leading-5 text-sky-800 dark:text-sky-300") URL, token, logo 같은 세부값은 필요한 경우에만 고급 설정에서 수정하세요.
+                button(type="button", (click)="toggleAdvancedSettings()", class="inline-flex h-8 flex-none items-center gap-2 rounded-md border border-sky-300 px-2.5 text-xs font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:text-sky-200 dark:hover:bg-sky-950")
+                    i(class="fa-solid", [ngClass]="advancedSettings() ? 'fa-chevron-up' : 'fa-chevron-down'")
+                    span 고급 설정
+
+        section(class="grid grid-cols-1 gap-3 md:grid-cols-4")
+            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
+                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") Service
+                p(class="mt-2 text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{health()?.service || '-'}}
+            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
+                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") Database
+                p(class="mt-2 text-sm font-semibold text-zinc-950 dark:text-zinc-50") v{{health()?.checks?.database?.schema_version || '-'}}
+            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
+                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") Setup
+                span(class="mt-2 inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(setup()?.configured)") {{setup()?.configured ? 'Configured' : 'Required'}}
+            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
+                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") Public URL
+                p(class="mt-2 truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{setup()?.settings?.public_url || '-'}}
+
+        section(class="grid grid-cols-1 gap-5 xl:grid-cols-[420px_1fr]")
+            div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+                div(class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                    h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") General
+                div(class="space-y-3 p-4")
+                    label(class="block")
+                        span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Browser title
+                        input(type="text", data-testid="system-browser-title", [(ngModel)]="general.browser_title", class="h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                    label(*ngIf="advancedSettings()", class="block")
+                        span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Favicon URL
+                        input(type="text", data-testid="system-favicon-url", [(ngModel)]="general.favicon_url", class="h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                    label(*ngIf="advancedSettings()", class="block")
+                        span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Logo URL
+                        input(type="text", data-testid="system-logo-url", [(ngModel)]="general.logo_url", class="h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                    button(type="button", data-testid="system-general-save", (click)="saveGeneral()", class="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                        i(class="fa-solid fa-floppy-disk")
+                        span Save
+
+            div(class="grid grid-cols-1 gap-4 xl:grid-cols-3")
+                div(*ngFor="let integration of integrations", class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+                    div(class="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                        div(class="min-w-0")
+                            h2(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{integration.label}}
+                            p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") {{integration.secret_configured ? integration.secret_masked_value : 'secret 없음'}}
+                        label(class="inline-flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300")
+                            input(type="checkbox", [attr.data-testid]="'integration-' + integration.key + '-enabled'", [(ngModel)]="integration.enabled")
+                            span 사용
+                    div(class="space-y-3 p-4")
+                        label(*ngFor="let field of integration.field_entries", class="block", [ngClass]="advancedSettings() ? '' : 'hidden'")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{field.label}}
+                            input(type="text", [(ngModel)]="integration.fields[field.key]", class="h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        label(*ngIf="advancedSettings()", class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{integration.secret_name}}
+                            input(type="password", [attr.data-testid]="'integration-' + integration.key + '-secret'", [(ngModel)]="integration.secret_value", class="h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        button(type="button", [attr.data-testid]="'integration-save-' + integration.key", (click)="saveIntegration(integration)", class="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                            i(class="fa-solid fa-floppy-disk")
+                            span Save

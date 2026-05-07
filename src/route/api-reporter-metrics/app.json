@@ -1,0 +1,8 @@
+{
+    "id": "api-reporter-metrics",
+    "title": "Reporter Metrics API",
+    "route": "/api/reporter/metrics",
+    "category": "reporter",
+    "viewuri": "",
+    "controller": "base"
+}
