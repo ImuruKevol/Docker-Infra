@@ -32,8 +32,7 @@ class OpenApiContractTest(unittest.TestCase):
         self.assertIn("/api/auth/login", document["paths"])
         self.assertIn("/api/auth/logout", document["paths"])
         self.assertIn("/api/auth/session", document["paths"])
-        self.assertIn("/api/jobs", document["paths"])
-        self.assertIn("/api/jobs/{job_id}", document["paths"])
+        self.assertNotIn("/api/jobs", document["paths"])
         self.assertIn("/api/nodes", document["paths"])
         self.assertIn("/api/nodes/{node_id}/join", document["paths"])
         self.assertIn("/api/nodes/{node_id}/metrics", document["paths"])
@@ -55,26 +54,17 @@ class OpenApiContractTest(unittest.TestCase):
             "ErrorResponse",
             "PaginationMeta",
             "SecretMaskedValue",
-            "JobStatus",
-            "JobSummary",
-            "JobStepStatus",
-            "JobStepSummary",
             "SystemSetting",
             "SystemSettingResponse",
             "SystemSettingsListResponse",
             "AuthLoginResponse",
             "AuthLogoutResponse",
             "AuthSessionResponse",
+            "BackupSystemStatus",
             "SetupStatusResponse",
             "SetupCompleteResponse",
             "LocalMasterNode",
-            "Job",
-            "JobStep",
-            "JobLog",
-            "JobDetailResponse",
-            "JobRetryResponse",
-            "JobLogSearchResponse",
-            "JobLogDownloadResponse",
+            "OperationSummary",
             "LocalCommandResult",
             "LocalCommandCheckRequest",
             "LocalCommandCheckResponse",
@@ -98,7 +88,21 @@ class OpenApiContractTest(unittest.TestCase):
         ]:
             self.assertIn(name, schemas)
 
-        self.assertEqual(schemas["JobStatus"]["enum"], ["pending", "running", "succeeded", "failed", "canceled"])
+        for removed in [
+            "JobStatus",
+            "JobSummary",
+            "JobStepStatus",
+            "JobStepSummary",
+            "Job",
+            "JobStep",
+            "JobLog",
+            "JobDetailResponse",
+            "JobRetryResponse",
+            "JobLogSearchResponse",
+            "JobLogDownloadResponse",
+        ]:
+            self.assertNotIn(removed, schemas)
+        self.assertEqual(schemas["OperationSummary"]["properties"]["status"]["enum"], ["pending", "running", "succeeded", "failed", "canceled"])
         self.assertNotIn("plain", json.dumps(schemas["SecretMaskedValue"]).lower())
         self.assertIn("********", json.dumps(schemas["SecretMaskedValue"]))
         self.assertNotIn("user_id", json.dumps(schemas["LoginRequest"]).lower())

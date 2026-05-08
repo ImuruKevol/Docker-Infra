@@ -37,16 +37,20 @@ class ServerMacrosLiveFlowTest(unittest.TestCase):
         self.client = DockerInfraApiClient.from_env(self)
         password_only_login(self.client, testcase=self)
 
-    def wait_job(self, job_id, timeout_seconds=20):
+    def wait_operation(self, operation_id, timeout_seconds=20):
         deadline = timeout_seconds * 10
         for _ in range(deadline):
-            response = self.client.get(f"/api/jobs/{job_id}", validate=False)
+            response = self.client.post(
+                "/wiz/api/page.servers/operation_status",
+                json={"operation_id": operation_id},
+                validate=False,
+            )
             self.assertEqual(response.status_code, 200, response.text[:500])
-            job = response.json()["data"]["job"]
-            if job["status"] in {"succeeded", "failed", "canceled"}:
-                return job
+            operation = response.json()["data"]["operation"]
+            if operation["status"] in {"succeeded", "failed", "canceled"}:
+                return operation
             sleep(0.1)
-        self.fail(f"job {job_id} did not finish within {timeout_seconds}s")
+        self.fail(f"operation {operation_id} did not finish within {timeout_seconds}s")
 
     def test_global_and_node_macros_can_be_saved_listed_run_and_deleted(self):
         global_name = f"macro-global-{uuid4().hex[:8]}"
@@ -116,9 +120,9 @@ class ServerMacrosLiveFlowTest(unittest.TestCase):
                 timeout=20,
             )
             self.assertEqual(run_global.status_code, 200, run_global.text[:500])
-            global_job = self.wait_job(run_global.json()["data"]["job"]["id"])
-            self.assertEqual(global_job["status"], "succeeded")
-            self.assertTrue(any("global:hello" in (log.get("message") or "") for log in global_job["logs"]))
+            global_operation = self.wait_operation(run_global.json()["data"]["operation"]["id"])
+            self.assertEqual(global_operation["status"], "succeeded")
+            self.assertTrue(any("global:hello" in (entry.get("message") or "") for entry in global_operation["output"]))
 
             run_node = self.client.post(
                 "/wiz/api/page.servers/run_macro",
@@ -127,9 +131,9 @@ class ServerMacrosLiveFlowTest(unittest.TestCase):
                 timeout=20,
             )
             self.assertEqual(run_node.status_code, 200, run_node.text[:500])
-            node_job = self.wait_job(run_node.json()["data"]["job"]["id"])
-            self.assertEqual(node_job["status"], "succeeded")
-            self.assertTrue(any("node:world" in (log.get("message") or "") for log in node_job["logs"]))
+            node_operation = self.wait_operation(run_node.json()["data"]["operation"]["id"])
+            self.assertEqual(node_operation["status"], "succeeded")
+            self.assertTrue(any("node:world" in (entry.get("message") or "") for entry in node_operation["output"]))
         finally:
             if created_node_id:
                 self.client.post("/wiz/api/page.servers/delete_macro", json={"macro_id": created_node_id}, validate=False)

@@ -1,12 +1,9 @@
-import json
-import shlex
-from pathlib import Path, PurePosixPath
-
 connect = wiz.model("db/postgres").connect
 local_catalog = wiz.model("struct/local_command_catalog")
 shared = wiz.model("struct/nodes_shared")
 node_view = wiz.model("struct/nodes_view")
 runtime_state = wiz.model("struct/nodes_runtime_state")
+files_mixin = wiz.model("struct/nodes_runtime_files")
 _load_json = shared.load_json
 _parse_docker_ps_lines = shared.parse_docker_ps_lines
 _container_summary = shared.container_summary
@@ -15,7 +12,7 @@ NodeError = shared.NodeError
 SYSTEM_METRICS_SCRIPT = local_catalog.SYSTEM_METRICS_SCRIPT
 
 
-class NodeRuntimeMixin:
+class NodeRuntimeMixin(files_mixin):
     def _command_failure(self, result, default_message):
         if result.get("status") == "timeout" or result.get("timed_out"):
             return "응답 시간이 초과되었습니다."
@@ -177,6 +174,33 @@ class NodeRuntimeMixin:
             env=env,
         )
 
+    def _record_runtime_operation(self, node_id, operation_type, action, result, payload=None, env=None):
+        status = "succeeded" if result.get("status") == "ok" else "failed"
+        operation = self.operations.create(
+            operation_type,
+            target_type="node",
+            target_id=node_id,
+            message=f"{operation_type} {action} {status}",
+            status=status,
+            requested_payload=payload or {},
+            result_payload={
+                "command_id": result.get("command_id"),
+                "status": result.get("status"),
+                "exit_code": result.get("exit_code"),
+                "duration_ms": result.get("duration_ms"),
+            },
+            env=env,
+        )
+        output = result.get("stdout") if result.get("status") == "ok" else (result.get("stderr") or result.get("stdout"))
+        if output:
+            self.operations.append_output(
+                operation["id"],
+                output,
+                stream="stdout" if result.get("status") == "ok" else "stderr",
+                env=env,
+            )
+        return operation
+
     def container_action(self, node_id, payload, env=None):
         payload = payload or {}
         action = str(payload.get("action") or "").strip().lower()
@@ -187,10 +211,18 @@ class NodeRuntimeMixin:
             raise NodeError(400, "container_id는 필수입니다.", "CONTAINER_ID_REQUIRED")
         node, _ = self._target_node(node_id, env=env)
         result = self._run_container_action(node, action, [container_id], env=env)
+        operation = self._record_runtime_operation(
+            node_id,
+            "container.action",
+            action,
+            result,
+            payload={"action": action, "container_id": container_id},
+            env=env,
+        )
         if result["status"] != "ok":
             raise NodeError(409, f"컨테이너 동작에 실패했습니다. {self._command_failure(result, 'container action failed')}", "CONTAINER_ACTION_FAILED", check=result)
         refreshed = self.refresh_containers_panel(node_id, env=env)
-        refreshed["result"] = {"action": action, "scope": "container", "container_id": container_id, "check": result}
+        refreshed["result"] = {"action": action, "scope": "container", "container_id": container_id, "check": result, "operation": operation}
         return refreshed
 
     def service_action(self, node_id, payload, env=None):
@@ -210,87 +242,18 @@ class NodeRuntimeMixin:
             raise NodeError(409, "선택한 서비스에 제어할 컨테이너가 없습니다.", "SERVICE_CONTAINER_IDS_EMPTY")
         node, _ = self._target_node(node_id, env=env)
         result = self._run_container_action(node, action, ids, env=env)
+        operation = self._record_runtime_operation(
+            node_id,
+            "service.action",
+            action,
+            result,
+            payload={"action": action, "service_namespace": namespace, "container_ids": ids},
+            env=env,
+        )
         if result["status"] != "ok":
             raise NodeError(409, f"서비스 컨테이너 동작에 실패했습니다. {self._command_failure(result, 'service container action failed')}", "SERVICE_CONTAINER_ACTION_FAILED", check=result)
         refreshed = self.refresh_containers_panel(node_id, env=env)
-        refreshed["result"] = {"action": action, "scope": "service", "service_namespace": namespace, "container_ids": ids, "check": result}
+        refreshed["result"] = {"action": action, "scope": "service", "service_namespace": namespace, "container_ids": ids, "check": result, "operation": operation}
         return refreshed
-
-    def _normalize_browse_path(self, value):
-        path = str(PurePosixPath(value or "/"))
-        return path if path.startswith("/") else f"/{path}"
-
-    def _default_browse_path(self, node, env=None):
-        if node["is_local_master"]:
-            return self._normalize_browse_path(str(Path.home()))
-        credential = node.get("credential") or {}
-        username = str(credential.get("username") or "").strip()
-        result = self._run_ssh_command(node, ["sh", "-lc", 'printf "%s\\n" "$HOME"'], timeout_seconds=5, env=env)
-        if result.get("status") == "ok":
-            home = str(result.get("stdout") or "").strip()
-            if home:
-                return self._normalize_browse_path(home.splitlines()[-1])
-        if username == "root":
-            return "/root"
-        if username:
-            return self._normalize_browse_path(f"/home/{username}")
-        return "/"
-
-    def _resolve_browse_path(self, node, value, env=None):
-        raw = str(value or "").strip()
-        if not raw or raw == "~":
-            return self._default_browse_path(node, env=env)
-        if raw.startswith("~/"):
-            home = self._default_browse_path(node, env=env).rstrip("/")
-            suffix = raw[2:].strip("/")
-            return self._normalize_browse_path(f"{home}/{suffix}") if suffix else home or "/"
-        return self._normalize_browse_path(raw)
-
-    def _remote_list_dir(self, node, path, env=None):
-        quoted = shlex.quote(path)
-        script = f'base={quoted}; [ -d "$base" ] || exit 44; printf "%s\\n" "$base"; find "$base" -mindepth 1 -maxdepth 1 -printf "%f\\t%y\\t%s\\n" 2>/dev/null | sort'
-        result = self._run_ssh_command(node, ["sh", "-lc", script], timeout_seconds=8, env=env)
-        if result["status"] != "ok":
-            raise NodeError(404, "선택한 경로를 열 수 없습니다.", "NODE_PATH_NOT_FOUND", check=result)
-        lines = (result["stdout"] or "").splitlines()
-        current = lines[0] if lines else path
-        items = []
-        for line in lines[1:]:
-            name, entry_type, size = (line.split("\t", 2) + ["", "", ""])[:3]
-            item_path = f"{current.rstrip('/')}/{name}" if current != "/" else f"/{name}"
-            items.append({"name": name, "path": item_path, "type": "folder" if entry_type == "d" else "file", "size": int(size or 0)})
-        return {"path": current, "items": items}
-
-    def browse_files(self, node_id, payload=None, env=None):
-        payload = payload or {}
-        node, _ = self._target_node(node_id, env=env)
-        path = self._resolve_browse_path(node, payload.get("path"), env=env)
-        if node["is_local_master"]:
-            result = self.local_executor.run("filesystem.list", params={"path": path}, timeout_seconds=8, env=env)
-            if result["status"] != "ok":
-                raise NodeError(404, "선택한 경로를 열 수 없습니다.", "NODE_PATH_NOT_FOUND", check=result)
-            data = _load_json(result["stdout"])
-        else:
-            data = self._remote_list_dir(node, path, env=env)
-        current = data.get("path") or path
-        parent = str(PurePosixPath(current).parent) if current != "/" else None
-        show_hidden = str(payload.get("show_hidden") or "").strip().lower() in {"1", "true", "yes", "on"}
-        items = data.get("items") or []
-        if not show_hidden:
-            items = [item for item in items if not str(item.get("name") or "").startswith(".")]
-        return {"path": current, "parent": None if parent == current else parent, "items": items}
-
-    def read_file_text(self, node_id, path, env=None):
-        path = self._normalize_browse_path(path)
-        node, _ = self._target_node(node_id, env=env)
-        if node["is_local_master"]:
-            result = self.local_executor.run("filesystem.read", params={"path": path}, timeout_seconds=8, env=env)
-        else:
-            quoted = shlex.quote(path)
-            result = self._run_ssh_command(node, ["sh", "-lc", f'[ -f {quoted} ] || exit 44; cat -- {quoted}'], timeout_seconds=8, env=env)
-        if result["status"] != "ok":
-            raise NodeError(404, "선택한 파일을 읽을 수 없습니다.", "NODE_FILE_READ_FAILED", check=result)
-        return result["stdout"]
-
 
 Model = NodeRuntimeMixin

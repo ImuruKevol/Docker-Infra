@@ -1,5 +1,5 @@
 def load():
-    catalog = wiz.model("struct").infra_catalog
+    catalog = wiz.model("struct/infra_catalog_registry")
     templates_model = wiz.model("struct").templates
     code = 200
     payload = {}
@@ -54,7 +54,7 @@ def template_detail():
 
 def create_service():
     services_model = wiz.model("struct").services
-    catalog = wiz.model("struct").infra_catalog
+    catalog = wiz.model("struct/infra_catalog_registry")
     code = 200
     payload = {}
 

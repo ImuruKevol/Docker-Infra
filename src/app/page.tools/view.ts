@@ -33,11 +33,10 @@ export class Component implements OnInit {
         },
         {
             id: 'proxy',
-            title: 'Proxy 설정 검사',
-            description: 'nginx/apache2 설정 파일이 reload 가능한 상태인지 검사합니다.',
+            title: 'Nginx 설정 검사',
+            description: '고정된 nginx 설정 파일이 reload 가능한 상태인지 검사합니다.',
             icon: 'fa-shield-halved',
-            command_id: 'proxy.nginx.configtest',
-            fallback_command_id: 'proxy.apachectl.configtest'
+            command_id: 'proxy.nginx.configtest'
         }
     ];
 

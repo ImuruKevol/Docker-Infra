@@ -26,16 +26,23 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
         services_api = SERVICES_API.read_text(encoding="utf-8")
 
         self.assertIn("def harbor_detail():", images_api)
+        self.assertIn("def harbor_tags():", images_api)
         self.assertIn("def harbor_overview():", images_api)
+        self.assertIn("def create_harbor_project():", images_api)
         self.assertIn("def local_detail():", images_api)
         self.assertIn("def delete_harbor():", images_api)
+        self.assertIn("def delete_harbor_project():", images_api)
+        self.assertIn("def delete_harbor_repository():", images_api)
         self.assertIn("def delete_local():", images_api)
         self.assertIn("def preview_template():", templates_api)
         self.assertIn("def release_template():", templates_api)
         self.assertIn("def version_detail():", templates_api)
         self.assertIn("def template_detail():", services_api)
         self.assertIn("harbor_project_detail", images_model)
+        self.assertIn("harbor_repository_tags", images_model)
         self.assertIn("harbor_overview", images_model)
+        self.assertIn("create_harbor_project", images_model)
+        self.assertIn("delete_harbor_repository", images_model)
         self.assertIn("delete_local_image", images_model)
         self.assertIn("ensure_defaults", templates_model)
         self.assertIn("def preview(self, payload, env=None):", templates_store)
@@ -49,7 +56,6 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
             "mariadb_db",
             "redis_cache",
             "rabbitmq_queue",
-            "gitlab_ce",
             "harbor_registry",
         ]:
             self.assertIn(token, templates_seed)
@@ -67,6 +73,7 @@ class ImagesTemplatesLiveFlowTest(unittest.TestCase):
         self.assertIn("template_root", data)
         self.assertTrue(str(data["template_root"]).endswith("/data/templates"))
         self.assertGreaterEqual(len(data.get("templates", [])), 5)
+        self.assertNotIn("gitlab_ce", {item["namespace"] for item in data.get("templates", [])})
 
         first = data["templates"][0]
         detail = self.client.post(
@@ -116,6 +123,59 @@ class ImagesTemplatesLiveFlowTest(unittest.TestCase):
         self.assertIn("docker_available", detail_data)
         self.assertIn("summary", detail_data)
         self.assertIn("used_count", detail_data["summary"])
+
+    def test_harbor_project_create_and_tags_flow(self):
+        load = self.client.post("/wiz/api/page.images/load", json={}, validate=False)
+        self.assertEqual(load.status_code, 200, load.text[:500])
+        harbor_meta = load.json()["data"].get("harbor") or {}
+        if not harbor_meta.get("enabled") or not harbor_meta.get("configured"):
+            self.skipTest("Harbor 연동이 설정되어 있지 않습니다.")
+
+        overview = self.client.post("/wiz/api/page.images/harbor_overview", json={}, validate=False)
+        self.assertEqual(overview.status_code, 200, overview.text[:500])
+        overview_data = overview.json()["data"]
+        project_name = f"codex-images-{int(time.time())}"
+
+        created = self.client.post(
+            "/wiz/api/page.images/create_harbor_project",
+            json={"project_name": project_name, "public": False},
+            validate=False,
+        )
+        self.assertEqual(created.status_code, 200, created.text[:500])
+        try:
+            detail = self.client.post(
+                "/wiz/api/page.images/harbor_detail",
+                json={"project_name": project_name},
+                validate=False,
+            )
+            self.assertEqual(detail.status_code, 200, detail.text[:500])
+            detail_data = detail.json()["data"]
+            self.assertEqual(detail_data["project_name"], project_name)
+
+            projects = overview_data.get("projects") or []
+            if projects:
+                first_project = projects[0]["name"]
+                first_detail = self.client.post(
+                    "/wiz/api/page.images/harbor_detail",
+                    json={"project_name": first_project},
+                    validate=False,
+                )
+                self.assertEqual(first_detail.status_code, 200, first_detail.text[:500])
+                repositories = first_detail.json()["data"].get("repositories") or []
+                if repositories:
+                    tags = self.client.post(
+                        "/wiz/api/page.images/harbor_tags",
+                        json={"project_name": first_project, "repository_name": repositories[0]["name"]},
+                        validate=False,
+                    )
+                    self.assertEqual(tags.status_code, 200, tags.text[:500])
+                    self.assertIn("tags", tags.json()["data"])
+        finally:
+            self.client.post(
+                "/wiz/api/page.images/delete_harbor_project",
+                json={"project_name": project_name},
+                validate=False,
+            )
 
     def test_template_release_and_version_detail_flow(self):
         suffix = str(int(time.time()))

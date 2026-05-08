@@ -8,9 +8,6 @@ SAFE_COMMANDS = {
     "swarm.network.inspect",
     "proxy.nginx.version",
     "proxy.nginx.configtest",
-    "proxy.apache2.version",
-    "proxy.apachectl.version",
-    "proxy.apachectl.configtest",
     "diagnostic.success",
     "diagnostic.failure",
     "diagnostic.timeout",
@@ -18,7 +15,7 @@ SAFE_COMMANDS = {
 
 
 def load():
-    catalog = wiz.model("struct").infra_catalog
+    catalog = wiz.model("struct/infra_catalog_registry")
     code = 200
     payload = {}
 

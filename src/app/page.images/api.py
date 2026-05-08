@@ -36,12 +36,50 @@ def harbor_detail():
     wiz.response.status(code, **payload)
 
 
+def harbor_tags():
+    images_model = wiz.model("struct").images
+    project_name = str(wiz.request.query().get("project_name") or "").strip()
+    repository_name = str(wiz.request.query().get("repository_name") or "").strip()
+    if not project_name or not repository_name:
+        wiz.response.status(400, message="project_name과 repository_name이 필요합니다.", error_code="HARBOR_REPOSITORY_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = images_model.harbor_repository_tags(project_name, repository_name)
+    except images_model.ImageError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
 def harbor_overview():
     images_model = wiz.model("struct").images
     code = 200
     payload = {}
     try:
         payload = images_model.harbor_overview()
+    except images_model.ImageError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def create_harbor_project():
+    images_model = wiz.model("struct").images
+    code = 200
+    payload = {}
+    try:
+        payload = images_model.create_harbor_project(wiz.request.query())
     except images_model.ImageError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -95,6 +133,22 @@ def delete_harbor_project():
     payload = {}
     try:
         payload = images_model.delete_harbor_project(wiz.request.query())
+    except images_model.ImageError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def delete_harbor_repository():
+    images_model = wiz.model("struct").images
+    code = 200
+    payload = {}
+    try:
+        payload = images_model.delete_harbor_repository(wiz.request.query())
     except images_model.ImageError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

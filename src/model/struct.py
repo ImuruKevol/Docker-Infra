@@ -20,6 +20,10 @@ class Struct:
         return self._load("auth")
 
     @property
+    def backup_system(self):
+        return self._load("backup_system")
+
+    @property
     def appearance(self):
         return self._load("appearance")
 
@@ -32,12 +36,8 @@ class Struct:
         return self._load("domains")
 
     @property
-    def jobs(self):
-        return self._load("jobs")
-
-    @property
     def infra_catalog(self):
-        return self._load("infra_catalog")
+        return self._load("infra_catalog_registry")
 
     @property
     def images(self):
@@ -45,8 +45,9 @@ class Struct:
 
     @property
     def integrations(self):
-        return self._load("integrations")
+        return self._load("integrations_registry")
 
+    @property
     def local_executor(self):
         return self._load("local_executor")
 
@@ -57,6 +58,10 @@ class Struct:
     @property
     def nodes(self):
         return self._load("nodes")
+
+    @property
+    def operations(self):
+        return self._load("operations")
 
     @property
     def secret_masking(self):

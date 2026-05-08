@@ -101,8 +101,10 @@ class ServiceManager(ServiceRuntimeMixin):
         content = payload.get("content")
         domain = (payload.get("domain") or "").strip()
         port = _safe_int(payload.get("port"), 80)
-        proxy_type = payload.get("proxy_type") or "nginx"
+        proxy_type = "nginx"
         ssl_mode = payload.get("ssl_mode") or "none"
+        if ssl_mode == "upload":
+            ssl_mode = "existing"
         test_run_id = payload.get("test_run_id")
         source = payload.get("source") or "ui_wizard"
         source_ref = payload.get("source_ref")
@@ -114,7 +116,7 @@ class ServiceManager(ServiceRuntimeMixin):
             "namespace": namespace,
             "filename": filename,
             "content": content,
-            "job_health_check": payload.get("job_health_check"),
+            "health_check": payload.get("health_check"),
             "allow_warnings": payload.get("allow_warnings"),
             "warning_codes": payload.get("warning_codes"),
         })
@@ -245,7 +247,7 @@ class ServiceManager(ServiceRuntimeMixin):
                 "content": content,
                 "port": port,
                 "domain": payload.get("domain"),
-                "proxy_type": payload.get("proxy_type") or "nginx",
+                "proxy_type": "nginx",
                 "ssl_mode": payload.get("ssl_mode") or "none",
                 "test_run_id": payload.get("test_run_id"),
                 "source": payload.get("source") or "server_compose_import",

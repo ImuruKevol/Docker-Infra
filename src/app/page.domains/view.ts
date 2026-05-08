@@ -22,8 +22,11 @@ export class Component implements OnInit {
     public detail = signal<any>(this.emptyDetail());
     public zoneModalOpen = signal<boolean>(false);
     public recordModalOpen = signal<boolean>(false);
+    public certificateModalOpen = signal<boolean>(false);
+    public certificateBusy = signal<boolean>(false);
     public zoneForm: any = this.emptyZoneForm();
     public recordForm: any = this.emptyRecordForm();
+    public certificateForm: any = this.emptyCertificateForm();
     public recordFilters: any = { types: [], name: '', content: '', ipv4: '' };
 
     constructor(public service: Service) { }
@@ -183,6 +186,75 @@ export class Component implements OnInit {
         await this.alert(data?.message || 'DNS 레코드를 삭제할 수 없습니다.');
     }
 
+    public openCertificateModal() {
+        const zone = this.selectedZone();
+        if (!zone) return;
+        this.certificateForm = this.emptyCertificateForm({ label: `${zone.domain} 인증서` });
+        this.certificateModalOpen.set(true);
+    }
+
+    public closeCertificateModal() {
+        if (this.certificateBusy()) return;
+        this.certificateModalOpen.set(false);
+        this.certificateForm = this.emptyCertificateForm();
+    }
+
+    public openCertificateFilePicker(field: string) {
+        (document.getElementById(`domain-certificate-${field}`) as HTMLInputElement | null)?.click();
+    }
+
+    public async selectCertificateFile(field: string, event: Event) {
+        const input = event?.target as HTMLInputElement | null;
+        const file = input?.files && input.files[0];
+        if (!file) return;
+        this.certificateForm[field] = file;
+        this.certificateForm[`${field}_name`] = file.name;
+        if (input) input.value = '';
+        await this.service.render();
+    }
+
+    public async uploadCertificate() {
+        const zone = this.selectedZone();
+        if (!zone) return;
+        if (!this.certificateForm.cert_file || !this.certificateForm.key_file) {
+            await this.alert('인증서 파일과 키 파일을 모두 선택해주세요.');
+            return;
+        }
+        this.certificateBusy.set(true);
+        await this.service.render();
+        const fd = new FormData();
+        fd.append('zone_id', zone.id);
+        fd.append('label', this.certificateForm.label || `${zone.domain} 인증서`);
+        fd.append('cert_file', this.certificateForm.cert_file);
+        fd.append('key_file', this.certificateForm.key_file);
+        const response: any = await this.service.file.upload('/api/domain-certificates', fd);
+        this.certificateBusy.set(false);
+        if (response?.code === 200) {
+            this.certificateModalOpen.set(false);
+            this.certificateForm = this.emptyCertificateForm();
+            this.detail.set({ ...this.emptyDetail(), ...(response?.data || {}) });
+            await this.alert('SSL 인증서를 업로드했습니다.', 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(response?.data?.message || response?.message || 'SSL 인증서를 업로드할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async deleteCertificate(cert: any) {
+        const zone = this.selectedZone();
+        if (!zone || !cert?.id) return;
+        const ok = await this.confirm(`${cert.label || cert.cert_path} 인증서를 삭제합니다.`, '삭제');
+        if (!ok) return;
+        const { code, data } = await wiz.call('delete_certificate', { zone_id: zone.id, certificate_id: cert.id });
+        if (code === 200) {
+            this.detail.set({ ...this.emptyDetail(), ...data });
+            await this.alert('SSL 인증서를 삭제했습니다.', 'success');
+            return;
+        }
+        await this.alert(data?.message || 'SSL 인증서를 삭제할 수 없습니다.');
+    }
+
     public zoneStatusLabel(zone: any) {
         const labels: any = { active: '동기화됨', manual: '수동', pending: '대기', error: '오류', disabled: '사용 안 함' };
         return labels[zone?.status] || zone?.status || '-';
@@ -268,6 +340,18 @@ export class Component implements OnInit {
         return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300';
     }
 
+    public certificateStatusLabel(status: string) {
+        const labels: any = {
+            valid: '유효',
+            expiring: '곧 만료',
+            expired: '만료',
+            missing: '파일 없음',
+            error: '분석 실패',
+            disabled: '사용 안 함'
+        };
+        return labels[status] || status || '-';
+    }
+
     public formatDate(value: any) {
         if (!value) return '-';
         const date = new Date(value);
@@ -339,6 +423,16 @@ export class Component implements OnInit {
             ttl: record.ttl || 1,
             priority: record.priority || '',
             comment: record.comment || ''
+        };
+    }
+
+    private emptyCertificateForm(seed: any = {}) {
+        return {
+            label: seed.label || '',
+            cert_file: null,
+            key_file: null,
+            cert_file_name: '',
+            key_file_name: ''
         };
     }
 }

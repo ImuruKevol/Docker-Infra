@@ -35,12 +35,12 @@ export class Component implements OnInit {
 
     public stats() {
         const counts = this.counts();
-        const jobs = this.data()?.job_statuses || {};
+        const operations = this.data()?.operation_statuses || {};
         return [
             { label: 'Servers', value: counts.nodes || 0, icon: 'fa-server', tone: 'emerald' },
             { label: 'Services', value: counts.services || 0, icon: 'fa-layer-group', tone: 'sky' },
             { label: 'Images', value: counts.images || 0, icon: 'fa-cubes', tone: 'violet' },
-            { label: 'Running jobs', value: jobs.running || 0, icon: 'fa-bars-progress', tone: 'amber' },
+            { label: '실행 중 작업', value: operations.running || 0, icon: 'fa-bars-progress', tone: 'amber' },
         ];
     }
 
@@ -56,12 +56,12 @@ export class Component implements OnInit {
         return this.data()?.nodes || [];
     }
 
-    public jobs() {
-        return this.data()?.recent_jobs || [];
+    public operations() {
+        return this.data()?.recent_operations || [];
     }
 
     public integrations() {
-        return this.data()?.integrations || [];
+        return (this.data()?.integrations || []).filter((item: any) => String(item?.key || '').trim() !== 'gitlab');
     }
 
     public statusLabel(status: string) {

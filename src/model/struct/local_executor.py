@@ -88,17 +88,15 @@ class LocalExecutor:
             allowlist_env=ALLOWLIST_ENV,
         )
 
-    def check(self, target="docker.version", timeout_seconds=None, params=None, job_id=None, step_ref=None, env=None):
+    def check(self, target="docker.version", timeout_seconds=None, params=None, env=None):
         return self.run(
             target or "docker.version",
             timeout_seconds=timeout_seconds,
             params=params,
-            job_id=job_id,
-            step_ref=step_ref,
             env=env,
         )
 
-    def run(self, command_id, timeout_seconds=None, params=None, job_id=None, step_ref=None, env=None):
+    def run(self, command_id, timeout_seconds=None, params=None, env=None):
         spec = self._command_spec(command_id)
         self._assert_allowed(command_id, spec, env=env)
         argv = self._argv(command_id, spec, params or {})
@@ -143,40 +141,7 @@ class LocalExecutor:
                 timed_out=True,
             )
 
-        if job_id:
-            self.append_result_to_job(result, job_id=job_id, step_ref=step_ref, env=env)
         return result
-
-    def append_result_to_job(self, result, job_id, step_ref=None, env=None):
-        jobs = wiz.model("struct/jobs")
-        metadata = {
-            "command_id": result["command_id"],
-            "command": result["command"],
-            "status": result["status"],
-            "exit_code": result["exit_code"],
-            "duration_ms": result["duration_ms"],
-        }
-        if result["stdout"]:
-            self._append_job_log(jobs, job_id, result["stdout"], "stdout", step_ref, metadata, env)
-        if result["stderr"]:
-            self._append_job_log(jobs, job_id, result["stderr"], "stderr", step_ref, metadata, env)
-        self._append_job_log(
-            jobs,
-            job_id,
-            f"local command {result['command_id']} finished with status={result['status']} exit_code={result['exit_code']}",
-            "system",
-            step_ref,
-            metadata,
-            env,
-        )
-
-    def _append_job_log(self, jobs, job_id, message, stream, step_ref, metadata, env):
-        try:
-            jobs.append_log(job_id, message, stream=stream, step_ref=step_ref, metadata=metadata, env=env)
-        except Exception as exc:
-            if hasattr(exc, "status_code"):
-                raise LocalCommandError(exc.status_code, exc.message, exc.error_code, **getattr(exc, "extra", {}))
-            raise
 
     def timestamp(self):
         return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")

@@ -1,12 +1,18 @@
 store = wiz.model("struct/templates_store")
 seed = wiz.model("struct/templates_seed")
 
+DEPRECATED_TEMPLATE_NAMESPACES = {
+    "gitlab_ce",
+}
+
 
 class Templates:
     TemplateError = store.TemplateError
 
     def ensure_defaults(self, env=None):
         store.migrate_storage_root(env=env)
+        for namespace in DEPRECATED_TEMPLATE_NAMESPACES:
+            store.remove_namespace(namespace, env=env)
         existing = store.namespaces(env=env)
         for item in seed.default_templates():
             if item["namespace"] in existing:

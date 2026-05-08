@@ -27,7 +27,7 @@ export class Component implements OnInit, OnDestroy {
     public macroArgsInput = signal<string>('');
     public macroRunResult = signal<any>(null);
     public macroModalOpen = signal<boolean>(false);
-    public lastJob = signal<any>(null);
+    public lastOperation = signal<any>(null);
     public serverModalOpen = signal<boolean>(false);
     public editingNodeId = signal<string>('');
     public actionModalOpen = signal<boolean>(false);
@@ -179,7 +179,7 @@ export class Component implements OnInit, OnDestroy {
         this.macroArgsEnabled.set(false);
         this.macroArgsInput.set('');
         this.macroRunResult.set(null);
-        this.lastJob.set(null);
+        this.lastOperation.set(null);
         this.detailError.set('');
         this.detailLoading.set(false);
         this.panelRefreshing.set(false);
@@ -279,38 +279,37 @@ export class Component implements OnInit, OnDestroy {
         this.macroRunTimer = null;
     }
 
-    private isTerminalJobStatus(status: string) {
+    private isTerminalOperationStatus(status: string) {
         return ['succeeded', 'failed', 'canceled'].includes(String(status || '').toLowerCase());
     }
 
-    private scheduleMacroRunPoll(jobId: string, token: number, delayMs: number = 500) {
+    private scheduleMacroRunPoll(operationId: string, token: number, delayMs: number = 500) {
         this.stopMacroRunPolling();
-        if (!jobId || token !== this.macroRunToken) return;
+        if (!operationId || token !== this.macroRunToken) return;
         this.macroRunTimer = setTimeout(() => {
-            void this.pollMacroRun(jobId, token);
+            void this.pollMacroRun(operationId, token);
         }, delayMs);
     }
 
-    private async pollMacroRun(jobId: string, token: number) {
-        if (!jobId || token !== this.macroRunToken) return;
+    private async pollMacroRun(operationId: string, token: number) {
+        if (!operationId || token !== this.macroRunToken) return;
         try {
-            const response = await fetch(`/api/jobs/${jobId}`, { credentials: 'same-origin' });
-            const payload = await response.json().catch(() => null);
+            const { code, data } = await wiz.call("operation_status", { operation_id: operationId });
             if (token !== this.macroRunToken) return;
-            const job = payload?.data?.job || null;
-            if (response.ok && job) {
+            const operation = data?.operation || null;
+            if (code === 200 && operation) {
                 const current = this.macroRunResult() || {};
-                this.lastJob.set(job);
-                this.macroRunResult.set({ ...current, job });
-                if (!this.isTerminalJobStatus(job.status)) {
-                    this.scheduleMacroRunPoll(jobId, token);
+                this.lastOperation.set(operation);
+                this.macroRunResult.set({ ...current, operation });
+                if (!this.isTerminalOperationStatus(operation.status)) {
+                    this.scheduleMacroRunPoll(operationId, token);
                 }
-            } else if (!this.isTerminalJobStatus(this.macroRunStatus())) {
-                this.scheduleMacroRunPoll(jobId, token, 1200);
+            } else if (!this.isTerminalOperationStatus(this.macroRunStatus())) {
+                this.scheduleMacroRunPoll(operationId, token, 1200);
             }
         } catch {
-            if (token === this.macroRunToken && !this.isTerminalJobStatus(this.macroRunStatus())) {
-                this.scheduleMacroRunPoll(jobId, token, 1200);
+            if (token === this.macroRunToken && !this.isTerminalOperationStatus(this.macroRunStatus())) {
+                this.scheduleMacroRunPoll(operationId, token, 1200);
             }
         }
         await this.service.render();
@@ -600,7 +599,7 @@ export class Component implements OnInit, OnDestroy {
         this.stopMacroRunPolling();
         this.selectedMacroId.set(macroId);
         this.macroRunResult.set(null);
-        this.lastJob.set(null);
+        this.lastOperation.set(null);
     }
 
     public async runSelectedMacro() {
@@ -617,15 +616,15 @@ export class Component implements OnInit, OnDestroy {
             args,
         });
         if (code === 200) {
-            const job = data.job || null;
-            this.lastJob.set(job);
+            const operation = data.operation || null;
+            this.lastOperation.set(operation);
             this.macroRunResult.set({
-                job,
+                operation,
                 macro,
                 args,
             });
-            if (job?.id && !this.isTerminalJobStatus(job.status) && token === this.macroRunToken) {
-                this.scheduleMacroRunPoll(job.id, token, 250);
+            if (operation?.id && !this.isTerminalOperationStatus(operation.status) && token === this.macroRunToken) {
+                this.scheduleMacroRunPoll(operation.id, token, 250);
             }
         } else {
             await this.alert(data?.message || '매크로를 실행할 수 없습니다.');
@@ -985,9 +984,12 @@ export class Component implements OnInit, OnDestroy {
             this.applyOverview(data);
             this.applyContainerPanel(data);
             this.restartAutoRefresh();
-            this.lastJob.set(data.job || null);
+            this.lastOperation.set(data.operation || null);
             this.actionTitle.set('Swarm 연결 결과');
-            this.actionResult.set({ checks: { job: data.job?.status || 'unknown', swarm: data.selected?.status === 'active' ? 'ok' : 'warning' }, job: data.job });
+            this.actionResult.set({
+                checks: { operation: data.operation?.status || 'unknown', swarm: data.selected?.status === 'active' ? 'ok' : 'warning' },
+                operation: data.operation
+            });
             this.actionModalOpen.set(true);
         } else {
             await this.alert(data?.message || 'Swarm 연결을 실행할 수 없습니다.');
@@ -1385,7 +1387,7 @@ export class Component implements OnInit, OnDestroy {
             ssh: 'SSH 접속',
             docker: 'Docker 상태',
             metric: '자원 정보 수집',
-            job: '작업 실행',
+            operation: '작업 실행',
             import: '서비스 등록',
             command: '명령 실행',
             containers: '컨테이너 새로고침',
@@ -1456,28 +1458,28 @@ export class Component implements OnInit, OnDestroy {
         return this.selected()?.is_local_master ? 'fingerprint 확인 불필요' : (this.fingerprintRegistered() ? 'fingerprint 등록됨' : 'fingerprint 미등록');
     }
 
-    public actionJobLogText() {
-        const logs = this.actionResult()?.job?.logs || [];
-        if (!logs.length) return '';
-        return logs.map((log: any) => {
-            const stream = log?.stream || 'system';
-            const message = log?.message || '';
+    public actionOperationLogText() {
+        const output = this.actionResult()?.operation?.output || [];
+        if (!output.length) return '';
+        return output.map((entry: any) => {
+            const stream = entry?.stream || 'system';
+            const message = entry?.message || '';
             return `[${stream}] ${message}`;
         }).join('\n');
     }
 
     public macroRunLogText() {
-        const logs = this.macroRunResult()?.job?.logs || [];
-        if (!logs.length) return '';
-        return logs.map((log: any) => {
-            const stream = log?.stream || 'system';
-            const message = log?.message || '';
+        const output = this.macroRunResult()?.operation?.output || [];
+        if (!output.length) return '';
+        return output.map((entry: any) => {
+            const stream = entry?.stream || 'system';
+            const message = entry?.message || '';
             return `[${stream}] ${message}`;
         }).join('\n');
     }
 
     public macroRunStatus() {
-        return this.macroRunResult()?.job?.status || 'unknown';
+        return this.macroRunResult()?.operation?.status || 'unknown';
     }
 
     public mappedBindings(container: any) {

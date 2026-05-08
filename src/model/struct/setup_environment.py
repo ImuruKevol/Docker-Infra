@@ -75,10 +75,7 @@ def detect_docker(env=None):
 
 def detect_proxy(env=None):
     nginx = _run_probe("proxy.nginx.version", env=env)
-    apache = _run_probe("proxy.apache2.version", env=env)
-    if apache["status"] == "missing":
-        apache = _run_probe("proxy.apachectl.version", env=env)
-    return {"nginx": nginx, "apache2": apache}
+    return {"nginx": nginx, "active": "nginx", "fixed": True}
 
 
 def detect_local_environment(env=None):

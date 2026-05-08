@@ -119,3 +119,26 @@ def delete_record():
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
+
+
+def delete_certificate():
+    domains = wiz.model("struct").domains
+    body = wiz.request.query()
+    code = 200
+    payload = {}
+    try:
+        payload = domains.delete_certificate(
+            body.get("zone_id"),
+            body.get("certificate_id") or body.get("id"),
+            test_run_id=body.get("test_run_id"),
+        )
+    except domains.DomainError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except ValueError as exc:
+        code = 400
+        payload = {"message": str(exc), "error_code": "CERTIFICATE_DELETE_FAILED"}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)

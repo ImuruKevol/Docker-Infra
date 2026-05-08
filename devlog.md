@@ -53,3 +53,13 @@
 | 2026-05-07 | 051 | 이미지/템플릿 관리 화면 완성과 기본 템플릿 seed, 서비스 생성 템플릿 연동 적용 | [상세](devlog/2026-05-07/051-images-templates-catalog-and-service-template-flow.md) |
 | 2026-05-08 | 052 | 이미지/템플릿 화면 Angular templateUrl 해석 오류 수정 | [상세](devlog/2026-05-08/052-images-templates-component-resolution-fix.md) |
 | 2026-05-08 | 053 | 이미지 관리 초기 로딩 분리·Harbor 삭제/태그 표시 보강, 템플릿 릴리즈 UI·저장 경로·기본 seed 확장 | [상세](devlog/2026-05-08/053-images-performance-template-release-ui.md) |
+| 2026-05-08 | 054 | 이미지 관리 로컬 일괄 삭제, Harbor 프로젝트 생성, 저장소별 태그 상세/삭제 흐름 보강 | [상세](devlog/2026-05-08/054-images-local-bulk-delete-harbor-project-create.md) |
+| 2026-05-08 | 055 | Harbor 이미지 목록/태그 목록 분리와 저장소 선택·삭제 동작 수정 | [상세](devlog/2026-05-08/055-harbor-repository-list-tag-loading-fix.md) |
+| 2026-05-08 | 056 | Harbor 이미지 목록과 태그 목록을 좌우 2단 패널로 재배치 | [상세](devlog/2026-05-08/056-harbor-tags-right-panel-layout.md) |
+| 2026-05-08 | 057 | GitLab 연동과 build→Harbor push 흐름 제거, 이미지 전용 운영 구조로 정리 | [상세](devlog/2026-05-08/057-remove-gitlab-build-flow.md) |
+| 2026-05-08 | 058 | nginx 고정 운영 기준 적용, 시스템 SSL 설정 제거, 도메인 인증서 업로드와 서비스 생성 흐름 단순화 | [상세](devlog/2026-05-08/058-fixed-nginx-domain-certs-service-flow.md) |
+| 2026-05-08 | 059 | Job 제거·내장 Harbor 백업 시스템·관리자용 서비스 wizard 기준으로 TODO 전면 재작성 | [상세](devlog/2026-05-08/059-rewrite-todo-for-simplified-product-flow.md) |
+| 2026-05-08 | 060 | 서비스-도메인 nginx 연결 wizard TODO 반영과 P0 문서/OpenAPI 정리 | [상세](devlog/2026-05-08/060-service-domain-nginx-wizard-p0-docs-openapi.md) |
+| 2026-05-08 | 061 | Job route/model 제거와 operation log 기반 실행 기록 전환 | [상세](devlog/2026-05-08/061-remove-job-system-operation-log.md) |
+| 2026-05-08 | 062 | 최초 구성 마법사 백업 시스템 토글과 설정 스키마 추가 | [상세](devlog/2026-05-08/062-setup-backup-system-toggle-schema.md) |
+| 2026-05-08 | 063 | WIZ 구조 계약에 맞춘 대형 모델 분리와 api.py 응답 위치 정리 | [상세](devlog/2026-05-08/063-wiz-structure-model-split-cleanup.md) |

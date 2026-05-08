@@ -389,8 +389,26 @@ export class Component implements OnInit {
             failed: '실패',
             canceled: '취소됨',
             succeeded: '완료',
+            certbot: '무료 인증서 발급',
+            existing: '업로드 인증서 사용',
+            none: 'SSL 없음',
         };
         return labels[status] || status || '-';
+    }
+
+    public sslModeLabel(mode: string) {
+        const labels: any = {
+            none: 'SSL 없음',
+            certbot: '무료 인증서 발급',
+            existing: '도메인 인증서 사용',
+            upload: '도메인 인증서 사용'
+        };
+        return labels[mode] || mode || '-';
+    }
+
+    public domainConnectionLabel(domain: any) {
+        if (!domain) return '-';
+        return `Nginx 자동 연결 / ${this.sslModeLabel(domain.ssl_mode)}`;
     }
 
     public statusClass(status: string) {

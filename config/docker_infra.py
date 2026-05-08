@@ -11,6 +11,9 @@ DEFAULT_DB_SCHEMA = "public"
 DEFAULT_SECRET_KEY = "docker-infra-development-secret"
 DEFAULT_SSH_KEY_DIR = ".runtime/ssh"
 DEFAULT_DATA_DIR = "data"
+DEFAULT_BACKUP_HARBOR_DATA_DIR = "data/backup-harbor"
+DEFAULT_BACKUP_HARBOR_HTTP_PORT = "5000"
+DEFAULT_BACKUP_HARBOR_HTTPS_PORT = "5443"
 CONFIG_ENV_NAME = "config.env"
 LOCAL_EXECUTOR_ALLOWLIST_ENV = "DOCKER_INFRA_LOCAL_EXECUTOR_ALLOWLIST"
 DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
@@ -131,6 +134,30 @@ def data_dir(env=None):
     if path.is_absolute():
         return str(path)
     return str(_workspace_root() / path)
+
+
+def backup_harbor_data_dir(env=None):
+    raw = runtime_env(env).get("DOCKER_INFRA_BACKUP_HARBOR_DATA_DIR") or DEFAULT_BACKUP_HARBOR_DATA_DIR
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str(_workspace_root() / path)
+
+
+def _port(value, fallback):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return int(fallback)
+    return number if 1 <= number <= 65535 else int(fallback)
+
+
+def backup_harbor_ports(env=None):
+    values = runtime_env(env)
+    return {
+        "http": _port(values.get("DOCKER_INFRA_BACKUP_HARBOR_HTTP_PORT"), DEFAULT_BACKUP_HARBOR_HTTP_PORT),
+        "https": _port(values.get("DOCKER_INFRA_BACKUP_HARBOR_HTTPS_PORT"), DEFAULT_BACKUP_HARBOR_HTTPS_PORT),
+    }
 
 
 def system_assets_dir(env=None):

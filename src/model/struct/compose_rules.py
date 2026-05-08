@@ -63,10 +63,8 @@ def is_enabled_healthcheck(service):
     return healthcheck.get("disable") is not True
 
 
-def has_job_health_check(payload):
-    candidate = payload.get("job_health_check")
-    if candidate is None:
-        candidate = payload.get("health_check")
+def has_health_check_override(payload):
+    candidate = payload.get("health_check")
     if isinstance(candidate, bool):
         return candidate
     if isinstance(candidate, dict):
@@ -156,7 +154,7 @@ class ComposeRules:
     error = staticmethod(error)
     merge_defaults = staticmethod(merge_defaults)
     is_enabled_healthcheck = staticmethod(is_enabled_healthcheck)
-    has_job_health_check = staticmethod(has_job_health_check)
+    has_health_check_override = staticmethod(has_health_check_override)
     load_compose = staticmethod(load_compose)
     network_names = staticmethod(network_names)
 

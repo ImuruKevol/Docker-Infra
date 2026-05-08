@@ -5,7 +5,7 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 
-integrations = wiz.model("struct/integrations")
+integrations = wiz.model("struct/integrations_registry")
 shared = wiz.model("struct/images_shared")
 ImageError = shared.ImageError
 encode_repository_name = shared.encode_repository_name
@@ -30,13 +30,18 @@ def _headers(config):
     return {"Authorization": f"Basic {token}", "Accept": "application/json"}
 
 
-def _request_json(config, path, query=None, method="GET"):
+def _request_json(config, path, query=None, method="GET", payload=None):
     if not config["enabled"]:
         raise ImageError(409, "Harbor 연동이 꺼져 있습니다.", "HARBOR_DISABLED")
     if not config["url"] or not config["username"] or not config["password"]:
         raise ImageError(400, "Harbor URL, 계정, 비밀번호를 먼저 저장해주세요.", "HARBOR_CONFIGURATION_REQUIRED")
     query_string = f"?{urlparse.urlencode(query or {})}" if query else ""
-    req = urlrequest.Request(f"{config['url']}{path}{query_string}", headers=_headers(config), method=method)
+    headers = _headers(config)
+    data = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode("utf-8")
+    req = urlrequest.Request(f"{config['url']}{path}{query_string}", headers=headers, data=data, method=method)
     try:
         with urlrequest.urlopen(req, timeout=15) as response:
             body = response.read().decode("utf-8")
@@ -91,18 +96,39 @@ class HarborImages:
             raise ImageError(status, "Harbor 저장소 목록을 불러올 수 없습니다.", "HARBOR_REPOSITORIES_FAILED")
         items = []
         for repository in payload if isinstance(payload, list) else []:
-            name = str(repository.get("name") or "")
-            display_name = name.split("/", 1)[-1] if "/" in name else name
+            full_name = str(repository.get("name") or "")
+            name = full_name.split("/", 1)[-1] if "/" in full_name else full_name
             items.append(
                 {
                     "name": name,
-                    "display_name": display_name,
+                    "full_name": full_name,
+                    "display_name": name,
                     "artifact_count": int(repository.get("artifact_count") or 0),
                     "pull_count": int(repository.get("pull_count") or 0),
                     "update_time": repository.get("update_time"),
                 }
             )
         return items
+
+    def create_project(self, project_name, public=False, env=None):
+        name = str(project_name or "").strip()
+        if not name:
+            raise ImageError(400, "project_name이 필요합니다.", "HARBOR_PROJECT_REQUIRED")
+        config = _config(env=env)
+        status, _ = _request_json(
+            config,
+            "/api/v2.0/projects",
+            method="POST",
+            payload={
+                "project_name": name,
+                "metadata": {
+                    "public": "true" if bool(public) else "false",
+                },
+            },
+        )
+        if status not in {200, 201}:
+            raise ImageError(status, "Harbor 프로젝트를 생성할 수 없습니다.", "HARBOR_PROJECT_CREATE_FAILED")
+        return True
 
     def list_artifacts(self, project_name, repository_name, env=None):
         config = _config(env=env)
@@ -141,6 +167,17 @@ class HarborImages:
         )
         if status not in {200, 202, 204}:
             raise ImageError(status, "Harbor 이미지를 삭제할 수 없습니다.", "HARBOR_DELETE_FAILED")
+        return True
+
+    def delete_repository(self, project_name, repository_name, env=None):
+        config = _config(env=env)
+        status, _ = _request_json(
+            config,
+            f"/api/v2.0/projects/{urlparse.quote(str(project_name or '').strip(), safe='')}/repositories/{encode_repository_name(repository_name)}",
+            method="DELETE",
+        )
+        if status not in {200, 202, 204}:
+            raise ImageError(status, "Harbor 이미지 저장소를 삭제할 수 없습니다.", "HARBOR_REPOSITORY_DELETE_FAILED")
         return True
 
     def delete_project(self, project_name, env=None):

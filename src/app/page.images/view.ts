@@ -18,9 +18,16 @@ export class Component implements OnInit {
     public harborSummary = signal<any>({ project_count: 0, tag_count: 0 });
     public selectedProject = signal<string>('');
     public harborDetail = signal<any>(null);
+    public harborTags = signal<any[]>([]);
     public selectedRepository = signal<string>('');
     public harborSearch = signal<string>('');
+    public selectedHarborRepositories = signal<string[]>([]);
     public selectedHarborItems = signal<string[]>([]);
+    public harborTagsBusy = signal<boolean>(false);
+    public showCreateProjectModal = signal<boolean>(false);
+    public createProjectBusy = signal<boolean>(false);
+    public newProjectName = signal<string>('');
+    public newProjectPublic = signal<boolean>(false);
     public nodes = signal<any[]>([]);
     public localSummaryByNode = signal<Record<string, any>>({});
     public selectedNodeId = signal<string>('');
@@ -28,6 +35,7 @@ export class Component implements OnInit {
     public localSearch = signal<string>('');
     public localUsageFilter = signal<LocalUsageFilter>('all');
     public localSort = signal<LocalSortKey>('last_used_desc');
+    public selectedLocalItems = signal<string[]>([]);
 
     constructor(public service: Service) { }
 
@@ -79,6 +87,11 @@ export class Component implements OnInit {
         this.nodes.set(data.nodes || []);
         this.localSummaryByNode.set(data.local_summary_by_node || {});
         this.selectedProject.set(data.selected_project || '');
+        this.harborTags.set([]);
+        this.selectedRepository.set('');
+        this.selectedHarborRepositories.set([]);
+        this.selectedHarborItems.set([]);
+        this.selectedLocalItems.set([]);
         this.selectedNodeId.set(data.selected_node_id || '');
         this.activeTab.set(this.selectedNodeId() ? 'local' : 'harbor');
         this.loading.set(false);
@@ -133,18 +146,23 @@ export class Component implements OnInit {
         if (!projectName) return;
         this.harborBusy.set(true);
         this.selectedProject.set(projectName);
+        this.harborTags.set([]);
+        this.selectedRepository.set('');
+        this.selectedHarborRepositories.set([]);
+        this.selectedHarborItems.set([]);
         const { code, data } = await wiz.call('harbor_detail', { project_name: projectName });
         if (code === 200) {
             this.harborDetail.set(data);
             const repositories = data.repositories || [];
-            const currentRepository = this.selectedRepository();
-            this.selectedRepository.set(repositories.find((item: any) => item.name === currentRepository)?.name || repositories[0]?.name || '');
-            this.selectedHarborItems.set([]);
+            const nextRepository = data.selected_repository || repositories[0]?.name || '';
+            this.selectedRepository.set(nextRepository);
             this.harborSummary.set({
                 ...this.harborSummary(),
                 repository_count: data?.summary?.repository_count || repositories.length,
-                tag_count: data?.summary?.tag_count || 0,
             });
+            if (nextRepository) {
+                await this.loadHarborTags(nextRepository, true);
+            }
         } else if (!silent) {
             await this.alert(data?.message || 'Harbor 저장소를 불러올 수 없습니다.');
         } else {
@@ -154,10 +172,31 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
+    public async loadHarborTags(repositoryName: string, silent: boolean = false) {
+        if (!this.selectedProject() || !repositoryName) return;
+        this.harborTagsBusy.set(true);
+        this.selectedRepository.set(repositoryName);
+        this.selectedHarborItems.set([]);
+        const { code, data } = await wiz.call('harbor_tags', {
+            project_name: this.selectedProject(),
+            repository_name: repositoryName,
+        });
+        if (code === 200) {
+            this.harborTags.set(data.tags || []);
+        } else if (!silent) {
+            await this.alert(data?.message || 'Harbor 태그 목록을 불러올 수 없습니다.');
+        } else {
+            this.harborError.set(data?.message || 'Harbor 태그 목록을 불러올 수 없습니다.');
+        }
+        this.harborTagsBusy.set(false);
+        await this.service.render();
+    }
+
     public async loadLocalDetail(nodeId: string, silent: boolean = false) {
         if (!nodeId) return;
         this.localBusy.set(true);
         this.selectedNodeId.set(nodeId);
+        this.selectedLocalItems.set([]);
         const { code, data } = await wiz.call('local_detail', { node_id: nodeId });
         if (code === 200) {
             this.localDetail.set(data);
@@ -176,7 +215,8 @@ export class Component implements OnInit {
         const detail = this.harborDetail();
         return detail?.summary || {
             repository_count: this.harborDetail()?.repositories?.length || 0,
-            tag_count: this.harborSummary().tag_count || 0,
+            artifact_count: 0,
+            pull_count: 0,
         };
     }
 
@@ -185,7 +225,7 @@ export class Component implements OnInit {
     }
 
     public harborTagCount() {
-        return this.projectSummary().tag_count || this.harborSummary().tag_count || 0;
+        return this.harborTags().length || 0;
     }
 
     public selectedNodeSummary() {
@@ -210,12 +250,51 @@ export class Component implements OnInit {
         return this.harborDetail()?.repositories || [];
     }
 
+    public harborRepositoryKey(item: any) {
+        return String(item?.name || '').trim();
+    }
+
+    public isHarborRepositorySelected(item: any) {
+        return this.selectedHarborRepositories().includes(this.harborRepositoryKey(item));
+    }
+
+    public toggleHarborRepositorySelection(item: any, checked: boolean) {
+        const key = this.harborRepositoryKey(item);
+        const items = new Set(this.selectedHarborRepositories());
+        if (checked) items.add(key);
+        else items.delete(key);
+        this.selectedHarborRepositories.set(Array.from(items));
+    }
+
+    public toggleAllHarborRepositories(checked: boolean) {
+        if (!checked) {
+            this.selectedHarborRepositories.set([]);
+            return;
+        }
+        this.selectedHarborRepositories.set(this.harborRepositories().map((item: any) => this.harborRepositoryKey(item)).filter((item: string) => item));
+    }
+
+    public allVisibleHarborRepositoriesSelected() {
+        const visible = this.harborRepositories();
+        if (!visible.length) return false;
+        const selected = new Set(this.selectedHarborRepositories());
+        return visible.every((item: any) => selected.has(this.harborRepositoryKey(item)));
+    }
+
+    public selectedHarborRepositoryCount() {
+        return this.selectedHarborRepositories().length;
+    }
+
+    public selectedHarborRepositoryItems() {
+        const selected = new Set(this.selectedHarborRepositories());
+        return this.harborRepositories()
+            .filter((item: any) => selected.has(this.harborRepositoryKey(item)))
+            .map((item: any) => ({ repository_name: item.name }));
+    }
+
     public filteredHarborTags() {
-        const detail = this.harborDetail();
-        const repositoryName = this.selectedRepository();
         const query = String(this.harborSearch() || '').trim().toLowerCase();
-        let items = detail?.tags || [];
-        if (repositoryName) items = items.filter((item: any) => item.repository_name === repositoryName);
+        let items = [...this.harborTags()];
         if (!query) return items;
         return items.filter((item: any) => `${item.repository_name} ${item.tag} ${item.digest}`.toLowerCase().includes(query));
     }
@@ -257,7 +336,7 @@ export class Component implements OnInit {
 
     public selectedHarborDeleteItems() {
         const selected = new Set(this.selectedHarborItems());
-        return this.filteredHarborTags()
+        return this.harborTags()
             .filter((item: any) => selected.has(this.harborTagKey(item)))
             .map((item: any) => ({ repository_name: item.repository_name, digest: item.digest }));
     }
@@ -276,6 +355,48 @@ export class Component implements OnInit {
             items = items.filter((item: any) => !item.in_use);
         }
         return items.sort((a: any, b: any) => this.compareLocalImages(a, b));
+    }
+
+    public localImageKey(item: any) {
+        return String(item?.remove_ref || item?.image_id || '').trim();
+    }
+
+    public isLocalImageSelected(item: any) {
+        return this.selectedLocalItems().includes(this.localImageKey(item));
+    }
+
+    public toggleLocalImageSelection(item: any, checked: boolean) {
+        const key = this.localImageKey(item);
+        const items = new Set(this.selectedLocalItems());
+        if (checked) items.add(key);
+        else items.delete(key);
+        this.selectedLocalItems.set(Array.from(items));
+    }
+
+    public toggleAllLocalImages(checked: boolean) {
+        if (!checked) {
+            this.selectedLocalItems.set([]);
+            return;
+        }
+        this.selectedLocalItems.set(this.filteredLocalImages().map((item: any) => this.localImageKey(item)).filter((item: string) => item));
+    }
+
+    public allVisibleLocalImagesSelected() {
+        const visible = this.filteredLocalImages();
+        if (!visible.length) return false;
+        const selected = new Set(this.selectedLocalItems());
+        return visible.every((item: any) => selected.has(this.localImageKey(item)));
+    }
+
+    public selectedLocalImageCount() {
+        return this.selectedLocalItems().length;
+    }
+
+    public selectedLocalDeleteItems() {
+        const selected = new Set(this.selectedLocalItems());
+        return (this.localDetail()?.images || [])
+            .filter((item: any) => selected.has(this.localImageKey(item)))
+            .map((item: any) => ({ image_ref: item.remove_ref }));
     }
 
     private compareLocalImages(left: any, right: any) {
@@ -335,7 +456,8 @@ export class Component implements OnInit {
             digest: item.digest,
         });
         if (code === 200) {
-            this.harborDetail.set(data);
+            this.harborTags.set(data.tags || []);
+            this.selectedHarborItems.set([]);
             await this.alert('Harbor 이미지를 삭제했습니다.', 'success');
         } else {
             await this.alert(data?.message || 'Harbor 이미지를 삭제할 수 없습니다.');
@@ -352,10 +474,11 @@ export class Component implements OnInit {
         this.harborBusy.set(true);
         const { code, data } = await wiz.call('delete_harbor', {
             project_name: this.selectedProject(),
+            repository_name: this.selectedRepository(),
             items,
         });
         if (code === 200) {
-            this.harborDetail.set(data);
+            this.harborTags.set(data.tags || []);
             this.selectedHarborItems.set([]);
             await this.alert('선택한 Harbor 이미지를 삭제했습니다.', 'success');
         } else {
@@ -378,13 +501,109 @@ export class Component implements OnInit {
             this.harborSummary.set(data.summary || { project_count: 0, tag_count: 0 });
             this.selectedProject.set(data.selected_project || '');
             this.harborDetail.set(null);
+            this.harborTags.set([]);
             this.selectedRepository.set('');
+            this.selectedHarborRepositories.set([]);
             this.selectedHarborItems.set([]);
             await this.alert('Harbor 프로젝트를 삭제했습니다.', 'success');
         } else {
             await this.alert(data?.message || 'Harbor 프로젝트를 삭제할 수 없습니다.');
         }
         this.harborBusy.set(false);
+        await this.service.render();
+    }
+
+    public async deleteHarborRepository(item: any) {
+        const repositoryName = this.harborRepositoryKey(item);
+        if (!repositoryName) return;
+        const ok = await this.confirm(`${repositoryName} 이미지를 Harbor 프로젝트에서 삭제합니다.`, 'Harbor 삭제');
+        if (!ok) return;
+        this.harborBusy.set(true);
+        const { code, data } = await wiz.call('delete_harbor_repository', {
+            project_name: this.selectedProject(),
+            repository_name: repositoryName,
+        });
+        if (code === 200) {
+            this.harborDetail.set(data);
+            this.selectedHarborRepositories.set(this.selectedHarborRepositories().filter((itemKey: string) => itemKey !== repositoryName));
+            if (this.selectedRepository() === repositoryName) {
+                this.harborTags.set([]);
+                const nextRepository = (data.repositories || [])[0]?.name || '';
+                this.selectedRepository.set(nextRepository);
+                if (nextRepository) {
+                    await this.loadHarborTags(nextRepository, true);
+                }
+            }
+            await this.alert('Harbor 이미지를 삭제했습니다.', 'success');
+        } else {
+            await this.alert(data?.message || 'Harbor 이미지를 삭제할 수 없습니다.');
+        }
+        this.harborBusy.set(false);
+        await this.service.render();
+    }
+
+    public async deleteSelectedHarborRepositories() {
+        const items = this.selectedHarborRepositoryItems();
+        if (!items.length) return;
+        const ok = await this.confirm(`선택한 Harbor 이미지 ${items.length}개를 삭제합니다.`, 'Harbor 삭제');
+        if (!ok) return;
+        this.harborBusy.set(true);
+        const selectedRepository = this.selectedRepository();
+        const { code, data } = await wiz.call('delete_harbor_repository', {
+            project_name: this.selectedProject(),
+            items,
+        });
+        if (code === 200) {
+            this.harborDetail.set(data);
+            this.selectedHarborRepositories.set([]);
+            if (items.some((item: any) => item.repository_name === selectedRepository)) {
+                this.harborTags.set([]);
+                const nextRepository = (data.repositories || [])[0]?.name || '';
+                this.selectedRepository.set(nextRepository);
+                if (nextRepository) {
+                    await this.loadHarborTags(nextRepository, true);
+                }
+            }
+            await this.alert('선택한 Harbor 이미지를 삭제했습니다.', 'success');
+        } else {
+            await this.alert(data?.message || 'Harbor 이미지를 삭제할 수 없습니다.');
+        }
+        this.harborBusy.set(false);
+        await this.service.render();
+    }
+
+    public openCreateProjectModal() {
+        this.newProjectName.set('');
+        this.newProjectPublic.set(false);
+        this.showCreateProjectModal.set(true);
+    }
+
+    public closeCreateProjectModal() {
+        this.showCreateProjectModal.set(false);
+        this.createProjectBusy.set(false);
+    }
+
+    public async createHarborProject() {
+        const projectName = String(this.newProjectName() || '').trim();
+        if (!projectName) {
+            await this.alert('프로젝트 이름을 입력해주세요.');
+            return;
+        }
+        this.createProjectBusy.set(true);
+        const { code, data } = await wiz.call('create_harbor_project', {
+            project_name: projectName,
+            public: this.newProjectPublic(),
+        });
+        if (code === 200) {
+            this.harborProjects.set(data.projects || []);
+            this.harborSummary.set(data.summary || { project_count: 0, tag_count: 0 });
+            this.showCreateProjectModal.set(false);
+            await this.loadHarborDetail(projectName, true);
+            await this.alert('Harbor 프로젝트를 생성했습니다.', 'success');
+        } else {
+            await this.alert(data?.message || 'Harbor 프로젝트를 생성할 수 없습니다.');
+        }
+        this.createProjectBusy.set(false);
         await this.service.render();
     }
 
@@ -403,7 +622,33 @@ export class Component implements OnInit {
                 ...this.localSummaryByNode(),
                 [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0 },
             });
+            this.selectedLocalItems.set(this.selectedLocalItems().filter((itemKey: string) => itemKey !== this.localImageKey(item)));
             await this.alert('로컬 이미지를 삭제했습니다.', 'success');
+        } else {
+            await this.alert(data?.message || '로컬 이미지를 삭제할 수 없습니다.');
+        }
+        this.localBusy.set(false);
+        await this.service.render();
+    }
+
+    public async deleteSelectedLocalImages() {
+        const items = this.selectedLocalDeleteItems();
+        if (!items.length) return;
+        const ok = await this.confirm(`선택한 로컬 이미지 ${items.length}개를 삭제합니다.`, '로컬 삭제');
+        if (!ok) return;
+        this.localBusy.set(true);
+        const { code, data } = await wiz.call('delete_local', {
+            node_id: this.selectedNodeId(),
+            items,
+        });
+        if (code === 200) {
+            this.localDetail.set(data);
+            this.localSummaryByNode.set({
+                ...this.localSummaryByNode(),
+                [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0 },
+            });
+            this.selectedLocalItems.set([]);
+            await this.alert('선택한 로컬 이미지를 삭제했습니다.', 'success');
         } else {
             await this.alert(data?.message || '로컬 이미지를 삭제할 수 없습니다.');
         }

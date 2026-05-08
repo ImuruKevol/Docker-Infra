@@ -14,8 +14,6 @@ try:
             target=body.get("target") or body.get("command_id") or "docker.version",
             timeout_seconds=body.get("timeout_seconds"),
             params=body.get("params") or {},
-            job_id=body.get("job_id"),
-            step_ref=body.get("step_ref"),
         )
     }
 except executor.LocalCommandError as exc:

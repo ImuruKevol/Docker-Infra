@@ -1,0 +1,8 @@
+{
+    "id": "api-domain-certificates",
+    "title": "Domain Certificates API",
+    "route": "/api/domain-certificates",
+    "category": "",
+    "viewuri": "",
+    "controller": "user"
+}

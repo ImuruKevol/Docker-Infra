@@ -44,8 +44,8 @@ class ServiceRuntimeMixin:
                 versions = [_row(row) for row in cursor.fetchall()]
                 cursor.execute(
                     """
-                    SELECT id, type, status, created_at, started_at, finished_at, metadata, requested_payload, result_payload
-                    FROM jobs
+                    SELECT id, type, status, message, created_at, started_at, finished_at, metadata, requested_payload, result_payload, output
+                    FROM operation_logs
                     WHERE requested_payload->>'service_id' = %s
                        OR metadata->>'service_id' = %s
                        OR requested_payload->>'namespace' = %s
@@ -55,7 +55,7 @@ class ServiceRuntimeMixin:
                     """,
                     (service_id, service_id, service.get("namespace"), service.get("namespace")),
                 )
-                jobs = [_row(row) for row in cursor.fetchall()]
+                operations = [_row(row) for row in cursor.fetchall()]
 
         compose_content = ""
         compose_path = Path(service["compose_path"]).expanduser()
@@ -66,7 +66,7 @@ class ServiceRuntimeMixin:
             "service": service,
             "domains": domains,
             "versions": versions,
-            "jobs": jobs,
+            "operations": operations,
             "compose_content": compose_content,
             "file_root": str(root),
         }

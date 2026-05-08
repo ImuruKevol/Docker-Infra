@@ -102,16 +102,8 @@ class TemplateStore:
                     raise TemplateError(404, "템플릿 버전을 찾을 수 없습니다.", "TEMPLATE_VERSION_NOT_FOUND")
         files = self.read_files(version["path"])
         rendered = self.render_preview(files["docker-compose.yaml"], files["values.default.yaml"], version["template_namespace"])
-        return {
-            "version": version,
-            "template": {
-                "id": version["template_id"],
-                "name": version["template_name"],
-                "namespace": version["template_namespace"],
-            },
-            "files": files,
-            "preview": rendered,
-        }
+        template = {"id": version["template_id"], "name": version["template_name"], "namespace": version["template_namespace"]}
+        return {"version": version, "template": template, "files": files, "preview": rendered}
 
     def preview(self, payload, env=None):
         body = payload or {}
@@ -216,6 +208,23 @@ class TemplateStore:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT namespace FROM templates")
                 return {str(item["namespace"] or "").strip() for item in cursor.fetchall()}
+
+    def remove_namespace(self, namespace, env=None):
+        target = _normalize_namespace(namespace)
+        if not target:
+            return False
+        removed = False
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT id, path FROM templates WHERE namespace = %s", (target,))
+                rows = [_row(item) for item in cursor.fetchall()]
+                for item in rows:
+                    path = Path(item["path"]).expanduser()
+                    if path.is_dir():
+                        shutil.rmtree(path, ignore_errors=True)
+                cursor.execute("DELETE FROM templates WHERE namespace = %s", (target,))
+                removed = cursor.rowcount > 0
+        return removed
 
     def migrate_storage_root(self, env=None):
         new_root = self.template_root().resolve()

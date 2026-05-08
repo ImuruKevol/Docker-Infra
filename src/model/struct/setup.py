@@ -4,6 +4,7 @@ from pathlib import Path
 from psycopg.types.json import Jsonb
 
 auth = wiz.model("struct/auth")
+backup_system = wiz.model("struct/backup_system")
 postgres = wiz.model("db/postgres")
 environment = wiz.model("struct/setup_environment")
 connect = postgres.connect
@@ -20,7 +21,7 @@ SETUP_COMPLETED_AT_KEY = "setup.completed_at"
 SETUP_DEFAULT_PROXY_KEY = "setup.default_proxy"
 SETUP_TEMPLATE_ROOT_KEY = "setup.template_root"
 SETUP_ADVERTISE_ADDRESS_KEY = "setup.advertise_address"
-ALLOWED_PROXY_TYPES = {"nginx", "apache2", "none"}
+ALLOWED_PROXY_TYPES = {"nginx"}
 
 
 class SetupError(Exception):
@@ -104,6 +105,7 @@ class SetupService:
                     "advertise_address": None,
                 },
                 "local_master": None,
+                "backup_system": backup_system.default_config(env=env),
                 "checks": detect_local_environment(env=env) if include_checks else None,
             }
 
@@ -124,20 +126,12 @@ class SetupService:
                     "advertise_address": _setting_value(settings.get(SETUP_ADVERTISE_ADDRESS_KEY)),
                 },
                 "local_master": local_master,
+                "backup_system": backup_system.status(env=env),
                 "checks": detect_local_environment(env=env) if include_checks else None,
             }
 
     def _choose_proxy(self, requested, checks):
-        proxy_type = requested or "auto"
-        if proxy_type == "auto":
-            if checks["proxy"]["nginx"]["status"] == "ok":
-                return "nginx"
-            if checks["proxy"]["apache2"]["status"] == "ok":
-                return "apache2"
-            return "none"
-        if proxy_type not in ALLOWED_PROXY_TYPES:
-            raise SetupError(400, "지원하지 않는 proxy 종류입니다.", "INVALID_PROXY_TYPE")
-        return proxy_type
+        return "nginx"
 
     def _upsert_setting(self, cursor, key, value, value_type, test_run_id, metadata=None):
         cursor.execute(
@@ -255,10 +249,17 @@ class SetupService:
                 self._upsert_setting(cursor, SETUP_TEMPLATE_ROOT_KEY, template_root, "path", test_run_id)
                 self._upsert_setting(cursor, SETUP_ADVERTISE_ADDRESS_KEY, advertise_address, "string", test_run_id)
                 local_master = self._upsert_local_master(cursor, advertise_address, test_run_id, checks)
+                try:
+                    backup = backup_system.configure_with_connection(
+                        payload.get("backup_system"), test_run_id=test_run_id, connection=connection, env=env
+                    )
+                except backup_system.BackupSystemError as exc:
+                    raise SetupError(exc.status_code, exc.message, exc.error_code, **exc.extra)
 
         return {
             "setup": self.status(include_checks=True, env=env),
             "local_master": local_master,
+            "backup_system": backup,
         }
 
     def delete_by_test_run_id(self, test_run_id, env=None):

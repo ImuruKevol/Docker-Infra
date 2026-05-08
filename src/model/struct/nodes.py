@@ -1,5 +1,5 @@
 postgres = wiz.model("db/postgres")
-jobs_model = wiz.model("struct/jobs")
+operations_model = wiz.model("struct/operations")
 local_executor_model = wiz.model("struct/local_executor")
 ssh_executor_model = wiz.model("struct/ssh_executor")
 shared = wiz.model("struct/nodes_shared")
@@ -20,12 +20,11 @@ _credential_to_public = shared.credential_to_public
 class NodeService(NodeLocalMasterMixin, NodeRegistryMixin, NodeManageMixin, NodeRuntimeMixin, NodeJoinMixin, NodeReporterMixin):
     NodeError = NodeError
     LocalCommandError = local_executor_model.LocalCommandError
-    JobError = jobs_model.JobError
 
-    def __init__(self, local_executor=None, ssh_executor=None, jobs=None):
+    def __init__(self, local_executor=None, ssh_executor=None, operations=None):
         self.local_executor = local_executor or local_executor_model
         self.ssh_executor = ssh_executor or ssh_executor_model
-        self.jobs = jobs or jobs_model
+        self.operations = operations or operations_model
 
     def _fetch_node(self, cursor, node_id):
         cursor.execute("SELECT * FROM nodes WHERE id = %s", (node_id,))

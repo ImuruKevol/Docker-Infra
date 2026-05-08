@@ -63,8 +63,6 @@ class WizStructureContractTest(unittest.TestCase):
 
         protected_routes = [
             "api-compose-validate",
-            "api-jobs",
-            "api-jobs-path",
             "api-nodes",
             "api-nodes-path",
             "api-system-local-command-check",

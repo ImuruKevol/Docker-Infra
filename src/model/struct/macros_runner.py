@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 connect = wiz.model("db/postgres").connect
-jobs_model = wiz.model("struct/jobs")
+operations_model = wiz.model("struct/operations")
 nodes_model = wiz.model("struct/nodes")
 ssh_executor = wiz.model("struct/ssh_executor")
 shared = wiz.model("struct/macros_shared")
@@ -21,6 +21,7 @@ SCOPE_NODE = shared.SCOPE_NODE
 
 class MacroRunner:
     MacroError = MacroError
+
     def _fetch(self, cursor, macro_id):
         cursor.execute(
             """
@@ -59,12 +60,6 @@ class MacroRunner:
             ),
         ]
 
-    def _append_logs(self, job_id, result, env=None):
-        if result.get("stdout"):
-            jobs_model.append_log(job_id, result["stdout"], stream="stdout", step_ref=1, env=env)
-        if result.get("stderr"):
-            jobs_model.append_log(job_id, result["stderr"], stream="stderr", step_ref=1, env=env)
-
     def _spawn_background(self, target, *args, **kwargs):
         socketio = getattr(getattr(wiz.server, "app", None), "socketio", None)
         if socketio is not None and hasattr(socketio, "start_background_task"):
@@ -73,10 +68,15 @@ class MacroRunner:
         worker = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
         worker.start()
 
-    def _append_stream(self, job_id, pipe, stream_name, env=None):
+    def _append_output(self, operation_id, message, stream="system", env=None):
+        if not message:
+            return
+        operations_model.append_output(operation_id, trim_output(message), stream=stream, env=env)
+
+    def _append_stream(self, operation_id, pipe, stream_name, env=None):
         try:
             for line in iter(pipe.readline, ""):
-                jobs_model.append_log(job_id, trim_output(line.rstrip("\r\n")), stream=stream_name, step_ref=1, env=env)
+                self._append_output(operation_id, line.rstrip("\r\n"), stream=stream_name, env=env)
         finally:
             try:
                 pipe.close()
@@ -94,7 +94,7 @@ class MacroRunner:
             except Exception:
                 pass
 
-    def _run_process(self, job_id, argv, timeout_seconds, env=None):
+    def _run_process(self, operation_id, argv, timeout_seconds, env=None):
         started = time.monotonic()
         try:
             process = subprocess.Popen(
@@ -107,18 +107,17 @@ class MacroRunner:
                 close_fds=True,
             )
         except FileNotFoundError as exc:
+            self._append_output(operation_id, str(exc), stream="stderr", env=env)
             return {
                 "status": "error",
                 "exit_code": None,
-                "stdout": "",
-                "stderr": trim_output(str(exc)),
                 "duration_ms": int((time.monotonic() - started) * 1000),
                 "timed_out": False,
             }
 
         readers = [
-            threading.Thread(target=self._append_stream, args=(job_id, process.stdout, "stdout", env), daemon=True),
-            threading.Thread(target=self._append_stream, args=(job_id, process.stderr, "stderr", env), daemon=True),
+            threading.Thread(target=self._append_stream, args=(operation_id, process.stdout, "stdout", env), daemon=True),
+            threading.Thread(target=self._append_stream, args=(operation_id, process.stderr, "stderr", env), daemon=True),
         ]
         for reader in readers:
             reader.start()
@@ -134,32 +133,17 @@ class MacroRunner:
                 exit_code = process.wait(timeout=5)
             except Exception:
                 exit_code = None
-            jobs_model.append_log(
-                job_id,
-                f"macro timed out after {timeout_seconds}s",
-                stream="stderr",
-                step_ref=1,
-                env=env,
-            )
+            self._append_output(operation_id, f"macro timed out after {timeout_seconds}s", stream="stderr", env=env)
         finally:
             for reader in readers:
                 reader.join(timeout=2)
 
         duration_ms = int((time.monotonic() - started) * 1000)
         if timed_out:
-            return {
-                "status": "timeout",
-                "exit_code": None,
-                "stdout": "",
-                "stderr": "",
-                "duration_ms": duration_ms,
-                "timed_out": True,
-            }
+            return {"status": "timeout", "exit_code": exit_code, "duration_ms": duration_ms, "timed_out": True}
         return {
             "status": "ok" if exit_code == 0 else "error",
             "exit_code": exit_code,
-            "stdout": "",
-            "stderr": "",
             "duration_ms": duration_ms,
             "timed_out": False,
         }
@@ -195,25 +179,24 @@ class MacroRunner:
         argv.extend([f"{username}@{node['host']}", shlex.join(command)])
         return argv
 
-    def _execute_local(self, job_id, script, args, timeout_seconds, env=None):
+    def _execute_local(self, operation_id, script, args, timeout_seconds, env=None):
         path = None
         try:
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sh", prefix="docker-infra-macro-", delete=False) as handle:
                 handle.write(script)
                 path = handle.name
             Path(path).chmod(0o700)
-            return self._run_process(job_id, ["/bin/bash", path, *args], timeout_seconds, env=env)
+            return self._run_process(operation_id, ["/bin/bash", path, *args], timeout_seconds, env=env)
         finally:
             if path and Path(path).exists():
                 Path(path).unlink(missing_ok=True)
 
-    def _execute_remote(self, job_id, node, script, args, timeout_seconds, env=None):
+    def _execute_remote(self, operation_id, node, script, args, timeout_seconds, env=None):
         command = self._remote_command(script, args)
         argv = self._remote_argv(node, command, timeout_seconds, env=env)
-        return self._run_process(job_id, argv, timeout_seconds, env=env)
+        return self._run_process(operation_id, argv, timeout_seconds, env=env)
 
-    def _finish_job(self, job_id, macro, node, result, env=None):
-        self._append_logs(job_id, result, env=env)
+    def _finish_operation(self, operation_id, macro, node, result, env=None):
         result_payload = {
             "macro_id": macro["id"],
             "macro_name": macro["name"],
@@ -222,31 +205,36 @@ class MacroRunner:
             "node_name": node.get("name"),
             "status": result.get("status"),
             "exit_code": result.get("exit_code"),
+            "duration_ms": result.get("duration_ms"),
             "timed_out": result.get("timed_out"),
         }
         if result.get("status") == "ok":
-            jobs_model.update_step_status(job_id, 1, "succeeded", metadata=result_payload, env=env)
-            jobs_model.transition_job(job_id, "succeeded", result_payload=result_payload, env=env)
+            operations_model.transition(
+                operation_id,
+                "succeeded",
+                message="매크로 실행이 완료되었습니다.",
+                result_payload=result_payload,
+                env=env,
+            )
             return
-        jobs_model.update_step_status(job_id, 1, "failed", metadata=result_payload, env=env)
-        jobs_model.transition_job(job_id, "failed", result_payload=result_payload, env=env)
+        operations_model.transition(
+            operation_id,
+            "failed",
+            message="매크로 실행에 실패했습니다.",
+            result_payload=result_payload,
+            env=env,
+        )
 
-    def _execute_job(self, job_id, macro, node, args, timeout_seconds, env=None):
+    def _execute_operation(self, operation_id, macro, node, args, timeout_seconds, env=None):
         try:
             if node["is_local_master"]:
-                result = self._execute_local(job_id, macro["script"], args, timeout_seconds, env=env)
+                result = self._execute_local(operation_id, macro["script"], args, timeout_seconds, env=env)
             else:
-                result = self._execute_remote(job_id, node, macro["script"], args, timeout_seconds, env=env)
+                result = self._execute_remote(operation_id, node, macro["script"], args, timeout_seconds, env=env)
         except Exception as exc:
-            result = {
-                "status": "error",
-                "exit_code": None,
-                "stdout": "",
-                "stderr": trim_output(str(exc)),
-                "duration_ms": 0,
-                "timed_out": False,
-            }
-        self._finish_job(job_id, macro, node, result, env=env)
+            self._append_output(operation_id, str(exc), stream="stderr", env=env)
+            result = {"status": "error", "exit_code": None, "duration_ms": 0, "timed_out": False}
+        self._finish_operation(operation_id, macro, node, result, env=env)
 
     def run(self, payload, env=None):
         payload = payload or {}
@@ -269,9 +257,11 @@ class MacroRunner:
             raise MacroError(409, "서버 전용 매크로는 연결된 서버에서만 실행할 수 있습니다.", "MACRO_SCOPE_MISMATCH")
 
         node = nodes_model.detail(node_id, env=env)
-        job = jobs_model.create(
+        operation = operations_model.create(
             "macro.run",
-            steps=[{"name": "script.execute"}],
+            target_type="node",
+            target_id=node_id,
+            message="매크로 실행을 시작했습니다.",
             requested_payload={"macro_id": macro_id, "node_id": node_id, "args": args},
             test_run_id=payload.get("test_run_id"),
             metadata={
@@ -283,18 +273,15 @@ class MacroRunner:
             },
             env=env,
         )
-        job_id = job["id"]
-        jobs_model.transition_job(job_id, "running", env=env)
-        jobs_model.update_step_status(job_id, 1, "running", metadata={"macro_id": macro_id, "node_id": node_id}, env=env)
-        jobs_model.append_log(
-            job_id,
+        operation_id = operation["id"]
+        self._append_output(
+            operation_id,
             f"Run macro '{macro['name']}' on {node.get('name') or node.get('host')} with args={args}",
             stream="system",
-            step_ref=1,
             env=env,
         )
-        self._spawn_background(self._execute_job, job_id, macro, node, args, timeout_seconds, env)
-        return jobs_model.detail(job_id, env=env)
+        self._spawn_background(self._execute_operation, operation_id, macro, node, args, timeout_seconds, env)
+        return operations_model.detail(operation_id, env=env)
 
 
 Model = MacroRunner()

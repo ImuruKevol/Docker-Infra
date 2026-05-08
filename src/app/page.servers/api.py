@@ -145,9 +145,6 @@ def join_node():
     except nodes_model.LocalCommandError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except nodes_model.JobError as exc:
-        code = exc.status_code
-        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except RuntimeError as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
@@ -499,11 +496,35 @@ def run_macro():
     payload = {}
 
     try:
-        payload = {"job": macros_model.run(wiz.request.query())}
+        payload = {"operation": macros_model.run(wiz.request.query())}
     except macros_model.MacroError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except nodes_model.NodeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _error_payload(exc)
+
+    wiz.response.status(code, **payload)
+
+
+def operation_status():
+    operations_model = wiz.model("struct").operations
+    body = wiz.request.query()
+    operation_id = body.get("operation_id")
+    if not operation_id:
+        wiz.response.status(400, message="operation_id는 필수입니다.", error_code="OPERATION_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = {"operation": operations_model.detail(operation_id)}
+    except operations_model.OperationError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except RuntimeError as exc:

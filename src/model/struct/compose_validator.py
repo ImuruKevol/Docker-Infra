@@ -13,7 +13,7 @@ ComposeValidationError = rules.ComposeValidationError
 _error = rules.error
 _merge_defaults = rules.merge_defaults
 _is_enabled_healthcheck = rules.is_enabled_healthcheck
-_has_job_health_check = rules.has_job_health_check
+_has_health_check_override = rules.has_health_check_override
 _load_compose = rules.load_compose
 _network_names = rules.network_names
 
@@ -29,7 +29,7 @@ class ComposeValidator:
         allow_warnings = bool(payload.get("allow_warnings"))
         filename = payload.get("filename") or DEFAULT_FILENAME
         namespace = payload.get("namespace")
-        job_health_check = _has_job_health_check(payload)
+        has_health_check = _has_health_check_override(payload)
 
         if filename not in ALLOWED_FILENAMES:
             errors.append(
@@ -150,11 +150,11 @@ class ComposeValidator:
                     )
                 )
 
-            if not _is_enabled_healthcheck(service) and not job_health_check:
+            if not _is_enabled_healthcheck(service) and not has_health_check:
                 issue = _error(
                     f"{service_path}.healthcheck",
                     "HEALTHCHECK_REQUIRED",
-                    "Compose healthcheck 또는 Job health check가 필요합니다.",
+                    "Compose healthcheck 또는 서비스 health check가 필요합니다.",
                 )
                 (warnings if "HEALTHCHECK_REQUIRED" in warning_codes else errors).append(issue)
             deploy = service.get("deploy")
@@ -203,7 +203,7 @@ class ComposeValidator:
             "stack_name": namespace,
             "filename": filename,
             "network": OVERLAY_NETWORK,
-            "job_health_check": job_health_check,
+            "has_health_check": has_health_check,
             "warnings": warnings,
             "normalized": normalized,
         }

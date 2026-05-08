@@ -2,9 +2,7 @@ import datetime
 import decimal
 import json
 import uuid
-from urllib import error as urlerror
-from urllib import parse as urlparse
-from urllib import request as urlrequest
+from urllib import error as urlerror, parse as urlparse, request as urlrequest
 
 from psycopg.types.json import Jsonb
 
@@ -12,21 +10,17 @@ from psycopg.types.json import Jsonb
 connect = wiz.model("db/postgres").connect
 config = wiz.config("docker_infra")
 DomainError = wiz.model("struct/domains_shared")
+operations = wiz.model("struct/operations")
 
 CLOUDFLARE_API = "https://api.cloudflare.com/client/v4"
 
 
 def serialize(value):
-    if isinstance(value, (datetime.datetime, datetime.date)):
-        return value.isoformat()
-    if isinstance(value, uuid.UUID):
-        return str(value)
-    if isinstance(value, decimal.Decimal):
-        return float(value)
-    if isinstance(value, list):
-        return [serialize(item) for item in value]
-    if isinstance(value, dict):
-        return {key: serialize(item) for key, item in value.items()}
+    if isinstance(value, (datetime.datetime, datetime.date)): return value.isoformat()
+    if isinstance(value, uuid.UUID): return str(value)
+    if isinstance(value, decimal.Decimal): return float(value)
+    if isinstance(value, list): return [serialize(item) for item in value]
+    if isinstance(value, dict): return {key: serialize(item) for key, item in value.items()}
     return value
 
 
@@ -144,6 +138,13 @@ class DomainCloudflareMixin:
     upsert_zone_cache = staticmethod(upsert_zone_cache)
     cf_request = staticmethod(cf_request)
 
+    def _record_cloudflare_operation(self, operation_type, zone_id=None, payload=None, result=None, status="succeeded", env=None):
+        return operations.create(
+            operation_type, target_type="domain", target_id=zone_id, status=status,
+            message=f"{operation_type} {status}", requested_payload=payload or {},
+            result_payload=result or {}, env=env,
+        )
+
     def sync_zone(self, zone_id, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -199,11 +200,27 @@ class DomainCloudflareMixin:
                             ),
                         )
                     upsert_zone_cache(cursor, zone_id, len(mapped_records), "success", f"{result.get('name') or zone['domain']} 동기화 완료")
-            return self.detail(zone_id, env=env)
+            detail = self.detail(zone_id, env=env)
+            self._record_cloudflare_operation(
+                "domain.cloudflare.sync",
+                zone_id=zone_id,
+                payload={"zone_id": zone_id},
+                result={"record_count": len(mapped_records)},
+                env=env,
+            )
+            return detail
         except DomainError as exc:
             with connect(env=env) as connection:
                 with connection.cursor() as cursor:
                     upsert_zone_cache(cursor, zone_id, int(zone.get("record_count") or 0), "error", exc.message)
+            self._record_cloudflare_operation(
+                "domain.cloudflare.sync",
+                zone_id=zone_id,
+                payload={"zone_id": zone_id},
+                result={"message": exc.message, "error_code": exc.error_code},
+                status="failed",
+                env=env,
+            )
             raise
 
     def sync_all(self, env=None):
@@ -214,6 +231,13 @@ class DomainCloudflareMixin:
                 synced.append(self.sync_zone(zone["id"], env=env)["zone"])
             except DomainError as exc:
                 failed.append({"id": zone["id"], "domain": zone["domain"], "message": exc.message})
+        self._record_cloudflare_operation(
+            "domain.cloudflare.sync_all",
+            payload={},
+            result={"synced_count": len(synced), "failed_count": len(failed)},
+            status="failed" if failed and not synced else "succeeded",
+            env=env,
+        )
         return {"synced": synced, "failed": failed}
 
     def save_record(self, zone_id, payload, env=None):
@@ -242,7 +266,15 @@ class DomainCloudflareMixin:
             cf_request(zone.get("api_token_value"), "PUT", f"/zones/{zone['zone_id']}/dns_records/{record_id}", payload=cf_payload)
         else:
             cf_request(zone.get("api_token_value"), "POST", f"/zones/{zone['zone_id']}/dns_records", payload=cf_payload)
-        return self.sync_zone(zone_id, env=env)
+        detail = self.sync_zone(zone_id, env=env)
+        self._record_cloudflare_operation(
+            "domain.record.save",
+            zone_id=zone_id,
+            payload={"record_id": record_id, "record_type": record_type, "record_name": record_name},
+            result={"domain": zone.get("domain")},
+            env=env,
+        )
+        return detail
 
     def delete_record(self, zone_id, record_id, env=None):
         record_id = str(record_id or "").strip()
@@ -252,7 +284,15 @@ class DomainCloudflareMixin:
             with connection.cursor() as cursor:
                 zone = self._fetch_zone(cursor, zone_id, env=env)
         cf_request(zone.get("api_token_value"), "DELETE", f"/zones/{zone['zone_id']}/dns_records/{record_id}")
-        return self.sync_zone(zone_id, env=env)
+        detail = self.sync_zone(zone_id, env=env)
+        self._record_cloudflare_operation(
+            "domain.record.delete",
+            zone_id=zone_id,
+            payload={"record_id": record_id},
+            result={"domain": zone.get("domain")},
+            env=env,
+        )
+        return detail
 
 
 Model = DomainCloudflareMixin

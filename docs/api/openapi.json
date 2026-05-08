@@ -24,10 +24,6 @@
             "description": "Dashboard overview"
         },
         {
-            "name": "jobs",
-            "description": "Job queue, step status, and logs"
-        },
-        {
             "name": "nodes",
             "description": "Local master and Swarm slave node management"
         },
@@ -353,7 +349,7 @@
                                 "$ref": "#/components/schemas/SystemSettingUpsertRequest"
                             },
                             "example": {
-                                "key": "harbor_token",
+                                "key": "backup_system_secret",
                                 "value": "<redacted>",
                                 "value_type": "secret",
                                 "is_secret": true,
@@ -376,7 +372,7 @@
                                     "data": {
                                         "setting": {
                                             "id": "00000000-0000-0000-0000-000000000000",
-                                            "key": "harbor_token",
+                                            "key": "backup_system_secret",
                                             "value": null,
                                             "value_type": "secret",
                                             "is_secret": true,
@@ -714,6 +710,35 @@
                                                         "status": "missing"
                                                     }
                                                 }
+                                            },
+                                            "backup_system": {
+                                                "id": null,
+                                                "enabled": false,
+                                                "status": "disabled",
+                                                "data_path": "/root/docker-infra/data/backup-harbor",
+                                                "harbor_url": null,
+                                                "required_ports": [
+                                                    {
+                                                        "label": "Harbor HTTP",
+                                                        "port": 5000,
+                                                        "protocol": "tcp"
+                                                    },
+                                                    {
+                                                        "label": "Harbor HTTPS",
+                                                        "port": 5443,
+                                                        "protocol": "tcp"
+                                                    }
+                                                ],
+                                                "storage": {
+                                                    "total_bytes": 100000000000,
+                                                    "used_bytes": 25000000000,
+                                                    "available_bytes": 75000000000
+                                                },
+                                                "last_error": null,
+                                                "last_checked_at": null,
+                                                "metadata": {
+                                                    "source": "default"
+                                                }
                                             }
                                         }
                                     }
@@ -739,9 +764,13 @@
                                 "password": "<redacted>",
                                 "confirm_password": "<redacted>",
                                 "advertise_address": "127.0.0.1",
-                                "proxy_type": "none",
+                                "proxy_type": "nginx",
                                 "template_root": ".runtime/dev/templates",
-                                "test_run_id": "di-test-run"
+                                "test_run_id": "di-test-run",
+                                "backup_system": {
+                                    "enabled": false,
+                                    "data_path": "/root/docker-infra/data/backup-harbor"
+                                }
                             }
                         }
                     }
@@ -804,6 +833,35 @@
                                                         "status": "missing"
                                                     }
                                                 }
+                                            },
+                                            "backup_system": {
+                                                "id": null,
+                                                "enabled": false,
+                                                "status": "disabled",
+                                                "data_path": "/root/docker-infra/data/backup-harbor",
+                                                "harbor_url": null,
+                                                "required_ports": [
+                                                    {
+                                                        "label": "Harbor HTTP",
+                                                        "port": 5000,
+                                                        "protocol": "tcp"
+                                                    },
+                                                    {
+                                                        "label": "Harbor HTTPS",
+                                                        "port": 5443,
+                                                        "protocol": "tcp"
+                                                    }
+                                                ],
+                                                "storage": {
+                                                    "total_bytes": 100000000000,
+                                                    "used_bytes": 25000000000,
+                                                    "available_bytes": 75000000000
+                                                },
+                                                "last_error": null,
+                                                "last_checked_at": null,
+                                                "metadata": {
+                                                    "source": "default"
+                                                }
                                             }
                                         },
                                         "local_master": {
@@ -832,6 +890,35 @@
                                             "expires_at": "2026-05-06T12:00:00Z",
                                             "last_seen_at": "2026-05-06T00:00:00Z",
                                             "created_at": "2026-05-06T00:00:00Z"
+                                        },
+                                        "backup_system": {
+                                            "id": null,
+                                            "enabled": false,
+                                            "status": "disabled",
+                                            "data_path": "/root/docker-infra/data/backup-harbor",
+                                            "harbor_url": null,
+                                            "required_ports": [
+                                                {
+                                                    "label": "Harbor HTTP",
+                                                    "port": 5000,
+                                                    "protocol": "tcp"
+                                                },
+                                                {
+                                                    "label": "Harbor HTTPS",
+                                                    "port": 5443,
+                                                    "protocol": "tcp"
+                                                }
+                                            ],
+                                            "storage": {
+                                                "total_bytes": 100000000000,
+                                                "used_bytes": 25000000000,
+                                                "available_bytes": 75000000000
+                                            },
+                                            "last_error": null,
+                                            "last_checked_at": null,
+                                            "metadata": {
+                                                "source": "default"
+                                            }
                                         }
                                     }
                                 }
@@ -850,815 +937,6 @@
                                     "data": {
                                         "message": "이미 설치가 완료되었습니다.",
                                         "error_code": "SETUP_ALREADY_COMPLETED"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/jobs": {
-            "get": {
-                "summary": "List jobs",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "status",
-                        "in": "query",
-                        "required": false,
-                        "schema": {
-                            "$ref": "#/components/schemas/JobStatus"
-                        }
-                    },
-                    {
-                        "name": "test_run_id",
-                        "in": "query",
-                        "required": false,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "name": "limit",
-                        "in": "query",
-                        "required": false,
-                        "schema": {
-                            "type": "integer",
-                            "default": 50
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Job list",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobListResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "jobs": [
-                                            {
-                                                "id": "00000000-0000-0000-0000-000000000001",
-                                                "type": "test.deploy",
-                                                "status": "pending",
-                                                "requested_payload": {
-                                                    "service": "demo"
-                                                },
-                                                "result_payload": {},
-                                                "test_run_id": "di-test-run",
-                                                "metadata": {},
-                                                "started_at": null,
-                                                "finished_at": null,
-                                                "created_at": "2026-05-06T00:00:00Z",
-                                                "updated_at": "2026-05-06T00:00:00Z"
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "post": {
-                "summary": "Create a job",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/JobCreateRequest"
-                            },
-                            "example": {
-                                "type": "test.deploy",
-                                "steps": [
-                                    {
-                                        "name": "prepare"
-                                    },
-                                    {
-                                        "name": "deploy"
-                                    }
-                                ],
-                                "requested_payload": {
-                                    "service": "demo"
-                                },
-                                "test_run_id": "di-test-run",
-                                "metadata": {}
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Job created",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobDetailResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "job": {
-                                            "id": "00000000-0000-0000-0000-000000000001",
-                                            "type": "test.deploy",
-                                            "status": "pending",
-                                            "requested_payload": {
-                                                "service": "demo"
-                                            },
-                                            "result_payload": {},
-                                            "test_run_id": "di-test-run",
-                                            "metadata": {},
-                                            "started_at": null,
-                                            "finished_at": null,
-                                            "created_at": "2026-05-06T00:00:00Z",
-                                            "updated_at": "2026-05-06T00:00:00Z",
-                                            "steps": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000101",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "name": "deploy",
-                                                    "status": "pending",
-                                                    "order_no": 1,
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "started_at": null,
-                                                    "finished_at": null,
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ],
-                                            "logs": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000201",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "step_id": "00000000-0000-0000-0000-000000000101",
-                                                    "stream": "stdout",
-                                                    "message": "deploy started",
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ]
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/jobs/{job_id}": {
-            "get": {
-                "summary": "Get job detail",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Job detail",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobDetailResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "job": {
-                                            "id": "00000000-0000-0000-0000-000000000001",
-                                            "type": "test.deploy",
-                                            "status": "pending",
-                                            "requested_payload": {
-                                                "service": "demo"
-                                            },
-                                            "result_payload": {},
-                                            "test_run_id": "di-test-run",
-                                            "metadata": {},
-                                            "started_at": null,
-                                            "finished_at": null,
-                                            "created_at": "2026-05-06T00:00:00Z",
-                                            "updated_at": "2026-05-06T00:00:00Z",
-                                            "steps": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000101",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "name": "deploy",
-                                                    "status": "pending",
-                                                    "order_no": 1,
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "started_at": null,
-                                                    "finished_at": null,
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ],
-                                            "logs": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000201",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "step_id": "00000000-0000-0000-0000-000000000101",
-                                                    "stream": "stdout",
-                                                    "message": "deploy started",
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ]
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/jobs/{job_id}/status": {
-            "post": {
-                "summary": "Transition job status",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/JobStatusUpdateRequest"
-                            },
-                            "example": {
-                                "status": "running",
-                                "result_payload": {}
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Job status updated",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobDetailResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "job": {
-                                            "id": "00000000-0000-0000-0000-000000000001",
-                                            "type": "test.deploy",
-                                            "status": "pending",
-                                            "requested_payload": {
-                                                "service": "demo"
-                                            },
-                                            "result_payload": {},
-                                            "test_run_id": "di-test-run",
-                                            "metadata": {},
-                                            "started_at": null,
-                                            "finished_at": null,
-                                            "created_at": "2026-05-06T00:00:00Z",
-                                            "updated_at": "2026-05-06T00:00:00Z",
-                                            "steps": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000101",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "name": "deploy",
-                                                    "status": "pending",
-                                                    "order_no": 1,
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "started_at": null,
-                                                    "finished_at": null,
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ],
-                                            "logs": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000201",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "step_id": "00000000-0000-0000-0000-000000000101",
-                                                    "stream": "stdout",
-                                                    "message": "deploy started",
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ]
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/jobs/{job_id}/steps/{step_ref}/status": {
-            "post": {
-                "summary": "Transition job step status",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "name": "step_ref",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/JobStepStatusUpdateRequest"
-                            },
-                            "example": {
-                                "status": "succeeded",
-                                "metadata": {}
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Step status updated",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobDetailResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "job": {
-                                            "id": "00000000-0000-0000-0000-000000000001",
-                                            "type": "test.deploy",
-                                            "status": "pending",
-                                            "requested_payload": {
-                                                "service": "demo"
-                                            },
-                                            "result_payload": {},
-                                            "test_run_id": "di-test-run",
-                                            "metadata": {},
-                                            "started_at": null,
-                                            "finished_at": null,
-                                            "created_at": "2026-05-06T00:00:00Z",
-                                            "updated_at": "2026-05-06T00:00:00Z",
-                                            "steps": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000101",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "name": "deploy",
-                                                    "status": "pending",
-                                                    "order_no": 1,
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "started_at": null,
-                                                    "finished_at": null,
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ],
-                                            "logs": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000201",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "step_id": "00000000-0000-0000-0000-000000000101",
-                                                    "stream": "stdout",
-                                                    "message": "deploy started",
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ]
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/jobs/{job_id}/logs": {
-            "post": {
-                "summary": "Append a job log entry",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/JobLogAppendRequest"
-                            },
-                            "example": {
-                                "message": "deploy started",
-                                "stream": "stdout",
-                                "order_no": 1,
-                                "metadata": {}
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Log appended",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobLogResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "log": {
-                                            "id": "00000000-0000-0000-0000-000000000201",
-                                            "job_id": "00000000-0000-0000-0000-000000000001",
-                                            "step_id": "00000000-0000-0000-0000-000000000101",
-                                            "stream": "stdout",
-                                            "message": "deploy started",
-                                            "test_run_id": "di-test-run",
-                                            "metadata": {},
-                                            "created_at": "2026-05-06T00:00:00Z",
-                                            "updated_at": "2026-05-06T00:00:00Z"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/jobs/{job_id}/cancel": {
-            "post": {
-                "summary": "Cancel a pending or running job",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Job canceled",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobDetailResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "job": {
-                                            "id": "00000000-0000-0000-0000-000000000001",
-                                            "type": "test.deploy",
-                                            "status": "canceled",
-                                            "requested_payload": {
-                                                "service": "demo"
-                                            },
-                                            "result_payload": {},
-                                            "test_run_id": "di-test-run",
-                                            "metadata": {},
-                                            "started_at": null,
-                                            "finished_at": null,
-                                            "created_at": "2026-05-06T00:00:00Z",
-                                            "updated_at": "2026-05-06T00:00:00Z",
-                                            "steps": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000101",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "name": "deploy",
-                                                    "status": "pending",
-                                                    "order_no": 1,
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "started_at": null,
-                                                    "finished_at": null,
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ],
-                                            "logs": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000201",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "step_id": "00000000-0000-0000-0000-000000000101",
-                                                    "stream": "stdout",
-                                                    "message": "deploy started",
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ]
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/jobs/{job_id}/retry": {
-            "post": {
-                "summary": "Retry a failed job as a new job",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Retry job created",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobRetryResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "original_job_id": "00000000-0000-0000-0000-000000000001",
-                                        "retried_job": {
-                                            "id": "00000000-0000-0000-0000-000000000002",
-                                            "type": "test.deploy",
-                                            "status": "pending",
-                                            "requested_payload": {
-                                                "service": "demo"
-                                            },
-                                            "result_payload": {},
-                                            "test_run_id": "di-test-run",
-                                            "metadata": {
-                                                "retry_of": "00000000-0000-0000-0000-000000000001",
-                                                "retry_attempt": 1
-                                            },
-                                            "started_at": null,
-                                            "finished_at": null,
-                                            "created_at": "2026-05-06T00:00:00Z",
-                                            "updated_at": "2026-05-06T00:00:00Z",
-                                            "steps": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000101",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "name": "deploy",
-                                                    "status": "pending",
-                                                    "order_no": 1,
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "started_at": null,
-                                                    "finished_at": null,
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ],
-                                            "logs": [
-                                                {
-                                                    "id": "00000000-0000-0000-0000-000000000201",
-                                                    "job_id": "00000000-0000-0000-0000-000000000001",
-                                                    "step_id": "00000000-0000-0000-0000-000000000101",
-                                                    "stream": "stdout",
-                                                    "message": "deploy started",
-                                                    "test_run_id": "di-test-run",
-                                                    "metadata": {},
-                                                    "created_at": "2026-05-06T00:00:00Z",
-                                                    "updated_at": "2026-05-06T00:00:00Z"
-                                                }
-                                            ]
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/jobs/{job_id}/logs/search": {
-            "post": {
-                "summary": "Search masked job logs",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "requestBody": {
-                    "required": false,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/JobLogSearchRequest"
-                            },
-                            "example": {
-                                "query": "********",
-                                "stream": "stderr",
-                                "limit": 100
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Masked job log search results",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobLogSearchResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "logs": [
-                                            {
-                                                "id": "00000000-0000-0000-0000-000000000201",
-                                                "job_id": "00000000-0000-0000-0000-000000000001",
-                                                "step_id": "00000000-0000-0000-0000-000000000101",
-                                                "stream": "stderr",
-                                                "message": "deploy token=******** keep-context",
-                                                "test_run_id": "di-test-run",
-                                                "metadata": {
-                                                    "masked": true
-                                                },
-                                                "created_at": "2026-05-06T00:00:00Z",
-                                                "updated_at": "2026-05-06T00:00:00Z"
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/jobs/{job_id}/logs/download": {
-            "get": {
-                "summary": "Download masked job logs as text content",
-                "tags": [
-                    "jobs"
-                ],
-                "security": [
-                    {
-                        "sessionCookie": []
-                    }
-                ],
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Masked job log download content",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/JobLogDownloadResponse"
-                                },
-                                "example": {
-                                    "code": 200,
-                                    "data": {
-                                        "download": {
-                                            "job_id": "00000000-0000-0000-0000-000000000001",
-                                            "filename": "job-00000000-0000-0000-0000-000000000001.log",
-                                            "content_type": "text/plain; charset=utf-8",
-                                            "content": "2026-05-06T00:00:00 stderr step=00000000-0000-0000-0000-000000000101 deploy token=******** keep-context\n"
-                                        }
                                     }
                                 }
                             }
@@ -2028,7 +1306,7 @@
         },
         "/api/nodes/{node_id}/join": {
             "post": {
-                "summary": "Create and run a Swarm join job for a slave node",
+                "summary": "Run Swarm join for a slave node",
                 "tags": [
                     "nodes"
                 ],
@@ -2263,7 +1541,6 @@
                                             "stack_name": "demo_app",
                                             "filename": "docker-compose.yaml",
                                             "network": "docker_infra_overlay",
-                                            "job_health_check": false,
                                             "normalized": {
                                                 "services": {
                                                     "web": {
@@ -2305,7 +1582,8 @@
                                                         "external": true
                                                     }
                                                 }
-                                            }
+                                            },
+                                            "has_health_check": false
                                         }
                                     }
                                 }
@@ -2666,101 +1944,6 @@
                                 "type": "boolean"
                             }
                         }
-                    }
-                }
-            },
-            "JobStatus": {
-                "type": "string",
-                "enum": [
-                    "pending",
-                    "running",
-                    "succeeded",
-                    "failed",
-                    "canceled"
-                ]
-            },
-            "JobStepStatus": {
-                "type": "string",
-                "enum": [
-                    "pending",
-                    "running",
-                    "succeeded",
-                    "failed",
-                    "skipped",
-                    "canceled"
-                ]
-            },
-            "JobSummary": {
-                "type": "object",
-                "required": [
-                    "id",
-                    "type",
-                    "status",
-                    "created_at"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "example": "job_01"
-                    },
-                    "type": {
-                        "type": "string",
-                        "example": "system.health_check"
-                    },
-                    "status": {
-                        "$ref": "#/components/schemas/JobStatus"
-                    },
-                    "created_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "started_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
-                    },
-                    "finished_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
-                    }
-                }
-            },
-            "JobStepSummary": {
-                "type": "object",
-                "required": [
-                    "id",
-                    "name",
-                    "order_no",
-                    "status"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "example": "step_01"
-                    },
-                    "name": {
-                        "type": "string",
-                        "example": "Check Docker daemon"
-                    },
-                    "order_no": {
-                        "type": "integer",
-                        "example": 1
-                    },
-                    "status": {
-                        "$ref": "#/components/schemas/JobStepStatus"
-                    },
-                    "started_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
-                    },
-                    "finished_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
                     }
                 }
             },
@@ -3155,6 +2338,7 @@
                     "requires_setup",
                     "settings",
                     "local_master",
+                    "backup_system",
                     "checks"
                 ],
                 "additionalProperties": false,
@@ -3207,6 +2391,9 @@
                     "checks": {
                         "type": "object",
                         "nullable": true
+                    },
+                    "backup_system": {
+                        "$ref": "#/components/schemas/BackupSystemStatus"
                     }
                 }
             },
@@ -3261,12 +2448,9 @@
                     "proxy_type": {
                         "type": "string",
                         "enum": [
-                            "auto",
-                            "nginx",
-                            "apache2",
-                            "none"
+                            "nginx"
                         ],
-                        "default": "auto"
+                        "default": "nginx"
                     },
                     "template_root": {
                         "type": "string",
@@ -3275,6 +2459,19 @@
                     "test_run_id": {
                         "type": "string",
                         "nullable": true
+                    },
+                    "backup_system": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "enabled": {
+                                "type": "boolean",
+                                "default": false
+                            },
+                            "data_path": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             },
@@ -3294,6 +2491,7 @@
                         "required": [
                             "setup",
                             "local_master",
+                            "backup_system",
                             "authenticated",
                             "session"
                         ],
@@ -3310,562 +2508,9 @@
                             },
                             "session": {
                                 "$ref": "#/components/schemas/AuthSession"
-                            }
-                        }
-                    }
-                }
-            },
-            "Job": {
-                "type": "object",
-                "required": [
-                    "id",
-                    "type",
-                    "status",
-                    "requested_payload",
-                    "result_payload",
-                    "test_run_id",
-                    "metadata",
-                    "started_at",
-                    "finished_at",
-                    "created_at",
-                    "updated_at"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "type": {
-                        "type": "string"
-                    },
-                    "status": {
-                        "$ref": "#/components/schemas/JobStatus"
-                    },
-                    "requested_payload": {
-                        "type": "object"
-                    },
-                    "result_payload": {
-                        "type": "object"
-                    },
-                    "test_run_id": {
-                        "type": "string",
-                        "nullable": true
-                    },
-                    "metadata": {
-                        "type": "object"
-                    },
-                    "started_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
-                    },
-                    "finished_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
-                    },
-                    "created_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "updated_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    }
-                }
-            },
-            "JobStep": {
-                "type": "object",
-                "required": [
-                    "id",
-                    "job_id",
-                    "name",
-                    "status",
-                    "order_no",
-                    "test_run_id",
-                    "metadata",
-                    "started_at",
-                    "finished_at",
-                    "created_at",
-                    "updated_at"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "job_id": {
-                        "type": "string"
-                    },
-                    "name": {
-                        "type": "string"
-                    },
-                    "status": {
-                        "$ref": "#/components/schemas/JobStepStatus"
-                    },
-                    "order_no": {
-                        "type": "integer"
-                    },
-                    "test_run_id": {
-                        "type": "string",
-                        "nullable": true
-                    },
-                    "metadata": {
-                        "type": "object"
-                    },
-                    "started_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
-                    },
-                    "finished_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
-                    },
-                    "created_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "updated_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    }
-                }
-            },
-            "JobLog": {
-                "type": "object",
-                "required": [
-                    "id",
-                    "job_id",
-                    "step_id",
-                    "stream",
-                    "message",
-                    "test_run_id",
-                    "metadata",
-                    "created_at",
-                    "updated_at"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "job_id": {
-                        "type": "string"
-                    },
-                    "step_id": {
-                        "type": "string",
-                        "nullable": true
-                    },
-                    "stream": {
-                        "type": "string",
-                        "enum": [
-                            "stdout",
-                            "stderr",
-                            "system"
-                        ]
-                    },
-                    "message": {
-                        "type": "string"
-                    },
-                    "test_run_id": {
-                        "type": "string",
-                        "nullable": true
-                    },
-                    "metadata": {
-                        "type": "object"
-                    },
-                    "created_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "updated_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    }
-                }
-            },
-            "JobDetail": {
-                "type": "object",
-                "required": [
-                    "id",
-                    "type",
-                    "status",
-                    "requested_payload",
-                    "result_payload",
-                    "test_run_id",
-                    "metadata",
-                    "started_at",
-                    "finished_at",
-                    "created_at",
-                    "updated_at",
-                    "steps",
-                    "logs"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "type": {
-                        "type": "string"
-                    },
-                    "status": {
-                        "$ref": "#/components/schemas/JobStatus"
-                    },
-                    "requested_payload": {
-                        "type": "object"
-                    },
-                    "result_payload": {
-                        "type": "object"
-                    },
-                    "test_run_id": {
-                        "type": "string",
-                        "nullable": true
-                    },
-                    "metadata": {
-                        "type": "object"
-                    },
-                    "started_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
-                    },
-                    "finished_at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "nullable": true
-                    },
-                    "created_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "updated_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/components/schemas/JobStep"
-                        }
-                    },
-                    "logs": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/components/schemas/JobLog"
-                        }
-                    }
-                }
-            },
-            "JobCreateRequest": {
-                "type": "object",
-                "required": [
-                    "type"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "type": {
-                        "type": "string"
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "required": [
-                                "name"
-                            ],
-                            "additionalProperties": false,
-                            "properties": {
-                                "name": {
-                                    "type": "string"
-                                },
-                                "order_no": {
-                                    "type": "integer"
-                                },
-                                "metadata": {
-                                    "type": "object"
-                                }
-                            }
-                        }
-                    },
-                    "requested_payload": {
-                        "type": "object"
-                    },
-                    "test_run_id": {
-                        "type": "string",
-                        "nullable": true
-                    },
-                    "metadata": {
-                        "type": "object"
-                    }
-                }
-            },
-            "JobStatusUpdateRequest": {
-                "type": "object",
-                "required": [
-                    "status"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "status": {
-                        "$ref": "#/components/schemas/JobStatus"
-                    },
-                    "result_payload": {
-                        "type": "object"
-                    }
-                }
-            },
-            "JobStepStatusUpdateRequest": {
-                "type": "object",
-                "required": [
-                    "status"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "status": {
-                        "$ref": "#/components/schemas/JobStepStatus"
-                    },
-                    "metadata": {
-                        "type": "object"
-                    }
-                }
-            },
-            "JobLogAppendRequest": {
-                "type": "object",
-                "required": [
-                    "message"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "message": {
-                        "type": "string"
-                    },
-                    "stream": {
-                        "type": "string",
-                        "enum": [
-                            "stdout",
-                            "stderr",
-                            "system"
-                        ]
-                    },
-                    "step_id": {
-                        "type": "string"
-                    },
-                    "order_no": {
-                        "type": "integer"
-                    },
-                    "metadata": {
-                        "type": "object"
-                    },
-                    "secret_values": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "writeOnly": true
-                    }
-                }
-            },
-            "JobListResponse": {
-                "type": "object",
-                "required": [
-                    "code",
-                    "data"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "code": {
-                        "type": "integer"
-                    },
-                    "data": {
-                        "type": "object",
-                        "required": [
-                            "jobs"
-                        ],
-                        "additionalProperties": false,
-                        "properties": {
-                            "jobs": {
-                                "type": "array",
-                                "items": {
-                                    "$ref": "#/components/schemas/Job"
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "JobDetailResponse": {
-                "type": "object",
-                "required": [
-                    "code",
-                    "data"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "code": {
-                        "type": "integer"
-                    },
-                    "data": {
-                        "type": "object",
-                        "required": [
-                            "job"
-                        ],
-                        "additionalProperties": false,
-                        "properties": {
-                            "job": {
-                                "$ref": "#/components/schemas/JobDetail"
-                            }
-                        }
-                    }
-                }
-            },
-            "JobLogResponse": {
-                "type": "object",
-                "required": [
-                    "code",
-                    "data"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "code": {
-                        "type": "integer"
-                    },
-                    "data": {
-                        "type": "object",
-                        "required": [
-                            "log"
-                        ],
-                        "additionalProperties": false,
-                        "properties": {
-                            "log": {
-                                "$ref": "#/components/schemas/JobLog"
-                            }
-                        }
-                    }
-                }
-            },
-            "JobRetryResponse": {
-                "type": "object",
-                "required": [
-                    "code",
-                    "data"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "code": {
-                        "type": "integer"
-                    },
-                    "data": {
-                        "type": "object",
-                        "required": [
-                            "original_job_id",
-                            "retried_job"
-                        ],
-                        "additionalProperties": false,
-                        "properties": {
-                            "original_job_id": {
-                                "type": "string"
                             },
-                            "retried_job": {
-                                "$ref": "#/components/schemas/JobDetail"
-                            }
-                        }
-                    }
-                }
-            },
-            "JobLogSearchRequest": {
-                "type": "object",
-                "required": [],
-                "additionalProperties": false,
-                "properties": {
-                    "query": {
-                        "type": "string"
-                    },
-                    "stream": {
-                        "type": "string",
-                        "enum": [
-                            "stdout",
-                            "stderr",
-                            "system"
-                        ]
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "default": 100
-                    }
-                }
-            },
-            "JobLogSearchResponse": {
-                "type": "object",
-                "required": [
-                    "code",
-                    "data"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "code": {
-                        "type": "integer"
-                    },
-                    "data": {
-                        "type": "object",
-                        "required": [
-                            "logs"
-                        ],
-                        "additionalProperties": false,
-                        "properties": {
-                            "logs": {
-                                "type": "array",
-                                "items": {
-                                    "$ref": "#/components/schemas/JobLog"
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "JobLogDownloadResponse": {
-                "type": "object",
-                "required": [
-                    "code",
-                    "data"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                    "code": {
-                        "type": "integer"
-                    },
-                    "data": {
-                        "type": "object",
-                        "required": [
-                            "download"
-                        ],
-                        "additionalProperties": false,
-                        "properties": {
-                            "download": {
-                                "type": "object",
-                                "required": [
-                                    "job_id",
-                                    "filename",
-                                    "content_type",
-                                    "content"
-                                ],
-                                "additionalProperties": false,
-                                "properties": {
-                                    "job_id": {
-                                        "type": "string"
-                                    },
-                                    "filename": {
-                                        "type": "string"
-                                    },
-                                    "content_type": {
-                                        "type": "string"
-                                    },
-                                    "content": {
-                                        "type": "string"
-                                    }
-                                }
+                            "backup_system": {
+                                "$ref": "#/components/schemas/BackupSystemStatus"
                             }
                         }
                     }
@@ -3936,6 +2581,10 @@
                     },
                     "timed_out": {
                         "type": "boolean"
+                    },
+                    "operation_id": {
+                        "type": "string",
+                        "nullable": true
                     }
                 }
             },
@@ -3957,14 +2606,6 @@
                     },
                     "params": {
                         "type": "object"
-                    },
-                    "job_id": {
-                        "type": "string",
-                        "nullable": true
-                    },
-                    "step_ref": {
-                        "type": "string",
-                        "nullable": true
                     }
                 }
             },
@@ -4319,12 +2960,12 @@
                     "data": {
                         "type": "object",
                         "required": [
-                            "job"
+                            "operation"
                         ],
                         "additionalProperties": false,
                         "properties": {
-                            "job": {
-                                "$ref": "#/components/schemas/JobDetail"
+                            "operation": {
+                                "$ref": "#/components/schemas/OperationSummary"
                             }
                         }
                     }
@@ -4716,9 +3357,6 @@
                     "compose": {
                         "type": "object"
                     },
-                    "job_health_check": {
-                        "type": "object"
-                    },
                     "health_check": {
                         "type": "object"
                     }
@@ -4752,7 +3390,7 @@
                     "stack_name",
                     "filename",
                     "network",
-                    "job_health_check",
+                    "has_health_check",
                     "normalized"
                 ],
                 "additionalProperties": false,
@@ -4772,11 +3410,11 @@
                     "network": {
                         "type": "string"
                     },
-                    "job_health_check": {
-                        "type": "boolean"
-                    },
                     "normalized": {
                         "type": "object"
+                    },
+                    "has_health_check": {
+                        "type": "boolean"
                     }
                 }
             },
@@ -4838,6 +3476,153 @@
                                 }
                             }
                         }
+                    }
+                }
+            },
+            "OperationSummary": {
+                "type": "object",
+                "required": [
+                    "operation_id",
+                    "type",
+                    "status",
+                    "message"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "operation_id": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "pending",
+                            "running",
+                            "succeeded",
+                            "failed",
+                            "canceled"
+                        ]
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "started_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "finished_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "result": {
+                        "type": "object",
+                        "nullable": true
+                    }
+                }
+            },
+            "BackupSystemStatus": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "enabled",
+                    "status",
+                    "data_path",
+                    "harbor_url",
+                    "required_ports",
+                    "storage",
+                    "last_error",
+                    "last_checked_at",
+                    "metadata"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "disabled",
+                            "pending_install",
+                            "running",
+                            "stopped",
+                            "failed"
+                        ]
+                    },
+                    "data_path": {
+                        "type": "string"
+                    },
+                    "harbor_url": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "required_ports": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "label",
+                                "port",
+                                "protocol"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                                "label": {
+                                    "type": "string"
+                                },
+                                "port": {
+                                    "type": "integer"
+                                },
+                                "protocol": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "storage": {
+                        "type": "object",
+                        "required": [
+                            "total_bytes",
+                            "used_bytes",
+                            "available_bytes"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "total_bytes": {
+                                "type": "integer"
+                            },
+                            "used_bytes": {
+                                "type": "integer"
+                            },
+                            "available_bytes": {
+                                "type": "integer"
+                            }
+                        }
+                    },
+                    "last_error": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "last_checked_at": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "metadata": {
+                        "type": "object"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string"
                     }
                 }
             }

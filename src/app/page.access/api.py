@@ -45,6 +45,7 @@ def setup():
         payload = {
             "setup": result["setup"],
             "local_master": result["local_master"],
+            "backup_system": result["backup_system"],
             "authenticated": True,
             "session": login_result["session"],
         }

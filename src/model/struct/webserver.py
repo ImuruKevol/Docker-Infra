@@ -8,21 +8,20 @@ from pathlib import Path
 
 
 settings = wiz.model("struct/settings")
+config = wiz.config("docker_infra")
 
-SETTING_KEYS = {
-    "nginx": "proxy.nginx.paths",
-    "apache2": "proxy.apache2.paths",
-    "certificates": "proxy.ssl_certificates",
-}
-DEFAULTS = {
-    "nginx": {
-        "config_path": "/etc/nginx/nginx.conf",
-        "site_path": "/etc/nginx/sites-enabled",
-    },
-    "apache2": {
-        "config_path": "/etc/apache2/apache2.conf",
-        "site_path": "/etc/apache2/sites-enabled",
-    },
+CERTIFICATE_SETTING_KEY = "domains.ssl_certificates"
+LEGACY_CERTIFICATE_SETTING_KEY = "proxy.ssl_certificates"
+DEFAULT_NGINX = {
+    "key": "nginx",
+    "label": "Nginx",
+    "service_name": "nginx",
+    "binary_path": "/usr/sbin/nginx",
+    "config_path": "/etc/nginx/nginx.conf",
+    "site_path": "/etc/nginx/sites-enabled",
+    "available_site_path": "/etc/nginx/sites-available",
+    "ssl_certificate_dir": "/etc/ssl/certs",
+    "ssl_key_dir": "/etc/ssl/private",
 }
 
 
@@ -48,44 +47,15 @@ def _save_setting(key, value, description, test_run_id=None, env=None):
         value_type="json",
         description=description,
         test_run_id=test_run_id,
-        metadata={"group": "proxy"},
+        metadata={"group": "domains"},
         env=env,
     )
 
 
-def _first_existing(*paths):
-    for path in paths:
-        if path and Path(path).exists():
-            return path
-    return next((path for path in paths if path), "")
-
-
-def _service_status(*names):
-    for name in names:
-        result = _run(["systemctl", "is-active", name], timeout=2)
-        status = (result["stdout"] or result["stderr"]).strip()
-        if status:
-            return {"service_name": name, "daemon_status": status}
-    return {"service_name": names[0] if names else "", "daemon_status": "unknown"}
-
-
-def _parse_nginx(stderr):
-    conf = re.search(r"--conf-path=([^ ]+)", stderr)
-    prefix = re.search(r"--prefix=([^ ]+)", stderr)
-    config_path = conf.group(1) if conf else DEFAULTS["nginx"]["config_path"]
-    site_path = _first_existing("/etc/nginx/sites-enabled", "/etc/nginx/conf.d", str(Path(config_path).parent / "conf.d"))
-    return {"config_path": config_path, "site_path": site_path, "install_path": prefix.group(1) if prefix else ""}
-
-
-def _parse_apache(output):
-    root = re.search(r'HTTPD_ROOT="([^"]+)"', output)
-    conf = re.search(r'SERVER_CONFIG_FILE="([^"]+)"', output)
-    install_path = root.group(1) if root else ""
-    config_path = conf.group(1) if conf else DEFAULTS["apache2"]["config_path"]
-    if install_path and not config_path.startswith("/"):
-        config_path = str(Path(install_path) / config_path)
-    site_path = _first_existing("/etc/apache2/sites-enabled", "/etc/httpd/conf.d", str(Path(config_path).parent / "sites-enabled"))
-    return {"config_path": config_path, "site_path": site_path, "install_path": install_path}
+def _service_status(name):
+    result = _run(["systemctl", "is-active", name], timeout=2)
+    status = (result["stdout"] or result["stderr"]).strip()
+    return status or "unknown"
 
 
 def _cert_datetime(value):
@@ -106,65 +76,66 @@ def _domain_match(domain, pattern):
     return domain == pattern
 
 
+def _safe_segment(value, fallback="domain"):
+    cleaned = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(value or "").strip()).strip(".-")
+    return cleaned or fallback
+
+
+def _certificate_id():
+    return uuid.uuid4().hex
+
+
 class Webserver:
-    def _load_saved(self, env=None):
+    def nginx_defaults(self):
+        binary = shutil.which("nginx") or DEFAULT_NGINX["binary_path"]
+        version = _run([binary, "-v"]) if binary else {"ok": False, "stdout": "", "stderr": ""}
+        installed = Path(binary).exists() or shutil.which("nginx") is not None
         return {
-            "nginx": {**DEFAULTS["nginx"], **dict(_load_setting(SETTING_KEYS["nginx"], DEFAULTS["nginx"], env=env) or {})},
-            "apache2": {**DEFAULTS["apache2"], **dict(_load_setting(SETTING_KEYS["apache2"], DEFAULTS["apache2"], env=env) or {})},
-            "certificates": list(_load_setting(SETTING_KEYS["certificates"], [], env=env) or []),
-        }
-
-    def _detect_nginx(self, saved):
-        binary = shutil.which("nginx")
-        if not binary:
-            return {"key": "nginx", "label": "Nginx", "installed": False, "daemon_status": "missing", "settings": saved}
-        version = _run([binary, "-V"])
-        detected = _parse_nginx(version["stderr"] or version["stdout"])
-        status = _service_status("nginx")
-        return {
-            "key": "nginx",
-            "label": "Nginx",
-            "installed": True,
+            **DEFAULT_NGINX,
+            "installed": installed,
             "binary_path": binary,
+            "daemon_status": _service_status(DEFAULT_NGINX["service_name"]) if installed else "missing",
             "version": (version["stderr"] or version["stdout"]).splitlines()[0] if (version["stderr"] or version["stdout"]) else "",
-            "daemon_status": status["daemon_status"],
-            "service_name": status["service_name"],
-            "detected_paths": detected,
+            "fixed": True,
             "settings": {
-                "config_path": saved.get("config_path") or detected["config_path"],
-                "site_path": saved.get("site_path") or detected["site_path"],
+                "config_path": DEFAULT_NGINX["config_path"],
+                "site_path": DEFAULT_NGINX["site_path"],
+                "service_name": DEFAULT_NGINX["service_name"],
             },
         }
 
-    def _detect_apache(self, saved):
-        binary = shutil.which("apachectl") or shutil.which("apache2ctl") or shutil.which("apache2") or shutil.which("httpd")
-        if not binary:
-            return {"key": "apache2", "label": "Apache2(httpd)", "installed": False, "daemon_status": "missing", "settings": saved}
-        version = _run([binary, "-V"])
-        detected = _parse_apache((version["stdout"] or "") + "\n" + (version["stderr"] or ""))
-        status = _service_status("apache2", "httpd")
-        return {
-            "key": "apache2",
-            "label": "Apache2(httpd)",
-            "installed": True,
-            "binary_path": binary,
-            "version": (version["stdout"] or version["stderr"]).splitlines()[0] if (version["stdout"] or version["stderr"]) else "",
-            "daemon_status": status["daemon_status"],
-            "service_name": status["service_name"],
-            "detected_paths": detected,
-            "settings": {
-                "config_path": saved.get("config_path") or detected["config_path"],
-                "site_path": saved.get("site_path") or detected["site_path"],
-            },
-        }
+    def _load_certificates(self, env=None):
+        certificates = list(_load_setting(CERTIFICATE_SETTING_KEY, [], env=env) or [])
+        if certificates:
+            return certificates
+        return list(_load_setting(LEGACY_CERTIFICATE_SETTING_KEY, [], env=env) or [])
+
+    def _save_certificates(self, certificates, test_run_id=None, env=None):
+        normalized = []
+        for item in certificates or []:
+            normalized.append({
+                "id": item.get("id") or _certificate_id(),
+                "zone_id": str(item.get("zone_id") or "").strip(),
+                "domain": str(item.get("domain") or "").strip().lower(),
+                "label": str(item.get("label") or "").strip(),
+                "cert_path": str(item.get("cert_path") or "").strip(),
+                "key_path": str(item.get("key_path") or "").strip(),
+                "enabled": bool(item.get("enabled", True)),
+                "metadata": dict(item.get("metadata") or {}),
+            })
+        _save_setting(CERTIFICATE_SETTING_KEY, normalized, "Domain SSL certificate entries", test_run_id=test_run_id, env=env)
+        return normalized
 
     def _analyze_certificate(self, item):
         entry = {
-            "id": item.get("id") or uuid.uuid4().hex,
+            "id": item.get("id") or _certificate_id(),
+            "zone_id": str(item.get("zone_id") or "").strip(),
+            "domain": str(item.get("domain") or "").strip().lower(),
             "label": str(item.get("label") or "").strip(),
             "cert_path": str(item.get("cert_path") or "").strip(),
             "key_path": str(item.get("key_path") or "").strip(),
             "enabled": bool(item.get("enabled", True)),
+            "metadata": dict(item.get("metadata") or {}),
         }
         if entry["enabled"] is not True:
             return {**entry, "status": "disabled", "dns_names": [], "key_exists": Path(entry["key_path"]).is_file() if entry["key_path"] else False}
@@ -217,52 +188,94 @@ class Webserver:
         return summary
 
     def load(self, env=None):
-        saved = self._load_saved(env=env)
-        servers = {
-            "nginx": self._detect_nginx(saved["nginx"]),
-            "apache2": self._detect_apache(saved["apache2"]),
-        }
-        certificates = [self._analyze_certificate(item) for item in saved["certificates"]]
-        active_server = "none"
-        if servers["nginx"].get("daemon_status") == "active":
-            active_server = "nginx"
-        elif servers["apache2"].get("daemon_status") == "active":
-            active_server = "apache2"
-        elif servers["nginx"].get("installed"):
-            active_server = "nginx"
-        elif servers["apache2"].get("installed"):
-            active_server = "apache2"
+        certificates = [self._analyze_certificate(item) for item in self._load_certificates(env=env)]
+        nginx = self.nginx_defaults()
         return {
-            "active_server": active_server,
-            "servers": servers,
+            "active_server": "nginx",
+            "server": nginx,
+            "servers": {"nginx": nginx},
             "certificates": certificates,
             "certificate_summary": self._certificate_summary(certificates),
         }
 
     def save(self, payload, test_run_id=None, env=None):
-        payload = dict(payload or {})
-        nginx = dict(payload.get("nginx") or {})
-        apache2 = dict(payload.get("apache2") or {})
-        certificates = []
-        for item in list(payload.get("certificates") or []):
-            certificates.append({
-                "id": item.get("id") or uuid.uuid4().hex,
-                "label": str(item.get("label") or "").strip(),
-                "cert_path": str(item.get("cert_path") or "").strip(),
-                "key_path": str(item.get("key_path") or "").strip(),
-                "enabled": bool(item.get("enabled", True)),
-            })
-        _save_setting(SETTING_KEYS["nginx"], {"config_path": str(nginx.get("config_path") or "").strip(), "site_path": str(nginx.get("site_path") or "").strip()}, "Nginx path settings", test_run_id=test_run_id, env=env)
-        _save_setting(SETTING_KEYS["apache2"], {"config_path": str(apache2.get("config_path") or "").strip(), "site_path": str(apache2.get("site_path") or "").strip()}, "Apache path settings", test_run_id=test_run_id, env=env)
-        _save_setting(SETTING_KEYS["certificates"], certificates, "SSL certificate entries", test_run_id=test_run_id, env=env)
-        return self.load(env=env)
+        certificates = self._save_certificates(list((payload or {}).get("certificates") or []), test_run_id=test_run_id, env=env)
+        analyzed = [self._analyze_certificate(item) for item in certificates]
+        return {
+            "active_server": "nginx",
+            "server": self.nginx_defaults(),
+            "servers": {"nginx": self.nginx_defaults()},
+            "certificates": analyzed,
+            "certificate_summary": self._certificate_summary(analyzed),
+        }
 
-    def certificates_for_domain(self, domain, env=None):
+    def certificate_storage_dir(self, domain, certificate_id, env=None):
+        root = Path(config.data_dir(env)) / "domain-certificates" / _safe_segment(domain)
+        path = root / _safe_segment(certificate_id, "certificate")
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def store_uploaded_certificate(self, zone_id, domain, label, cert_file, key_file, test_run_id=None, env=None):
+        if cert_file is None:
+            raise ValueError("인증서 파일을 선택해주세요.")
+        if key_file is None:
+            raise ValueError("키 파일을 선택해주세요.")
+
+        certificate_id = _certificate_id()
+        storage_dir = self.certificate_storage_dir(domain, certificate_id, env=env)
+        cert_path = storage_dir / "certificate.pem"
+        key_path = storage_dir / "private.key"
+        cert_file.save(str(cert_path))
+        key_file.save(str(key_path))
+
+        entry = {
+            "id": certificate_id,
+            "zone_id": str(zone_id or ""),
+            "domain": str(domain or "").strip().lower(),
+            "label": str(label or "").strip() or str(domain or "").strip().lower(),
+            "cert_path": str(cert_path),
+            "key_path": str(key_path),
+            "enabled": True,
+            "metadata": {
+                "source": "domain_upload",
+                "uploaded_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+            },
+        }
+        certificates = self._load_certificates(env=env)
+        certificates.append(entry)
+        self._save_certificates(certificates, test_run_id=test_run_id, env=env)
+        return self._analyze_certificate(entry)
+
+    def delete_certificate(self, certificate_id, zone_id=None, test_run_id=None, env=None):
+        target_id = str(certificate_id or "").strip()
+        if not target_id:
+            raise ValueError("certificate_id가 필요합니다.")
+        certificates = self._load_certificates(env=env)
+        removed = None
+        remaining = []
+        for item in certificates:
+            if str(item.get("id") or "") == target_id and (not zone_id or str(item.get("zone_id") or "") == str(zone_id)):
+                removed = item
+                continue
+            remaining.append(item)
+        if removed is None:
+            raise ValueError("인증서를 찾을 수 없습니다.")
+        self._save_certificates(remaining, test_run_id=test_run_id, env=env)
+        cert_path = Path(str(removed.get("cert_path") or "")).expanduser()
+        storage_dir = cert_path.parent if cert_path.name == "certificate.pem" else None
+        if storage_dir and storage_dir.exists() and "domain-certificates" in storage_dir.as_posix():
+            shutil.rmtree(storage_dir, ignore_errors=True)
+        return {"deleted": True, "id": target_id}
+
+    def certificates_for_domain(self, domain, zone_id=None, env=None):
         runtime = self.load(env=env)
-        certificates = [
-            item for item in runtime["certificates"]
-            if any(_domain_match(domain, hostname) for hostname in (item.get("dns_names") or []))
-        ]
+        certificates = []
+        for item in runtime["certificates"]:
+            if zone_id and str(item.get("zone_id") or "") == str(zone_id):
+                certificates.append(item)
+                continue
+            if any(_domain_match(domain, hostname) for hostname in (item.get("dns_names") or [])):
+                certificates.append(item)
         return {"certificates": certificates, "summary": self._certificate_summary(certificates)}
 
 

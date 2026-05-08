@@ -17,8 +17,12 @@ export class Component implements OnInit {
             password: '',
             confirm_password: '',
             advertise_address: '',
-            proxy_type: 'auto',
-            template_root: '.runtime/dev/templates'
+            proxy_type: 'nginx',
+            template_root: '.runtime/dev/templates',
+            backup_system: {
+                enabled: false,
+                data_path: ''
+            }
         }
     };
 
@@ -73,7 +77,10 @@ export class Component implements OnInit {
             const checks = data.setup?.checks || {};
             this.data.setup.advertise_address = data.setup?.settings?.advertise_address || checks.advertise_address || '';
             this.data.setup.template_root = data.setup?.settings?.template_root || '.runtime/dev/templates';
-            this.data.setup.proxy_type = data.setup?.settings?.default_proxy || 'auto';
+            this.data.setup.proxy_type = 'nginx';
+            const backup = data.setup?.backup_system || {};
+            this.data.setup.backup_system.enabled = backup.enabled === true;
+            this.data.setup.backup_system.data_path = backup.data_path || '';
         }
         this.loading.set(false);
         await this.service.render();
@@ -94,8 +101,38 @@ export class Component implements OnInit {
             { label: 'Docker', value: docker.daemon || 'unknown', ok: docker.daemon === 'ok' },
             { label: 'Swarm', value: swarm.manager ? 'manager' : (swarm.state || 'unknown'), ok: !!swarm.manager },
             { label: 'nginx', value: proxy.nginx?.status || 'unknown', ok: proxy.nginx?.status === 'ok' },
-            { label: 'apache2', value: proxy.apache2?.status || 'unknown', ok: proxy.apache2?.status === 'ok' },
         ];
+    }
+
+    public backupStatus() {
+        return this.setup()?.backup_system || {};
+    }
+
+    public backupPorts() {
+        return this.backupStatus()?.required_ports || [];
+    }
+
+    public backupStorageText() {
+        const storage = this.backupStatus()?.storage || {};
+        return `${this.formatBytes(storage.available_bytes)} 남음 / 전체 ${this.formatBytes(storage.total_bytes)}`;
+    }
+
+    public backupStatusLabel() {
+        const enabled = this.data.setup.backup_system.enabled;
+        const status = this.backupStatus()?.status || 'disabled';
+        if (!enabled) return '사용 안 함';
+        if (status === 'running') return '실행 중';
+        if (status === 'failed') return '설치 실패';
+        return '설치 준비';
+    }
+
+    public formatBytes(value: any) {
+        const bytes = Number(value || 0);
+        if (bytes <= 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        const amount = bytes / Math.pow(1024, index);
+        return `${amount.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
     }
 
     public toggleAdvancedSetup() {

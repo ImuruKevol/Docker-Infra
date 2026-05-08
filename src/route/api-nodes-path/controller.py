@@ -42,9 +42,6 @@ except nodes.NodeError as exc:
 except nodes.LocalCommandError as exc:
     code = exc.status_code
     payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-except nodes.JobError as exc:
-    code = exc.status_code
-    payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
 except RuntimeError as exc:
     code = 503
     payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
