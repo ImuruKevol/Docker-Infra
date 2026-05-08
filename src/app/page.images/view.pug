@@ -35,7 +35,7 @@ main(class="space-y-5 px-5 py-5")
                                     i(class="fa-solid fa-folder-plus")
                                     span 프로젝트 생성
                                 span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(harbor().enabled ? 'enabled' : 'disabled')") {{harbor().enabled ? '사용 중' : '꺼짐'}}
-                    div(*ngIf="!harbor().enabled", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400") Harbor 연동이 꺼져 있습니다. 시스템 설정에서 Harbor를 먼저 켜주세요.
+                    div(*ngIf="!harbor().enabled", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400") 서비스 백업 시스템이 꺼져 있습니다. 시스템 설정에서 백업 시스템을 시작해주세요.
                     div(*ngIf="harbor().enabled && harborOverviewBusy()", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400")
                         i(class="fa-solid fa-spinner fa-spin mr-1")
                         | Harbor 프로젝트 목록을 불러오는 중입니다.

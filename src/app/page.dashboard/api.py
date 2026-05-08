@@ -5,11 +5,6 @@ def overview():
 
     try:
         payload = catalog.dashboard()
-        payload["integrations"] = [
-            item
-            for item in payload.get("integrations", [])
-            if str((item or {}).get("key") or "").strip() != "gitlab"
-        ]
     except RuntimeError as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}

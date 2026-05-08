@@ -1,22 +1,12 @@
-def _visible_integrations(items):
-    result = []
-    for item in items or []:
-        if str((item or {}).get("key") or "").strip() == "gitlab":
-            continue
-        result.append(item)
-    return result
-
-
 def load():
     appearance = wiz.model("struct/appearance")
-    integrations = wiz.model("struct/integrations_registry")
+    backup_system = wiz.model("struct/backup_system")
     code = 200
     payload = {}
     try:
-        loaded = _visible_integrations(integrations.load())
         payload = {
             "general": appearance.public_payload(),
-            "integrations": loaded,
+            "backup_system": backup_system.status(),
         }
     except RuntimeError as exc:
         code = 503
@@ -37,26 +27,13 @@ def save_general():
     wiz.response.status(code, **payload)
 
 
-def save_integration():
-    integrations = wiz.model("struct/integrations_registry")
-    body = wiz.request.query()
+def backup_status():
+    backup_system = wiz.model("struct/backup_system")
     code = 200
     payload = {}
     try:
-        key = body.get("key")
-        if key != "harbor":
-            code = 400
-            payload = {"message": "지원하지 않는 연동입니다.", "error_code": "INVALID_INTEGRATION"}
-        else:
-            payload = {
-                "integration": integrations.save(
-                    key,
-                    body,
-                    test_run_id=body.get("test_run_id"),
-                ),
-                "integrations": _visible_integrations(integrations.load()),
-            }
-    except integrations.IntegrationError as exc:
+        payload = {"backup_system": backup_system.refresh()}
+    except backup_system.BackupSystemError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except RuntimeError as exc:
@@ -65,18 +42,46 @@ def save_integration():
     wiz.response.status(code, **payload)
 
 
-def test_integration():
-    integrations = wiz.model("struct/integrations_registry")
-    body = wiz.request.query()
+def start_backup_system():
+    backup_system = wiz.model("struct/backup_system")
     code = 200
     payload = {}
     try:
-        if body.get("key") != "harbor":
-            code = 400
-            payload = {"message": "지원하지 않는 연동입니다.", "error_code": "INVALID_INTEGRATION"}
-        else:
-            payload = integrations.test_connection(body.get("key"), body)
-    except integrations.IntegrationError as exc:
+        payload = backup_system.enable()
+    except backup_system.BackupSystemError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def stop_backup_system():
+    backup_system = wiz.model("struct/backup_system")
+    code = 200
+    payload = {}
+    try:
+        payload = backup_system.stop()
+    except backup_system.BackupSystemError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def restart_backup_system():
+    backup_system = wiz.model("struct/backup_system")
+    code = 200
+    payload = {}
+    try:
+        payload = backup_system.restart()
+    except backup_system.BackupSystemError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)

@@ -1,9 +1,6 @@
 import textwrap
 
 
-harbor_seed = wiz.model("struct/templates_seed_harbor")
-
-
 def _schema(title, description, fields, required=None):
     properties = {}
     for item in fields:
@@ -194,7 +191,6 @@ def default_templates():
                 "README.md": _readme("RabbitMQ Queue", "관리 UI를 포함한 RabbitMQ 템플릿입니다.", "rabbitmq:4-management", [5672, 15672]),
             },
         },
-        harbor_seed.default_template(_schema),
     ]
 
 

@@ -1,9 +1,10 @@
 import re
+import shlex
 import sys
 
 
 DEFAULT_TIMEOUT_SECONDS = 10
-MAX_TIMEOUT_SECONDS = 60
+MAX_TIMEOUT_SECONDS = 1800
 MAX_CAPTURE_CHARS = 20000
 NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -79,6 +80,48 @@ def _docker_image_remove_command(params):
     if not image_ref:
         raise LocalCommandError(400, "image_ref가 필요합니다.", "IMAGE_REF_REQUIRED")
     return ["docker", "image", "rm", image_ref]
+
+
+def _path_param(params, name):
+    value = str((params or {}).get(name) or "").strip()
+    if not value:
+        raise LocalCommandError(400, f"{name}이 필요합니다.", "PATH_PARAM_REQUIRED")
+    return value
+
+
+def _backup_harbor_install_command(params):
+    installer_dir = _path_param(params, "installer_dir")
+    return ["sh", "-lc", f"cd {shlex.quote(installer_dir)} && ./install.sh"]
+
+
+def _backup_harbor_compose_command(params, action):
+    compose_path = _path_param(params, "compose_path")
+    command = ["docker", "compose", "-f", compose_path]
+    if action == "up":
+        return [*command, "up", "-d"]
+    if action == "down":
+        return [*command, "down"]
+    if action == "restart":
+        return [*command, "restart"]
+    if action == "ps":
+        return [*command, "ps", "--format", "json"]
+    raise LocalCommandError(400, "지원하지 않는 Harbor command입니다.", "INVALID_BACKUP_HARBOR_COMMAND")
+
+
+def _backup_harbor_up_command(params):
+    return _backup_harbor_compose_command(params, "up")
+
+
+def _backup_harbor_down_command(params):
+    return _backup_harbor_compose_command(params, "down")
+
+
+def _backup_harbor_restart_command(params):
+    return _backup_harbor_compose_command(params, "restart")
+
+
+def _backup_harbor_ps_command(params):
+    return _backup_harbor_compose_command(params, "ps")
 
 
 def _filesystem_target(params, required_type=None):
@@ -159,6 +202,11 @@ COMMAND_SPECS = {
     "docker.container.stop": {"category": "docker", "factory": _docker_container_stop_command, "destructive": True},
     "docker.container.restart": {"category": "docker", "factory": _docker_container_restart_command, "destructive": True},
     "docker.image.remove": {"category": "docker", "factory": _docker_image_remove_command, "destructive": True},
+    "backup.harbor.install": {"category": "backup", "factory": _backup_harbor_install_command, "destructive": True, "default_timeout_seconds": 1800},
+    "backup.harbor.up": {"category": "backup", "factory": _backup_harbor_up_command, "destructive": True, "default_timeout_seconds": 300},
+    "backup.harbor.down": {"category": "backup", "factory": _backup_harbor_down_command, "destructive": True, "default_timeout_seconds": 300},
+    "backup.harbor.restart": {"category": "backup", "factory": _backup_harbor_restart_command, "destructive": True, "default_timeout_seconds": 300},
+    "backup.harbor.ps": {"category": "backup", "factory": _backup_harbor_ps_command},
     "system.metrics": {"category": "system", "argv": ["sh", "-lc", SYSTEM_METRICS_SCRIPT]},
     "filesystem.list": {"category": "filesystem", "factory": _filesystem_list_command},
     "filesystem.read": {"category": "filesystem", "factory": _filesystem_read_command},

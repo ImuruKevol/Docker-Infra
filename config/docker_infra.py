@@ -14,6 +14,7 @@ DEFAULT_DATA_DIR = "data"
 DEFAULT_BACKUP_HARBOR_DATA_DIR = "data/backup-harbor"
 DEFAULT_BACKUP_HARBOR_HTTP_PORT = "5000"
 DEFAULT_BACKUP_HARBOR_HTTPS_PORT = "5443"
+DEFAULT_BACKUP_HARBOR_VERSION = "v2.15.0"
 CONFIG_ENV_NAME = "config.env"
 LOCAL_EXECUTOR_ALLOWLIST_ENV = "DOCKER_INFRA_LOCAL_EXECUTOR_ALLOWLIST"
 DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
@@ -23,6 +24,10 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "docker.container.stop",
     "docker.container.restart",
     "docker.image.remove",
+    "backup.harbor.install",
+    "backup.harbor.up",
+    "backup.harbor.down",
+    "backup.harbor.restart",
 ]
 
 
@@ -158,6 +163,17 @@ def backup_harbor_ports(env=None):
         "http": _port(values.get("DOCKER_INFRA_BACKUP_HARBOR_HTTP_PORT"), DEFAULT_BACKUP_HARBOR_HTTP_PORT),
         "https": _port(values.get("DOCKER_INFRA_BACKUP_HARBOR_HTTPS_PORT"), DEFAULT_BACKUP_HARBOR_HTTPS_PORT),
     }
+
+
+def backup_harbor_version(env=None):
+    return runtime_env(env).get("DOCKER_INFRA_BACKUP_HARBOR_VERSION") or DEFAULT_BACKUP_HARBOR_VERSION
+
+
+def backup_harbor_installer_url(env=None):
+    version = backup_harbor_version(env)
+    return runtime_env(env).get("DOCKER_INFRA_BACKUP_HARBOR_INSTALLER_URL") or (
+        f"https://github.com/goharbor/harbor/releases/download/{version}/harbor-online-installer-{version}.tgz"
+    )
 
 
 def system_assets_dir(env=None):

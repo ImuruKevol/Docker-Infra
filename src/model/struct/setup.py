@@ -235,6 +235,8 @@ class SetupService:
         except Exception as exc:
             raise SetupError(400, f"Template root를 생성할 수 없습니다: {exc}", "TEMPLATE_ROOT_UNAVAILABLE")
 
+        backup_requested = bool((payload.get("backup_system") or {}).get("enabled"))
+        backup_error = None
         with connect(env=env) as connection:
             auth.set_password(
                 password,
@@ -256,10 +258,18 @@ class SetupService:
                 except backup_system.BackupSystemError as exc:
                     raise SetupError(exc.status_code, exc.message, exc.error_code, **exc.extra)
 
+        if backup_requested:
+            try:
+                backup = backup_system.enable(env=env)["backup_system"]
+            except backup_system.BackupSystemError as exc:
+                backup = backup_system.status(env=env)
+                backup_error = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+
         return {
             "setup": self.status(include_checks=True, env=env),
             "local_master": local_master,
             "backup_system": backup,
+            "backup_error": backup_error,
         }
 
     def delete_by_test_run_id(self, test_run_id, env=None):

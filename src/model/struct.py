@@ -44,10 +44,6 @@ class Struct:
         return self._load("images")
 
     @property
-    def integrations(self):
-        return self._load("integrations_registry")
-
-    @property
     def local_executor(self):
         return self._load("local_executor")
 

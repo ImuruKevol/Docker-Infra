@@ -5,7 +5,7 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 
-integrations = wiz.model("struct/integrations_registry")
+backup_system = wiz.model("struct/backup_system")
 shared = wiz.model("struct/images_shared")
 ImageError = shared.ImageError
 encode_repository_name = shared.encode_repository_name
@@ -14,14 +14,14 @@ PAGE_SIZE = 100
 
 
 def _config(env=None):
-    item = integrations.get("harbor", env=env)
-    enabled = bool(item.get("enabled"))
-    fields = item.get("fields") or {}
+    item = backup_system.connection_config(env=env)
     return {
-        "enabled": enabled,
-        "url": str(fields.get("url") or "").strip().rstrip("/"),
-        "username": str(fields.get("username") or "").strip(),
-        "password": str(item.get("secret_value") or "").strip(),
+        "enabled": bool(item.get("enabled")),
+        "status": item.get("status") or "disabled",
+        "url": str(item.get("harbor_url") or "").strip().rstrip("/"),
+        "username": str(item.get("username") or "admin").strip(),
+        "password": str(item.get("password") or "").strip(),
+        "configured": bool(item.get("configured")),
     }
 
 
@@ -32,9 +32,11 @@ def _headers(config):
 
 def _request_json(config, path, query=None, method="GET", payload=None):
     if not config["enabled"]:
-        raise ImageError(409, "Harbor 연동이 꺼져 있습니다.", "HARBOR_DISABLED")
-    if not config["url"] or not config["username"] or not config["password"]:
-        raise ImageError(400, "Harbor URL, 계정, 비밀번호를 먼저 저장해주세요.", "HARBOR_CONFIGURATION_REQUIRED")
+        raise ImageError(409, "서비스 백업 시스템이 꺼져 있습니다.", "BACKUP_SYSTEM_DISABLED")
+    if not config["configured"]:
+        raise ImageError(400, "서비스 백업 시스템 관리자 정보가 준비되지 않았습니다.", "BACKUP_SYSTEM_CONFIGURATION_REQUIRED")
+    if config["status"] not in {"running"}:
+        raise ImageError(409, "서비스 백업 시스템이 실행 중이 아닙니다.", "BACKUP_SYSTEM_NOT_RUNNING")
     query_string = f"?{urlparse.urlencode(query or {})}" if query else ""
     headers = _headers(config)
     data = None
@@ -60,9 +62,10 @@ class HarborImages:
         config = _config(env=env)
         return {
             "enabled": config["enabled"],
+            "status": config["status"],
             "url": config["url"],
             "username": config["username"],
-            "configured": bool(config["url"] and config["username"] and config["password"]),
+            "configured": bool(config["configured"]),
         }
 
     def list_projects(self, env=None):

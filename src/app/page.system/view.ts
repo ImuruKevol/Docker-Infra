@@ -2,21 +2,15 @@ import { OnDestroy, OnInit, signal } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
 import { AppearanceRuntime } from '@wiz/libs/portal/season/appearance';
 
-const FIELD_LABELS: any = {
-    harbor: {
-        url: 'Harbor URL',
-        username: '계정'
-    }
-};
-
 const ASSET_KINDS = ['favicon', 'logo'];
 
 export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
     public error = signal<string>('');
     public savingGeneral = signal<boolean>(false);
+    public backupBusy = signal<boolean>(false);
     public general: any = { browser_title: 'Docker Infra', favicon_url: AppearanceRuntime.assetRoute('favicon'), logo_url: AppearanceRuntime.assetRoute('logo') };
-    public integrations: any[] = [];
+    public backupSystem: any = {};
     public uploading: any = { favicon: false, logo: false };
     public assetVersion: number = Date.now();
     public pendingAssets: any = {
@@ -52,35 +46,12 @@ export class Component implements OnInit, OnDestroy {
         const { code, data } = await wiz.call('load', {});
         if (code === 200) {
             this.general = data.general || this.general;
-            this.integrations = this.prepareIntegrations(data.integrations || []);
+            this.backupSystem = data.backup_system || {};
         } else {
             this.error.set(data?.message || '시스템 설정을 불러올 수 없습니다.');
         }
         this.loading.set(false);
         await this.service.render();
-    }
-
-    public prepareIntegrations(items: any[]) {
-        return (items || [])
-            .filter((integration: any) => String(integration?.key || '').trim() !== 'gitlab')
-            .map((integration: any) => ({
-                ...integration,
-                secret_visible: false,
-                fields: { ...(integration.fields || {}) },
-                field_entries: Object.keys(integration.fields || {}).map((field) => ({
-                    key: field,
-                    label: FIELD_LABELS[integration.key]?.[field] || field
-                }))
-            }));
-    }
-
-    public integrationDescription(integration: any) {
-        if (integration?.key === 'harbor') {
-            return integration.enabled
-                ? '운영 중인 서비스 이미지의 백업과 버전 보관용 저장소로만 사용합니다.'
-                : '사용을 켜면 서비스 이미지 백업 저장소 연결 정보를 입력할 수 있습니다.';
-        }
-        return integration.enabled ? '연결 정보를 저장하고 연결 테스트를 수행할 수 있습니다.' : '현재 사용 안 함 상태입니다.';
     }
 
     public previewUrl(kind: string) {
@@ -128,34 +99,55 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
-    public async saveIntegration(integration: any) {
-        const payload = { key: integration.key, enabled: integration.enabled, fields: integration.fields, secret_value: integration.secret_value };
-        const { code, data } = await wiz.call('save_integration', payload);
+    public async refreshBackupSystem() {
+        if (this.backupBusy()) return;
+        this.backupBusy.set(true);
+        const { code, data } = await wiz.call('backup_status', {});
+        this.backupBusy.set(false);
         if (code === 200) {
-            this.integrations = this.prepareIntegrations(data.integrations || this.integrations);
-            await this.alert(`${integration.label} 설정을 저장했습니다.`, 'success');
+            this.backupSystem = data.backup_system || this.backupSystem;
+            await this.service.render();
             return;
         }
-        await this.alert(data?.message || `${integration.label} 설정을 저장할 수 없습니다.`);
+        await this.alert(data?.message || '백업 시스템 상태를 갱신할 수 없습니다.');
+        await this.service.render();
     }
 
-    public async testIntegration(integration: any) {
-        const payload = { key: integration.key, fields: integration.fields, secret_value: integration.secret_value };
-        const { code, data } = await wiz.call('test_integration', payload);
+    public async runBackupAction(action: 'start' | 'stop' | 'restart') {
+        if (this.backupBusy()) return;
+        const labels: any = { start: '시작', stop: '정지', restart: '재시작' };
+        this.backupBusy.set(true);
+        const { code, data } = await wiz.call(`${action}_backup_system`, {});
+        this.backupBusy.set(false);
         if (code === 200) {
-            const lines = Object.keys(data.summary || {}).map((key) => `${key}: ${data.summary[key]}`);
-            await this.alert([data.message || '연결 성공', ...lines].join('\n'), 'success');
+            this.backupSystem = data.backup_system || this.backupSystem;
+            await this.alert(`백업 시스템 ${labels[action]} 요청을 완료했습니다.`, 'success');
+            await this.service.render();
             return;
         }
-        await this.alert(data?.message || `${integration.label} 연결을 확인할 수 없습니다.`);
+        await this.alert(data?.message || `백업 시스템을 ${labels[action]}할 수 없습니다.`);
+        await this.service.render();
     }
 
-    public toggleSecret(integration: any) {
-        integration.secret_visible = !integration.secret_visible;
+    public backupStatusLabel() {
+        const status = this.backupSystem?.status || 'disabled';
+        const labels: any = {
+            disabled: '사용 안 함',
+            pending_install: '설치 필요',
+            running: '실행 중',
+            stopped: '정지됨',
+            failed: '오류',
+        };
+        return labels[status] || status;
     }
 
-    public secretInputType(integration: any) {
-        return integration.secret_visible ? 'text' : 'password';
+    public formatBytes(value: any) {
+        const bytes = Number(value || 0);
+        if (bytes <= 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        const amount = bytes / Math.pow(1024, index);
+        return `${amount.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
     }
 
     public openAssetPicker(elementId: string) {

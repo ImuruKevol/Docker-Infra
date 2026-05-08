@@ -1,0 +1,1 @@
+-- Deprecated seed templates are intentionally not recreated on rollback.

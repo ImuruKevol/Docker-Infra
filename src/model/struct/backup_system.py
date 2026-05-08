@@ -1,4 +1,5 @@
 import datetime
+import secrets
 import shutil
 from pathlib import Path
 
@@ -7,6 +8,8 @@ from psycopg.types.json import Jsonb
 
 postgres = wiz.model("db/postgres")
 config = wiz.config("docker_infra")
+resources = wiz.model("struct/backup_system_resources")
+runtime_mixin = wiz.model("struct/backup_system_runtime")
 connect = postgres.connect
 
 
@@ -60,16 +63,25 @@ def _ports(env=None):
     ]
 
 
+def _compose_path(data_path):
+    return str(resources.paths(data_path)["compose"])
+
+
 def _row(row, env=None):
     if row is None:
         data_path = _absolute_data_path(env=env)
         storage = _storage(data_path)
+        compose_path = _compose_path(data_path)
         return {
             "id": None,
             "enabled": False,
             "status": "disabled",
             "data_path": data_path,
             "harbor_url": None,
+            "admin_username": "admin",
+            "secret_configured": False,
+            "installed": Path(compose_path).is_file(),
+            "compose_path": compose_path,
             "required_ports": _ports(env),
             "storage": storage,
             "last_error": None,
@@ -78,12 +90,17 @@ def _row(row, env=None):
         }
     data_path = row["data_path"]
     storage = _storage(data_path)
+    compose_path = _compose_path(data_path)
     return {
         "id": str(row["id"]),
         "enabled": bool(row["enabled"]),
         "status": row["status"],
         "data_path": data_path,
         "harbor_url": row["harbor_url"],
+        "admin_username": row["admin_username"] or "admin",
+        "secret_configured": bool(row["admin_password_enc"]),
+        "installed": Path(compose_path).is_file(),
+        "compose_path": compose_path,
         "required_ports": _ports(env),
         "storage": storage,
         "last_error": row["last_error"],
@@ -94,8 +111,11 @@ def _row(row, env=None):
     }
 
 
-class BackupSystem:
+class BackupSystem(runtime_mixin):
     BackupSystemError = BackupSystemError
+    connect = staticmethod(connect)
+    _row = staticmethod(_row)
+    _storage = staticmethod(_storage)
 
     def default_config(self, env=None):
         return _row(None, env=env)
@@ -106,20 +126,58 @@ class BackupSystem:
                 cursor.execute("SELECT * FROM backup_system_settings WHERE singleton_key = 'default'")
                 return _row(cursor.fetchone(), env=env)
 
+    def _fetch(self, cursor, decrypt=False, env=None):
+        secret_expr = "NULL AS admin_password"
+        if decrypt:
+            secret_expr = "pgp_sym_decrypt(decode(admin_password_enc, 'base64'), %s) AS admin_password"
+        cursor.execute(
+            f"SELECT *, {secret_expr} FROM backup_system_settings WHERE singleton_key = 'default'",
+            (config.secret_key(env),) if decrypt else (),
+        )
+        return cursor.fetchone()
+
+    def _generated_password(self):
+        return secrets.token_urlsafe(24)
+
     def _upsert(self, cursor, enabled, data_path, test_run_id=None, metadata=None, env=None):
         status = "pending_install" if enabled else "disabled"
         storage = _storage(data_path)
+        admin_username = "admin"
+        admin_password = self._generated_password() if enabled else None
+        password_sql = "NULL"
+        params = [
+            enabled,
+            status,
+            data_path,
+            resources.harbor_url(env),
+            admin_username,
+        ]
+        if admin_password:
+            password_sql = "encode(pgp_sym_encrypt(%s, %s), 'base64')"
+            params.extend([admin_password, config.secret_key(env)])
+        params.extend([
+            storage["used_bytes"],
+            storage["available_bytes"],
+            storage["total_bytes"],
+            _utcnow(),
+            test_run_id,
+            Jsonb(metadata or {}),
+        ])
         cursor.execute(
-            """
+            f"""
             INSERT INTO backup_system_settings(
-                singleton_key, enabled, status, data_path, used_bytes, available_bytes,
-                total_bytes, last_error, last_checked_at, test_run_id, metadata
+                singleton_key, enabled, status, data_path, harbor_url, admin_username,
+                admin_password_enc, used_bytes, available_bytes, total_bytes,
+                last_error, last_checked_at, test_run_id, metadata
             )
-            VALUES ('default', %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
+            VALUES ('default', %s, %s, %s, %s, %s, {password_sql}, %s, %s, %s, NULL, %s, %s, %s)
             ON CONFLICT (singleton_key) DO UPDATE SET
                 enabled = EXCLUDED.enabled,
                 status = EXCLUDED.status,
                 data_path = EXCLUDED.data_path,
+                harbor_url = EXCLUDED.harbor_url,
+                admin_username = EXCLUDED.admin_username,
+                admin_password_enc = COALESCE(EXCLUDED.admin_password_enc, backup_system_settings.admin_password_enc),
                 used_bytes = EXCLUDED.used_bytes,
                 available_bytes = EXCLUDED.available_bytes,
                 total_bytes = EXCLUDED.total_bytes,
@@ -129,17 +187,7 @@ class BackupSystem:
                 metadata = EXCLUDED.metadata
             RETURNING *
             """,
-            (
-                enabled,
-                status,
-                data_path,
-                storage["used_bytes"],
-                storage["available_bytes"],
-                storage["total_bytes"],
-                _utcnow(),
-                test_run_id,
-                Jsonb(metadata or {}),
-            ),
+            params,
         )
         return _row(cursor.fetchone(), env=env)
 
@@ -158,11 +206,24 @@ class BackupSystem:
                 raise BackupSystemError(400, f"백업 저장 경로를 생성할 수 없습니다: {exc}", "BACKUP_DATA_PATH_UNAVAILABLE")
         metadata = {
             "source": "setup_wizard",
-            "install_mode": "deferred_compose",
+            "install_mode": "local_harbor",
             "required_ports": _ports(env),
         }
         with connection.cursor() as cursor:
             return self._upsert(cursor, enabled, data_path, test_run_id=test_run_id, metadata=metadata, env=env)
+
+    def connection_config(self, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                row = self._fetch(cursor, decrypt=True, env=env)
+        status = _row(row, env=env)
+        password = row.get("admin_password") if row else ""
+        return {
+            **status,
+            "username": status.get("admin_username") or "admin",
+            "password": password or "",
+            "configured": bool(status.get("enabled") and status.get("harbor_url") and password),
+        }
 
     def delete_by_test_run_id(self, test_run_id, env=None):
         with connect(env=env) as connection:

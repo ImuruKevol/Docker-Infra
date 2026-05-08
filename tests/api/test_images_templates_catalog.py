@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 IMAGES_API = ROOT / "src" / "app" / "page.images" / "api.py"
 TEMPLATES_API = ROOT / "src" / "app" / "page.templates" / "api.py"
 IMAGES_MODEL = ROOT / "src" / "model" / "struct" / "images.py"
+IMAGES_LOCAL_MODEL = ROOT / "src" / "model" / "struct" / "images_local.py"
 TEMPLATES_MODEL = ROOT / "src" / "model" / "struct" / "templates.py"
 TEMPLATES_STORE = ROOT / "src" / "model" / "struct" / "templates_store.py"
 TEMPLATES_SEED = ROOT / "src" / "model" / "struct" / "templates_seed.py"
@@ -20,6 +21,7 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
         images_api = IMAGES_API.read_text(encoding="utf-8")
         templates_api = TEMPLATES_API.read_text(encoding="utf-8")
         images_model = IMAGES_MODEL.read_text(encoding="utf-8")
+        images_local_model = IMAGES_LOCAL_MODEL.read_text(encoding="utf-8")
         templates_model = TEMPLATES_MODEL.read_text(encoding="utf-8")
         templates_store = TEMPLATES_STORE.read_text(encoding="utf-8")
         templates_seed = TEMPLATES_SEED.read_text(encoding="utf-8")
@@ -43,7 +45,7 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
         self.assertIn("harbor_overview", images_model)
         self.assertIn("create_harbor_project", images_model)
         self.assertIn("delete_harbor_repository", images_model)
-        self.assertIn("delete_local_image", images_model)
+        self.assertIn("delete_local_image", images_local_model)
         self.assertIn("ensure_defaults", templates_model)
         self.assertIn("def preview(self, payload, env=None):", templates_store)
         self.assertIn("def release(self, payload, env=None):", templates_store)
@@ -56,9 +58,9 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
             "mariadb_db",
             "redis_cache",
             "rabbitmq_queue",
-            "harbor_registry",
         ]:
             self.assertIn(token, templates_seed)
+        self.assertNotIn("harbor_registry", templates_seed)
 
 
 class ImagesTemplatesLiveFlowTest(unittest.TestCase):
@@ -74,6 +76,7 @@ class ImagesTemplatesLiveFlowTest(unittest.TestCase):
         self.assertTrue(str(data["template_root"]).endswith("/data/templates"))
         self.assertGreaterEqual(len(data.get("templates", [])), 5)
         self.assertNotIn("gitlab_ce", {item["namespace"] for item in data.get("templates", [])})
+        self.assertNotIn("harbor_registry", {item["namespace"] for item in data.get("templates", [])})
 
         first = data["templates"][0]
         detail = self.client.post(
@@ -129,7 +132,7 @@ class ImagesTemplatesLiveFlowTest(unittest.TestCase):
         self.assertEqual(load.status_code, 200, load.text[:500])
         harbor_meta = load.json()["data"].get("harbor") or {}
         if not harbor_meta.get("enabled") or not harbor_meta.get("configured"):
-            self.skipTest("Harbor 연동이 설정되어 있지 않습니다.")
+            self.skipTest("서비스 백업 시스템이 설정되어 있지 않습니다.")
 
         overview = self.client.post("/wiz/api/page.images/harbor_overview", json={}, validate=False)
         self.assertEqual(overview.status_code, 200, overview.text[:500])

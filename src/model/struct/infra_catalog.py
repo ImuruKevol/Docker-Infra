@@ -7,8 +7,8 @@ connect = wiz.model("db/postgres").connect
 setup = wiz.model("struct/setup")
 system = wiz.model("struct/system")
 local_command_catalog = wiz.model("struct/local_command_catalog")
-integrations_model = wiz.model("struct/integrations_registry")
 domains_model = wiz.model("struct/domains")
+backup_system = wiz.model("struct/backup_system")
 
 
 def _serialize(value):
@@ -51,18 +51,15 @@ class InfraCatalog:
                 }
 
     def integrations(self):
-        items = []
-        for integration in integrations_model.load():
-            items.append(
-                {
-                    "key": integration["key"],
-                    "label": integration["label"],
-                    "enabled": bool(integration["enabled"]),
-                    "primary": integration["fields"].get("url", ""),
-                    "secondary": integration["fields"].get("username", "") or integration["fields"].get("project", ""),
-                    "secret_configured": bool(integration.get("secret_configured")),
-                }
-            )
+        backup = backup_system.status()
+        items = [{
+            "key": "backup_system",
+            "label": "서비스 백업 시스템",
+            "enabled": bool(backup.get("enabled")),
+            "primary": backup.get("harbor_url") or "",
+            "secondary": backup.get("status") or "",
+            "secret_configured": bool(backup.get("secret_configured")),
+        }]
         domain_overview = domains_model.load()
         zones = domain_overview.get("zones", [])
         first_zone = zones[0] if zones else {}

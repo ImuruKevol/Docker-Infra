@@ -151,6 +151,9 @@ export class Component implements OnInit {
 
         const { code, data } = await wiz.call("setup", this.data.setup);
         if (code === 200) {
+            if (data?.backup_error) {
+                await this.alert(`서비스 백업 시스템은 나중에 시스템 설정에서 다시 시작할 수 있습니다.\n${data.backup_error.message || ''}`, 'warning');
+            }
             location.href = "/dashboard";
             return;
         }

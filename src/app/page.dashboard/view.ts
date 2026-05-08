@@ -61,7 +61,7 @@ export class Component implements OnInit {
     }
 
     public integrations() {
-        return (this.data()?.integrations || []).filter((item: any) => String(item?.key || '').trim() !== 'gitlab');
+        return this.data()?.integrations || [];
     }
 
     public statusLabel(status: string) {
