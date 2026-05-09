@@ -15,6 +15,8 @@ DEFAULT_BACKUP_HARBOR_DATA_DIR = "data/backup-harbor"
 DEFAULT_BACKUP_HARBOR_HTTP_PORT = "5000"
 DEFAULT_BACKUP_HARBOR_HTTPS_PORT = "5443"
 DEFAULT_BACKUP_HARBOR_VERSION = "v2.15.0"
+DEFAULT_NODE_EXPORTER_IMAGE = "quay.io/prometheus/node-exporter:v1.8.2"
+DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS = "60"
 CONFIG_ENV_NAME = "config.env"
 LOCAL_EXECUTOR_ALLOWLIST_ENV = "DOCKER_INFRA_LOCAL_EXECUTOR_ALLOWLIST"
 DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
@@ -23,9 +25,11 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "docker.container.start",
     "docker.container.stop",
     "docker.container.restart",
+    "docker.container.delete",
     "docker.image.remove",
     "service.stack.deploy",
     "service.stack.remove",
+    "service.stack.volumes.remove",
     "proxy.nginx.reload",
     "certbot.nginx.issue",
     "openssl.self_signed_cert.issue",
@@ -33,6 +37,7 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "backup.harbor.up",
     "backup.harbor.down",
     "backup.harbor.restart",
+    "monitoring.node_exporter.ensure",
 ]
 
 
@@ -172,6 +177,19 @@ def backup_harbor_ports(env=None):
 
 def backup_harbor_version(env=None):
     return runtime_env(env).get("DOCKER_INFRA_BACKUP_HARBOR_VERSION") or DEFAULT_BACKUP_HARBOR_VERSION
+
+
+def node_exporter_image(env=None):
+    return runtime_env(env).get("DOCKER_INFRA_NODE_EXPORTER_IMAGE") or DEFAULT_NODE_EXPORTER_IMAGE
+
+
+def node_metric_collection_interval_seconds(env=None):
+    value = runtime_env(env).get("DOCKER_INFRA_NODE_METRIC_COLLECTION_INTERVAL_SECONDS") or DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = int(DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS)
+    return max(15, min(seconds, 3600))
 
 
 def backup_harbor_installer_url(env=None):

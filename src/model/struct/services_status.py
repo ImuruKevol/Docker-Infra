@@ -92,19 +92,43 @@ class ServiceStatusMixin:
         }
 
     def _container_status(self, namespace, env=None):
-        result = local_executor.run("docker.containers", timeout_seconds=10, env=env)
-        containers = _parse_containers(result.get("stdout")) if result.get("status") == "ok" else []
-        matched = [
-            item for item in containers
-            if item.get("service_namespace") == namespace
-            or str(item.get("runtime_service_name") or "").startswith(f"{namespace}_")
-        ]
+        # Keep service runtime aligned with the shared docker.containers collector so each row carries its real container id and node id.
+        matched = []
+        checks = []
+        node_rows = nodes.list(env=env)
+        for node in node_rows:
+            try:
+                panel = nodes.live_containers(node["id"], persist=True, env=env)
+                check = panel.get("check") or {}
+                checks.append({
+                    "node_id": node["id"],
+                    "node_name": node.get("name"),
+                    "status": check.get("status"),
+                    "exit_code": check.get("exit_code"),
+                })
+                containers = panel.get("items") or []
+            except nodes.NodeError as exc:
+                checks.append({
+                    "node_id": node["id"],
+                    "node_name": node.get("name"),
+                    "status": "error",
+                    "message": exc.message,
+                    "error_code": exc.error_code,
+                })
+                containers = []
+            for item in containers:
+                if item.get("service_namespace") != namespace and not str(item.get("runtime_service_name") or "").startswith(f"{namespace}_"):
+                    continue
+                matched.append({**item, "node_id": node["id"], "node_name": node.get("name"), "node_host": node.get("host")})
         return {
             "summary": _container_summary(matched),
             "health": _container_health(matched),
             "containers": [
                 {
                     "id": item.get("id"),
+                    "node_id": item.get("node_id"),
+                    "node_name": item.get("node_name"),
+                    "node_host": item.get("node_host"),
                     "name": item.get("name"),
                     "image": item.get("image"),
                     "state": item.get("state"),
@@ -114,7 +138,7 @@ class ServiceStatusMixin:
                 }
                 for item in matched
             ],
-            "check": {"status": result.get("status"), "exit_code": result.get("exit_code")},
+            "check": {"status": "ok" if any(item.get("status") == "ok" for item in checks) else "error", "nodes": checks},
         }
 
     def _domain_status(self, domains):

@@ -18,6 +18,7 @@ export class Component implements OnInit, OnDestroy {
     public detail = signal<any>(null);
     public currentTab = signal<EditorTab>('compose');
     public createModalOpen = signal<boolean>(false);
+    public fileTreeOpen = signal<boolean>(false);
     public selectedVersionId = signal<string>('');
     public selectedVersion = signal<any>(null);
     public selectedVersionTab = signal<VersionFileTab>('compose');
@@ -266,6 +267,18 @@ export class Component implements OnInit, OnDestroy {
         if (this.busy()) return;
         this.createModalOpen.set(false);
         this.createForm = this.emptyCreateForm();
+    }
+
+    public openFileTree() {
+        this.fileTreeOpen.set(true);
+    }
+
+    public closeFileTree() {
+        this.fileTreeOpen.set(false);
+    }
+
+    public templateFileTreeContext() {
+        return { template_id: this.detail()?.template?.id || '' };
     }
 
     public createDraftTemplate() {

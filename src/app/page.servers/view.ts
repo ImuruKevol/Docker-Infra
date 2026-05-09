@@ -3,6 +3,7 @@ import { Service } from '@wiz/libs/portal/season/service';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import Chart from 'chart.js/auto';
 
 export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
@@ -32,8 +33,16 @@ export class Component implements OnInit, OnDestroy {
     public actionModalOpen = signal<boolean>(false);
     public actionTitle = signal<string>('');
     public actionResult = signal<any>(null);
+    public monitoringBusy = signal<boolean>(false);
+    public monitoringState = signal<any>({ running: false, collecting_node_ids: [] });
     public refreshSeconds = signal<number>(5);
     public refreshOptions = [1, 3, 5, 10];
+    public resourceChartOpen = signal<boolean>(false);
+    public resourceHistoryBusy = signal<boolean>(false);
+    public resourceHistoryError = signal<string>('');
+    public resourceHistory = signal<any>({ rows: [] });
+    public resourceHistoryStartDate = signal<string>(this.todayDateInput());
+    public resourceHistoryEndDate = signal<string>(this.todayDateInput());
     public fileBrowserOpen = signal<boolean>(false);
     public fileBrowserBusy = signal<boolean>(false);
     public fileBrowserPath = signal<string>('');
@@ -71,6 +80,8 @@ export class Component implements OnInit, OnDestroy {
     private terminalSocket: any = null;
     private terminalInstance: Terminal | null = null;
     private terminalFitAddon: FitAddon | null = null;
+    private resourceChartInstance: any = null;
+    private resourceChartRenderTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(public service: Service) { }
 
@@ -85,6 +96,8 @@ export class Component implements OnInit, OnDestroy {
         this.stopAutoRefresh();
         this.stopMacroRunPolling();
         this.disconnectTerminal(true);
+        this.cancelResourceChartRender();
+        this.destroyResourceChart();
         this.stopThemeObserver();
     }
 
@@ -124,6 +137,12 @@ export class Component implements OnInit, OnDestroy {
         this.macroForm = this.emptyMacroForm();
     }
 
+    private todayDateInput() {
+        const date = new Date();
+        date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+        return date.toISOString().slice(0, 10);
+    }
+
     private isDarkMode() {
         return Boolean(document.documentElement.classList.contains('dark'));
     }
@@ -140,6 +159,7 @@ export class Component implements OnInit, OnDestroy {
         this.themeObserver = new MutationObserver(() => {
             this.syncMacroEditorTheme();
             this.applyTerminalTheme();
+            this.scheduleResourceChartRender();
         });
         this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     }
@@ -179,6 +199,9 @@ export class Component implements OnInit, OnDestroy {
         this.macroArgsInput.set('');
         this.macroRunResult.set(null);
         this.lastOperation.set(null);
+        this.resourceChartOpen.set(false);
+        this.resourceHistory.set({ rows: [] });
+        this.resourceHistoryError.set('');
         this.detailError.set('');
         this.detailLoading.set(false);
         this.panelRefreshing.set(false);
@@ -191,6 +214,7 @@ export class Component implements OnInit, OnDestroy {
 
     private applyOverview(data: any) {
         this.nodes.set(data.nodes || []);
+        if (data.monitoring) this.monitoringState.set(data.monitoring);
         this.setSelectedNode(data.selected || null);
         this.detailError.set('');
     }
@@ -224,6 +248,7 @@ export class Component implements OnInit, OnDestroy {
         const { code, data } = await wiz.call("cached_detail", { node_id: nodeId });
         if (!this.isActiveSelection(nodeId, epoch)) return;
         if (code === 200) {
+            if (data.monitoring) this.monitoringState.set(data.monitoring);
             this.setSelectedNode(data.node || null);
             this.applyContainerPanel(data);
             this.detailError.set('');
@@ -321,6 +346,7 @@ export class Component implements OnInit, OnDestroy {
         this.metricRequestRunning = false;
         if (!this.isActiveSelection(nodeId, epoch)) return;
         if (code === 200) {
+            if (data.monitoring) this.monitoringState.set(data.monitoring);
             if (data?.latest_metric) {
                 const current = this.selected() || {};
                 this.setSelectedNode({ ...current, id: data.node_id || current.id, latest_metric: data.latest_metric });
@@ -341,6 +367,7 @@ export class Component implements OnInit, OnDestroy {
         if (!nodeId) return;
         const { code, data } = await wiz.call("detail", { node_id: nodeId });
         if (code === 200) {
+            if (data.monitoring) this.monitoringState.set(data.monitoring);
             this.setSelectedNode(data.node || null);
             this.applyContainerPanel(data);
             this.detailError.set('');
@@ -359,6 +386,7 @@ export class Component implements OnInit, OnDestroy {
         const { code, data } = await wiz.call("refresh_containers", { node_id: nodeId });
         if (!this.isActiveSelection(nodeId, epoch)) return;
         if (code === 200) {
+            if (data.monitoring) this.monitoringState.set(data.monitoring);
             this.setSelectedNode(data.node || null);
             this.applyContainerPanel(data);
             this.detailError.set('');
@@ -413,6 +441,32 @@ export class Component implements OnInit, OnDestroy {
         void this.loadMacros(node.id);
         void this.fetchCachedDetail(node.id, false, epoch);
         void this.refreshDetailInBackground(node.id, epoch);
+    }
+
+    public serverFileTreeContext() {
+        return { node_id: this.selected()?.id || '' };
+    }
+
+    public async ensureMonitoringAgent() {
+        const nodeId = this.selected()?.id;
+        if (!nodeId || this.monitoringBusy()) return;
+        this.monitoringBusy.set(true);
+        const { code, data } = await wiz.call("ensure_monitoring_agent", { node_id: nodeId });
+        if (code === 200) {
+            this.applyOverview(data);
+            this.actionTitle.set('모니터링 에이전트 구성 결과');
+            this.actionResult.set({
+                checks: { operation: data.failed ? 'error' : 'ok' },
+                operation: data.operation,
+                results: data.results || [],
+            });
+            this.actionModalOpen.set(true);
+            await this.fetchCachedDetail(nodeId, true);
+        } else {
+            await this.alert(data?.message || '모니터링 에이전트를 구성할 수 없습니다.');
+        }
+        this.monitoringBusy.set(false);
+        await this.service.render();
     }
 
     public openAddServer() {
@@ -1009,6 +1063,208 @@ export class Component implements OnInit, OnDestroy {
         this.restartAutoRefresh();
     }
 
+    public async openResourceChart() {
+        if (!this.selected()?.id) return;
+        if (!this.resourceHistoryStartDate()) this.resourceHistoryStartDate.set(this.todayDateInput());
+        if (!this.resourceHistoryEndDate()) this.resourceHistoryEndDate.set(this.resourceHistoryStartDate());
+        this.resourceChartOpen.set(true);
+        await this.service.render();
+        await this.loadResourceHistory();
+    }
+
+    public closeResourceChart() {
+        if (this.resourceHistoryBusy()) return;
+        this.resourceChartOpen.set(false);
+        this.cancelResourceChartRender();
+        this.destroyResourceChart();
+    }
+
+    private dateStartIso(value: string) {
+        if (!value) return '';
+        const date = new Date(`${value}T00:00:00.000`);
+        return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+    }
+
+    private dateEndIso(value: string) {
+        if (!value) return '';
+        const date = new Date(`${value}T23:59:59.999`);
+        return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+    }
+
+    private resourceHistoryRangePayload() {
+        const startDate = this.resourceHistoryStartDate() || this.todayDateInput();
+        const endDate = this.resourceHistoryEndDate() || startDate;
+        return {
+            start_date: startDate,
+            end_date: endDate,
+            start_at: this.dateStartIso(startDate),
+            end_at: this.dateEndIso(endDate),
+        };
+    }
+
+    public async loadResourceHistory() {
+        const nodeId = this.selected()?.id;
+        if (!nodeId) return;
+        this.resourceHistoryBusy.set(true);
+        this.resourceHistoryError.set('');
+        const range = this.resourceHistoryRangePayload();
+        const { code, data } = await wiz.call("resource_history", {
+            node_id: nodeId,
+            ...range,
+            limit: 5000,
+        });
+        if (code === 200) {
+            this.resourceHistory.set(data || { rows: [] });
+        } else {
+            this.resourceHistoryError.set(data?.message || '자원 기록을 불러올 수 없습니다.');
+        }
+        this.resourceHistoryBusy.set(false);
+        await this.service.render();
+        this.scheduleResourceChartRender();
+    }
+
+    public async deleteResourceHistoryRange() {
+        const nodeId = this.selected()?.id;
+        if (!nodeId || this.resourceHistoryBusy()) return;
+        const start = this.resourceHistoryStartDate();
+        const end = this.resourceHistoryEndDate();
+        const range = this.resourceHistoryRangePayload();
+        const confirmed = await this.service.modal.show({
+            title: '자원 기록 삭제',
+            message: `${this.selected()?.name || '선택한 서버'}의 ${start} ~ ${end} 자원 기록을 삭제합니다.`,
+            cancel: '취소',
+            action: '삭제',
+            actionBtn: 'warning',
+            status: 'warning',
+        });
+        if (!confirmed) return;
+
+        this.resourceHistoryBusy.set(true);
+        this.resourceHistoryError.set('');
+        const { code, data } = await wiz.call("delete_resource_history", {
+            node_id: nodeId,
+            ...range,
+        });
+        if (code === 200) {
+            await this.loadResourceHistory();
+            await this.alert(`${data?.rows_removed || 0}개 기록을 삭제했습니다.`, 'info');
+        } else {
+            this.resourceHistoryError.set(data?.message || '자원 기록을 삭제할 수 없습니다.');
+        }
+        this.resourceHistoryBusy.set(false);
+        await this.service.render();
+    }
+
+    private chartTextColor() {
+        return this.isDarkMode() ? '#d4d4d8' : '#3f3f46';
+    }
+
+    private chartGridColor() {
+        return this.isDarkMode() ? 'rgba(63,63,70,0.9)' : 'rgba(228,228,231,0.95)';
+    }
+
+    private resourceChartConfig(rows: any[]) {
+        const labels = rows.map((row: any) => this.formatChartTime(row?.reported_at));
+        const pointRadius = rows.length > 120 ? 0 : 2;
+        return {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'CPU',
+                        data: rows.map((row: any) => this.chartValue(row, 'cpu_percent')),
+                        borderColor: '#0ea5e9',
+                        backgroundColor: 'rgba(14,165,233,0.12)',
+                        tension: 0.25,
+                        pointRadius,
+                        pointHoverRadius: 4,
+                    },
+                    {
+                        label: 'Memory',
+                        data: rows.map((row: any) => this.chartValue(row, 'memory_used_percent')),
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16,185,129,0.12)',
+                        tension: 0.25,
+                        pointRadius,
+                        pointHoverRadius: 4,
+                    },
+                    {
+                        label: 'Storage',
+                        data: rows.map((row: any) => this.chartValue(row, 'storage_used_percent')),
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245,158,11,0.12)',
+                        tension: 0.25,
+                        pointRadius,
+                        pointHoverRadius: 4,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { color: this.chartTextColor(), usePointStyle: true, boxWidth: 8 },
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: (context: any) => `${context.dataset.label}: ${Number(context.parsed.y || 0).toFixed(1)}%`,
+                        },
+                    },
+                },
+                scales: {
+                    x: {
+                        ticks: { color: this.chartTextColor(), maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
+                        grid: { color: this.chartGridColor() },
+                    },
+                    y: {
+                        min: 0,
+                        max: 100,
+                        ticks: { color: this.chartTextColor(), callback: (value: any) => `${value}%` },
+                        grid: { color: this.chartGridColor() },
+                    },
+                },
+            },
+        };
+    }
+
+    private destroyResourceChart() {
+        if (!this.resourceChartInstance) return;
+        this.resourceChartInstance.destroy();
+        this.resourceChartInstance = null;
+    }
+
+    private cancelResourceChartRender() {
+        if (!this.resourceChartRenderTimer) return;
+        clearTimeout(this.resourceChartRenderTimer);
+        this.resourceChartRenderTimer = null;
+    }
+
+    private scheduleResourceChartRender() {
+        this.cancelResourceChartRender();
+        this.resourceChartRenderTimer = setTimeout(() => {
+            this.resourceChartRenderTimer = null;
+            requestAnimationFrame(() => this.renderResourceChart());
+        }, 0);
+    }
+
+    private resourceChartCanvasElement() {
+        return document.querySelector('[data-resource-chart-canvas="server"]') as HTMLCanvasElement | null;
+    }
+
+    private renderResourceChart() {
+        const canvas = this.resourceChartCanvasElement();
+        if (!canvas || !this.resourceChartOpen()) return;
+        const rows = this.resourceRows();
+        this.destroyResourceChart();
+        if (!rows.length) return;
+        this.resourceChartInstance = new Chart(canvas, this.resourceChartConfig(rows) as any);
+    }
+
     public isEditing() {
         return Boolean(this.editingNodeId());
     }
@@ -1224,6 +1480,35 @@ export class Component implements OnInit, OnDestroy {
         return num;
     }
 
+    private chartValue(row: any, key: string) {
+        const value = Number(row?.[key]);
+        if (Number.isNaN(value)) return 0;
+        return Math.max(0, Math.min(100, value));
+    }
+
+    public resourceRows() {
+        return this.resourceHistory()?.rows || [];
+    }
+
+    public resourceHistorySummaryText() {
+        const count = this.resourceHistory()?.count || this.resourceRows().length || 0;
+        if (!count) return '선택한 기간에 기록이 없습니다.';
+        return `${count}개 기록`;
+    }
+
+    public latestResourcePercent(key: string) {
+        const rows = this.resourceRows();
+        if (!rows.length) return '-';
+        return this.percent(rows[rows.length - 1]?.[key]);
+    }
+
+    public formatChartTime(value: any) {
+        if (!value) return '-';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+        return date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    }
+
     public formatBytes(value: any) {
         const num = Number(value);
         if (!num || Number.isNaN(num)) return "-";
@@ -1256,6 +1541,19 @@ export class Component implements OnInit, OnDestroy {
 
     public showJoinSwarmButton(node: any) {
         return Boolean(node && !node.is_local_master && !this.isSwarmConnected(node));
+    }
+
+    public monitoringAgent(node: any = this.selected()) {
+        return node?.monitoring_agent || node?.metadata?.monitoring_agent || {};
+    }
+
+    public monitoringConfigured(node: any = this.selected()) {
+        return Boolean(this.monitoringAgent(node)?.configured);
+    }
+
+    public isNodeCollecting(node: any) {
+        const ids = this.monitoringState()?.collecting_node_ids || [];
+        return Boolean(node?.id && ids.includes(node.id));
     }
 
     public statusLabel(status: string) {

@@ -12,6 +12,7 @@ service_ports = wiz.model("struct/services_ports")
 webserver = wiz.model("struct/webserver")
 nodes_model = wiz.model("struct").nodes
 ssh_executor = wiz.model("struct/ssh_executor")
+placement_selector = wiz.model("struct/services_placement")
 
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-zA-Z0-9_*-]{1,63}\.)*[a-zA-Z0-9-]{1,63}\.[a-zA-Z]{2,63}$")
 VOLUME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -140,9 +141,15 @@ class ServicesPreflight:
     def _node_label(self, node):
         return str(node.get("name") or node.get("host") or node.get("id") or "서버")
 
-    def _check_placement(self, nodes):
+    def _check_placement(self, nodes, recommendation=None):
         if not nodes:
             return [_item("placement", "실행 서버", "warning", "등록된 실행 서버 정보를 확인하지 못했습니다. 저장 후 배포 단계에서 다시 확인합니다.")]
+        selected = (recommendation or {}).get("selected") or {}
+        selected_node = selected.get("node") or {}
+        scores = {
+            ((item.get("node") or {}).get("id")): item
+            for item in (recommendation or {}).get("candidates") or []
+        }
         details = [
             {
                 "node_id": node.get("id"),
@@ -150,9 +157,17 @@ class ServicesPreflight:
                 "host": node.get("host"),
                 "local_master": bool(node.get("is_local_master")),
                 "credential_ready": bool((node.get("credential") or {}).get("key_file")) or bool(node.get("is_local_master")),
+                "score": (scores.get(node.get("id")) or {}).get("score"),
+                "cpu_percent": (scores.get(node.get("id")) or {}).get("cpu_percent"),
+                "memory_used_percent": (scores.get(node.get("id")) or {}).get("memory_used_percent"),
+                "storage_used_percent": (scores.get(node.get("id")) or {}).get("storage_used_percent"),
+                "containers": (scores.get(node.get("id")) or {}).get("containers"),
             }
             for node in nodes
         ]
+        if selected_node.get("id"):
+            label = selected_node.get("name") or selected_node.get("host") or selected_node.get("id")
+            return [_item("placement", "실행 서버", "ok", f"자원 사용량을 기준으로 {label} 서버를 자동 선택합니다.", details)]
         return [_item("placement", "실행 서버", "ok", f"배포 후보 서버 {len(nodes)}대를 확인했습니다.", details)]
 
     def _check_database(self, namespace, domain, service_id=None, env=None):
@@ -340,10 +355,14 @@ class ServicesPreflight:
         service_id = payload.get("service_id")
         validation = validation or validator.validate({"namespace": namespace, "filename": "docker-compose.yaml", "content": content})
         candidate_nodes = self._candidate_nodes(payload, env=env)
+        try:
+            placement_recommendation = placement_selector.recommend(payload, env=env)
+        except Exception:
+            placement_recommendation = None
         items = []
         items.extend(self._check_database(namespace, domain, service_id=service_id, env=env))
         items.extend(self._check_compose(validation, namespace))
-        items.extend(self._check_placement(candidate_nodes))
+        items.extend(self._check_placement(candidate_nodes, recommendation=placement_recommendation))
         items.extend(self._check_images(validation, nodes=candidate_nodes, env=env))
         items.extend(self._check_volumes(validation, namespace))
         items.extend(self._check_ports(content, nodes=candidate_nodes, env=env))

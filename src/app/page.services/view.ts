@@ -788,7 +788,7 @@ export class Component implements OnInit, OnDestroy {
         const serviceId = this.selected()?.id;
         const serviceName = this.selected()?.name || '서비스';
         if (!serviceId || this.busy()) return;
-        const ok = await this.confirm(`${serviceName} 서비스를 삭제합니다.\n\n실행 중인 Docker 서비스, nginx 연결 설정, 서비스 기록과 생성 파일이 함께 삭제됩니다. 이 작업은 되돌릴 수 없습니다.`, '서비스 삭제', 'error');
+        const ok = await this.confirm(`${serviceName} 서비스를 삭제합니다.\n\n실행 중인 Docker 서비스, 연결된 Docker 볼륨, nginx 연결 설정, 서비스 기록과 생성 파일이 함께 삭제됩니다. 이 작업은 되돌릴 수 없습니다.`, '서비스 삭제', 'error');
         if (!ok) return;
         this.busy.set(true);
         const { code, data } = await wiz.call('delete_service', { service_id: serviceId });
@@ -1422,6 +1422,10 @@ export class Component implements OnInit, OnDestroy {
         return 'text-zinc-100';
     }
 
+    public serviceFileTreeContext() {
+        return { service_id: this.selected()?.id || '' };
+    }
+
     public closeFileBrowser() {
         if (this.fileBrowserBusy()) return;
         this.fileBrowserOpen.set(false);
@@ -1932,6 +1936,7 @@ export class Component implements OnInit, OnDestroy {
         const { code, data } = await wiz.call('service_container_action', {
             service_id: this.selected()?.id,
             container_id: container.id,
+            node_id: container.node_id,
             action,
         });
         this.busy.set(false);

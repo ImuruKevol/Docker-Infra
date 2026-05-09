@@ -49,6 +49,7 @@ class NodeView:
 
     def node(self, node, docker_result=None):
         node = node or {}
+        metadata = node.get("metadata") or {}
         return {
             "id": node.get("id"),
             "name": node.get("name"),
@@ -61,6 +62,7 @@ class NodeView:
             "credential": self.credential(node.get("credential")),
             "latest_metric": self.metric(node.get("latest_metric")),
             "docker": self.docker(node, docker_result=docker_result),
+            "monitoring_agent": metadata.get("monitoring_agent") or {},
         }
 
     def container(self, item):

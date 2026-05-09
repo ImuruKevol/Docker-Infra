@@ -95,3 +95,11 @@
 | 2026-05-09 | 093 | 서비스 플로우를 nginx 방화벽 중심 트리 구조로 재구성 | [상세](devlog/2026-05-09/093-service-flow-tree-firewall-layout.md) |
 | 2026-05-09 | 094 | 서버 관리 개요 UX와 컨테이너 삭제, 운영형 access 화면 적용 | [상세](devlog/2026-05-09/094-server-overview-access-operator-ux.md) |
 | 2026-05-09 | 095 | 미등록 컨테이너 목록 제거와 서비스 고급 관리 Monaco/컨테이너 액션 적용 | [상세](devlog/2026-05-09/095-service-advanced-monaco-container-actions.md) |
+| 2026-05-09 | 096 | 서버 리소스 모니터링 CSV 기록과 자동 배치 점수화 적용 | [상세](devlog/2026-05-09/096-node-resource-history-auto-placement.md) |
+| 2026-05-09 | 097 | 서버 모니터링 백그라운드 수집과 컨테이너 ID 액션·공통 파일 트리 적용 | [상세](devlog/2026-05-09/097-monitoring-container-id-file-tree.md) |
+| 2026-05-09 | 098 | 파일 트리 홈 기본 경로·보호 경로와 모니터링/컨테이너/이미지 액션 보강 | [상세](devlog/2026-05-09/098-file-tree-monitoring-actions-hardening.md) |
+| 2026-05-10 | 099 | digest 포함 로컬 이미지 삭제 보강과 odoo 이미지 실제 삭제 | [상세](devlog/2026-05-10/099-local-image-digest-delete-odoo-removal.md) |
+| 2026-05-10 | 100 | 서비스 삭제 시 stack 볼륨 제거와 서버 자원 추이 차트/기록 삭제 UI 추가 | [상세](devlog/2026-05-10/100-service-delete-volumes-resource-chart.md) |
+| 2026-05-10 | 101 | 자원 차트 Chart.js 전환과 기간 조회·파일 트리 성능 최적화 | [상세](devlog/2026-05-10/101-chartjs-date-range-file-tree-performance.md) |
+| 2026-05-10 | 102 | Chart.js canvas 참조와 렌더 타이밍 수정 | [상세](devlog/2026-05-10/102-chartjs-canvas-reference-render-timing.md) |
+| 2026-05-10 | 103 | Chart.js template reference NG0301 제거 | [상세](devlog/2026-05-10/103-chartjs-ng0301-reference-removal.md) |

@@ -22,6 +22,7 @@ PORTS_MODEL = ROOT / "src" / "model" / "struct" / "services_ports.py"
 DEPLOY_MODEL = ROOT / "src" / "model" / "struct" / "services_deploy.py"
 OPERATIONS_MODEL = ROOT / "src" / "model" / "struct" / "operations.py"
 DEPLOY_TARGETS_MODEL = ROOT / "src" / "model" / "struct" / "services_deploy_targets.py"
+PLACEMENT_MODEL = ROOT / "src" / "model" / "struct" / "services_placement.py"
 NGINX_MODEL = ROOT / "src" / "model" / "struct" / "service_nginx.py"
 NGINX_CERT_MODEL = ROOT / "src" / "model" / "struct" / "service_nginx_certificates.py"
 DOMAINS_MODEL = ROOT / "src" / "model" / "struct" / "domains.py"
@@ -42,6 +43,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         ports = PORTS_MODEL.read_text(encoding="utf-8")
         deploy = DEPLOY_MODEL.read_text(encoding="utf-8")
         deploy_targets = DEPLOY_TARGETS_MODEL.read_text(encoding="utf-8")
+        placement = PLACEMENT_MODEL.read_text(encoding="utf-8")
         nginx = NGINX_MODEL.read_text(encoding="utf-8")
         config = RUNTIME_CONFIG.read_text(encoding="utf-8")
 
@@ -64,6 +66,9 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("_apply_stack_placement", deploy)
         self.assertIn("node.id ==", deploy)
         self.assertIn("deploy_adjustments", deploy)
+        self.assertIn("placement_selector.recommend", deploy)
+        for token in ["least_loaded_resource_score", "cpu_percent", "memory_used_percent", "storage_used_percent", "containers"]:
+            self.assertIn(token, placement)
         self.assertIn("sync_domain_proxy_targets", deploy)
         self.assertIn("registered_by_swarm_id", deploy_targets)
         self.assertIn("node_id[:12]", deploy_targets)
@@ -136,10 +141,12 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("public async deleteSelectedService", view)
         self.assertIn("서비스 삭제", template)
         self.assertIn("ServiceDeleteMixin", services)
-        for token in ["def delete", "_managed_nginx_delete_path", "service.stack.remove", "proxy.nginx.configtest", "proxy.nginx.reload"]:
+        for token in ["def delete", "_managed_nginx_delete_path", "_remove_volumes", "service.stack.remove", "service.stack.volumes.remove", "proxy.nginx.configtest", "proxy.nginx.reload"]:
             self.assertIn(token, delete_model)
         self.assertIn("service.stack.remove", commands)
+        self.assertIn("service.stack.volumes.remove", commands)
         self.assertIn("service.stack.remove", config)
+        self.assertIn("service.stack.volumes.remove", config)
 
     def test_service_rollback_contract_is_wired(self):
         api = SERVICES_API.read_text(encoding="utf-8")
@@ -186,6 +193,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("flow_model.build", api)
         self.assertIn("service_flow", api)
         self.assertIn("def service_container_action():", api)
+        self.assertIn("target_node_id", api)
+        self.assertIn("container.node_id", view)
         for token in ["class ServicesFlow", "depends_on", "public_paths", "internal_targets", "nginx"]:
             self.assertIn(token, flow)
         self.assertIn("서버 / 인증서", template)
@@ -209,10 +218,12 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         commands = (ROOT / "src" / "model" / "struct" / "local_command_catalog.py").read_text(encoding="utf-8")
 
         self.assertIn("ServiceStatusMixin", services)
+        self.assertIn("placement_selector.recommend", services)
         self.assertIn("refresh_deploy_status", deploy)
         self.assertIn("runtime_status", deploy)
         for token in ["service.stack.services", "service.stack.ps", "docker.containers", "def refresh_deploy_status"]:
             self.assertIn(token, status)
+        self.assertIn("--no-trunc", commands)
         self.assertIn("def refresh_deploy_status():", SERVICES_API.read_text(encoding="utf-8"))
         self.assertIn("public async refreshRuntimeStatus", view)
         self.assertIn("상태 확인", template)

@@ -40,6 +40,10 @@ class Struct:
         return self._load("infra_catalog_registry")
 
     @property
+    def file_tree(self):
+        return self._load("file_tree")
+
+    @property
     def images(self):
         return self._load("images")
 
@@ -58,6 +62,14 @@ class Struct:
     @property
     def nodes(self):
         return self._load("nodes")
+
+    @property
+    def nodes_metric_history(self):
+        return self._load("nodes_metric_history")
+
+    @property
+    def nodes_monitoring(self):
+        return self._load("nodes_monitoring")
 
     @property
     def operations(self):
@@ -86,6 +98,10 @@ class Struct:
     @property
     def services_status(self):
         return self._load("services_status")
+
+    @property
+    def services_placement(self):
+        return self._load("services_placement")
 
     @property
     def service_nginx(self):

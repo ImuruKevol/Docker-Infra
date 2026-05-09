@@ -25,6 +25,7 @@ export class Component implements OnInit {
     public selectedHarborItems = signal<string[]>([]);
     public harborTagsBusy = signal<boolean>(false);
     public showCreateProjectModal = signal<boolean>(false);
+    public fileTreeOpen = signal<boolean>(false);
     public createProjectBusy = signal<boolean>(false);
     public newProjectName = signal<string>('');
     public newProjectPublic = signal<boolean>(false);
@@ -209,6 +210,19 @@ export class Component implements OnInit {
         }
         this.localBusy.set(false);
         await this.service.render();
+    }
+
+    public openFileTree() {
+        if (!this.selectedNodeId()) return;
+        this.fileTreeOpen.set(true);
+    }
+
+    public closeFileTree() {
+        this.fileTreeOpen.set(false);
+    }
+
+    public imageFileTreeContext() {
+        return { node_id: this.selectedNodeId() || '' };
     }
 
     public projectSummary() {

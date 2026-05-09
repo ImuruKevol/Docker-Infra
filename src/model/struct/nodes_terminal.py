@@ -20,6 +20,9 @@ class NodeTerminal:
     def _node(self, node_id, env=None):
         return nodes_model.detail(node_id, env=env)
 
+    def _is_local_master_node(self, node):
+        return bool(node.get("is_local_master") or node.get("role") == "local_master" or node.get("name") == "local-master")
+
     def _shell_env(self, shell_path=None, home=None, username=None):
         env = os.environ.copy()
         env["TERM"] = env.get("TERM") or "xterm-256color"
@@ -94,7 +97,7 @@ class NodeTerminal:
 
     def create_session(self, node_id, cols=120, rows=32, env=None):
         node = self._node(node_id, env=env)
-        command, identity = self._local_command() if node["is_local_master"] else self._remote_command(node, env=env)
+        command, identity = self._local_command() if self._is_local_master_node(node) else self._remote_command(node, env=env)
         master_fd, slave_fd = pty.openpty()
         self._set_winsize(slave_fd, cols, rows)
         process = subprocess.Popen(

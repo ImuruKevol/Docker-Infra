@@ -39,10 +39,12 @@ def _service_detail_payload(service_id):
 
 def load():
     catalog = wiz.model("struct/infra_catalog_registry")
+    monitoring = wiz.model("struct").nodes_monitoring
     code = 200
     payload = {}
 
     try:
+        monitoring.tick()
         payload = catalog.services()
     except RuntimeError as exc:
         code = 503
@@ -282,6 +284,14 @@ def save_compose_content():
     wiz.response.status(code, **payload)
 
 
+def _container_id_matches(actual, requested):
+    actual = str(actual or "").strip()
+    requested = str(requested or "").strip()
+    if not actual or not requested:
+        return False
+    return actual == requested or actual.startswith(requested) or requested.startswith(actual)
+
+
 def service_container_action():
     services_model = wiz.model("struct").services
     nodes_model = wiz.model("struct").nodes
@@ -301,13 +311,21 @@ def service_container_action():
     try:
         runtime = services_model.refresh_deploy_status(service_id).get("runtime_status") or {}
         containers = ((runtime.get("containers") or {}).get("containers") or [])
-        if not any(str(item.get("id") or "") == container_id for item in containers):
+        requested_node_id = str(body.get("node_id") or "").strip()
+        target = next(
+            (
+                item for item in containers
+                if _container_id_matches(item.get("id"), container_id)
+                and (not requested_node_id or str(item.get("node_id") or "") == requested_node_id)
+            ),
+            None,
+        )
+        if target is None:
             raise services_model.ServiceError(404, "선택한 서비스의 컨테이너를 찾을 수 없습니다.", "SERVICE_CONTAINER_NOT_FOUND")
-        nodes = nodes_model.list()
-        local_master = next((node for node in nodes if node.get("is_local_master")), None)
-        if local_master is None:
-            raise services_model.ServiceError(409, "컨테이너 동작을 실행할 중심 서버가 없습니다.", "LOCAL_MASTER_NODE_NOT_FOUND")
-        result = nodes_model.container_action(local_master["id"], {"container_id": container_id, "action": action})
+        target_node_id = str(target.get("node_id") or "").strip()
+        if not target_node_id:
+            raise services_model.ServiceError(409, "컨테이너가 실행 중인 서버를 확인할 수 없습니다.", "SERVICE_CONTAINER_NODE_MISSING")
+        result = nodes_model.container_action(target_node_id, {"container_id": target.get("id") or container_id, "action": action})
         services_model.refresh_deploy_status(service_id)
         payload = {"result": result.get("result") or result, **_service_detail_payload(service_id)}
     except nodes_model.NodeError as exc:

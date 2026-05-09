@@ -6,6 +6,7 @@ from psycopg.types.json import Jsonb
 auth = wiz.model("struct/auth")
 connect = wiz.model("db/postgres").connect
 shared = wiz.model("struct/nodes_shared")
+metric_history = wiz.model("struct/nodes_metric_history")
 token_hash = auth.token_hash
 REPORTER_TOKEN_TYPE = shared.REPORTER_TOKEN_TYPE
 NodeError = shared.NodeError
@@ -144,6 +145,10 @@ class NodeReporterMixin:
                     ),
                 )
                 metric = _metric_to_dict(cursor.fetchone())
+                try:
+                    metric_history.append(node["id"], metric, source=metadata.get("source") or "reporter_ingest")
+                except Exception:
+                    pass
                 now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
                 cursor.execute(
                     """

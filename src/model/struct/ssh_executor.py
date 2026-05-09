@@ -136,6 +136,11 @@ class SSHExecutor:
             with known_hosts.open("a", encoding="utf-8") as handle:
                 handle.write(scan.stdout)
         return str(known_hosts)
+    def known_hosts_for_run(self, host, port=None, env=None):
+        known_hosts = self.known_hosts_file(env=env)
+        if self.known_fingerprint(host, port=port, env=env):
+            return str(known_hosts)
+        return self.prepare_known_host(host, port=port, env=env)
     def ensure_key_file(self, name="docker-infra-node", env=None):
         key_file = self.key_file(name=name, env=env)
         public_key_file = Path(f"{key_file}.pub")
@@ -162,7 +167,7 @@ class SSHExecutor:
     def run_with_password(self, host, username, password, command, port=None, timeout_seconds=None, env=None):
         timeout = _normalize_timeout(timeout_seconds)
         remote_command = shlex.join(command)
-        known_hosts_file = self.prepare_known_host(host, port=port, env=env)
+        known_hosts_file = self.known_hosts_for_run(host, port=port, env=env)
         argv = [
             "ssh",
             *self._port_args(port),
@@ -240,7 +245,7 @@ class SSHExecutor:
     def run(self, host, command, timeout_seconds=None, username=None, port=None, key_file=None, env=None):
         timeout = _normalize_timeout(timeout_seconds)
         remote_command = shlex.join(command)
-        known_hosts_file = self.prepare_known_host(host, port=port, env=env)
+        known_hosts_file = self.known_hosts_for_run(host, port=port, env=env)
         argv = [
             "ssh",
             *self._port_args(port),

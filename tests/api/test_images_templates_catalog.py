@@ -10,11 +10,24 @@ IMAGES_API = ROOT / "src" / "app" / "page.images" / "api.py"
 TEMPLATES_API = ROOT / "src" / "app" / "page.templates" / "api.py"
 IMAGES_MODEL = ROOT / "src" / "model" / "struct" / "images.py"
 IMAGES_LOCAL_MODEL = ROOT / "src" / "model" / "struct" / "images_local.py"
+IMAGES_SHARED_MODEL = ROOT / "src" / "model" / "struct" / "images_shared.py"
 TEMPLATES_MODEL = ROOT / "src" / "model" / "struct" / "templates.py"
 TEMPLATES_STORE = ROOT / "src" / "model" / "struct" / "templates_store.py"
 TEMPLATES_SEED = ROOT / "src" / "model" / "struct" / "templates_seed.py"
 TEMPLATES_SEED_FILES = sorted((ROOT / "src" / "model" / "struct").glob("templates_seed*.py"))
 SERVICES_API = ROOT / "src" / "app" / "page.services" / "api.py"
+FILE_TREE_MODEL = ROOT / "src" / "model" / "struct" / "file_tree.py"
+NODES_RUNTIME_FILES = ROOT / "src" / "model" / "struct" / "nodes_runtime_files.py"
+SSH_EXECUTOR = ROOT / "src" / "model" / "struct" / "ssh_executor.py"
+LOCAL_COMMANDS = ROOT / "src" / "model" / "struct" / "local_command_catalog.py"
+FILE_TREE_COMPONENT = ROOT / "src" / "app" / "component.file.tree" / "view.ts"
+FILE_TREE_COMPONENT_TEMPLATE = ROOT / "src" / "app" / "component.file.tree" / "view.html"
+FILE_TREE_ROUTE = ROOT / "src" / "route" / "api-file-tree" / "controller.py"
+FILE_TREE_UPLOAD_ROUTE = ROOT / "src" / "route" / "api-file-tree-upload" / "controller.py"
+SERVICES_TEMPLATE = ROOT / "src" / "app" / "page.services" / "view.pug"
+SERVERS_TEMPLATE = ROOT / "src" / "app" / "page.servers" / "view.pug"
+TEMPLATES_TEMPLATE = ROOT / "src" / "app" / "page.templates" / "view.pug"
+IMAGES_TEMPLATE = ROOT / "src" / "app" / "page.images" / "view.pug"
 
 
 class ImagesTemplatesStaticContractTest(unittest.TestCase):
@@ -23,11 +36,21 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
         templates_api = TEMPLATES_API.read_text(encoding="utf-8")
         images_model = IMAGES_MODEL.read_text(encoding="utf-8")
         images_local_model = IMAGES_LOCAL_MODEL.read_text(encoding="utf-8")
+        images_shared_model = IMAGES_SHARED_MODEL.read_text(encoding="utf-8")
         templates_model = TEMPLATES_MODEL.read_text(encoding="utf-8")
         templates_store = TEMPLATES_STORE.read_text(encoding="utf-8")
         templates_seed = TEMPLATES_SEED.read_text(encoding="utf-8")
         templates_seed_all = "\n".join(path.read_text(encoding="utf-8") for path in TEMPLATES_SEED_FILES)
         services_api = SERVICES_API.read_text(encoding="utf-8")
+        file_tree_model = FILE_TREE_MODEL.read_text(encoding="utf-8")
+        nodes_runtime_files = NODES_RUNTIME_FILES.read_text(encoding="utf-8")
+        ssh_executor = SSH_EXECUTOR.read_text(encoding="utf-8")
+        local_commands = LOCAL_COMMANDS.read_text(encoding="utf-8")
+        file_tree_component = FILE_TREE_COMPONENT.read_text(encoding="utf-8")
+        file_tree_component_template = FILE_TREE_COMPONENT_TEMPLATE.read_text(encoding="utf-8")
+        file_tree_route = FILE_TREE_ROUTE.read_text(encoding="utf-8")
+        file_tree_upload_route = FILE_TREE_UPLOAD_ROUTE.read_text(encoding="utf-8")
+        file_tree_usages = "\n".join(path.read_text(encoding="utf-8") for path in [SERVICES_TEMPLATE, SERVERS_TEMPLATE, TEMPLATES_TEMPLATE, IMAGES_TEMPLATE])
 
         self.assertIn("def harbor_detail():", images_api)
         self.assertIn("def harbor_tags():", images_api)
@@ -48,10 +71,33 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
         self.assertIn("create_harbor_project", images_model)
         self.assertIn("delete_harbor_repository", images_model)
         self.assertIn("delete_local_image", images_local_model)
+        self.assertIn("_remove_image_with_fallbacks", images_local_model)
+        self.assertIn('f"{repository}:{tag}@{digest_value}"', images_shared_model)
         self.assertIn("ensure_defaults", templates_model)
         self.assertIn("def preview(self, payload, env=None):", templates_store)
         self.assertIn("def release(self, payload, env=None):", templates_store)
         self.assertIn("def version_detail(self, version_id, env=None):", templates_store)
+        self.assertIn("class FileTree", file_tree_model)
+        self.assertIn("def upload", file_tree_model)
+        self.assertIn("def mutate", file_tree_model)
+        self.assertIn("os.scandir", file_tree_model)
+        self.assertIn("duration_ms", file_tree_model)
+        self.assertIn("_list_local_dir", nodes_runtime_files)
+        self.assertIn("os.scandir", nodes_runtime_files)
+        self.assertIn("show_hidden", nodes_runtime_files)
+        self.assertIn("total_count", nodes_runtime_files)
+        self.assertIn("truncated", nodes_runtime_files)
+        self.assertIn("ssh_duration_ms", nodes_runtime_files)
+        self.assertIn("known_hosts_for_run", ssh_executor)
+        self.assertIn("known_fingerprint", ssh_executor)
+        self.assertIn("filesystem.list", local_commands)
+        self.assertIn("show_hidden", local_commands)
+        self.assertIn("/api/file-tree/upload", file_tree_component)
+        self.assertIn("webkitdirectory", file_tree_component_template)
+        self.assertIn("dropOn", file_tree_component)
+        self.assertIn("file_tree.list", file_tree_route)
+        self.assertIn("file_tree.upload", file_tree_upload_route)
+        self.assertIn("wiz-component-file-tree", file_tree_usages)
         for token in [
             "wordpress_site",
             "nextcloud_stack",

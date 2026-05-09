@@ -12,6 +12,7 @@ compose_rules = wiz.model("struct/compose_rules")
 service_ports = wiz.model("struct/services_ports")
 service_nginx = wiz.model("struct/service_nginx")
 deploy_targets = wiz.model("struct/services_deploy_targets")
+placement_selector = wiz.model("struct/services_placement")
 ServiceError = wiz.model("struct/services_shared").ServiceError
 
 
@@ -156,6 +157,17 @@ class ServiceDeployMixin:
             with connection.cursor() as cursor:
                 if selected_id:
                     cursor.execute("SELECT * FROM nodes WHERE id = %s LIMIT 1", (selected_id,))
+                    row = cursor.fetchone()
+                    if row is not None:
+                        return dict(row)
+                try:
+                    recommendation = placement_selector.recommend(env=env)
+                    selected = recommendation.get("selected") or {}
+                    recommended_id = ((selected.get("node") or {}).get("id") or "").strip()
+                except Exception:
+                    recommended_id = ""
+                if recommended_id:
+                    cursor.execute("SELECT * FROM nodes WHERE id = %s LIMIT 1", (recommended_id,))
                     row = cursor.fetchone()
                     if row is not None:
                         return dict(row)

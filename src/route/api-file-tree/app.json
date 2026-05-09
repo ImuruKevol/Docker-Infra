@@ -1,0 +1,8 @@
+{
+    "id": "api-file-tree",
+    "title": "File Tree API",
+    "route": "/api/file-tree",
+    "category": "filesystem",
+    "viewuri": "",
+    "controller": "user"
+}

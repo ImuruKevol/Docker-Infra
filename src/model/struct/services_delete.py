@@ -53,6 +53,16 @@ class ServiceDeleteMixin:
             raise ServiceError(409, "Docker 서비스를 삭제할 수 없습니다.", "SERVICE_STACK_REMOVE_FAILED", check=result)
         return result
 
+    def _remove_volumes(self, service, operation_id, env=None):
+        stack_name = service.get("stack_name") or service.get("namespace")
+        if not stack_name:
+            return None
+        result = local_executor.run("service.stack.volumes.remove", params={"stack_name": stack_name}, timeout_seconds=90, env=env)
+        operations.append_output(operation_id, result.get("stdout") or result.get("stderr") or result.get("status"), stream="stdout" if result.get("status") == "ok" else "stderr", metadata={"step": "stack volumes remove", "result": result}, env=env)
+        if result.get("status") != "ok":
+            raise ServiceError(409, "Docker 서비스 볼륨을 삭제할 수 없습니다.", "SERVICE_STACK_VOLUME_REMOVE_FAILED", check=result)
+        return result
+
     def _remove_nginx_configs(self, domains, operation_id, env=None):
         nginx = webserver.nginx_defaults()
         available = Path(nginx.get("available_site_path") or "/etc/nginx/sites-available")
@@ -123,6 +133,7 @@ class ServiceDeleteMixin:
         try:
             domains = self._service_domains(service_id, env=env)
             stack_result = self._remove_stack(service, operation_id, env=env)
+            volume_result = self._remove_volumes(service, operation_id, env=env)
             nginx_result = self._remove_nginx_configs(domains, operation_id, env=env)
             removed_path = self._remove_service_files(service, operation_id, env=env)
             with connect(env=env) as connection:
@@ -132,7 +143,7 @@ class ServiceDeleteMixin:
                 operation_id,
                 "succeeded",
                 message="서비스 삭제를 완료했습니다.",
-                result_payload={"service_id": service_id, "stack": stack_result, "nginx": nginx_result, "removed_path": removed_path},
+                result_payload={"service_id": service_id, "stack": stack_result, "volumes": volume_result, "nginx": nginx_result, "removed_path": removed_path},
                 env=env,
             )
             return {"deleted_service_id": service_id, "operation": operation}

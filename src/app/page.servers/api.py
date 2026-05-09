@@ -5,14 +5,22 @@ def _error_payload(exc, default_code=500, default_error="UNEXPECTED_ERROR"):
     return default_code, {"message": str(exc), "error_code": default_error}
 
 
+def _with_monitoring_state(payload, monitoring):
+    payload = payload or {}
+    payload["monitoring"] = monitoring.state()
+    return payload
+
+
 def load():
     nodes_model = wiz.model("struct").nodes
+    monitoring = wiz.model("struct").nodes_monitoring
     body = wiz.request.query()
     code = 200
     payload = {}
 
     try:
-        payload = nodes_model.overview_summary(selected_id=body.get("selected_id"), auto_sync_local_master=False)
+        monitoring.tick()
+        payload = _with_monitoring_state(nodes_model.overview_summary(selected_id=body.get("selected_id"), auto_sync_local_master=False), monitoring)
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -30,16 +38,48 @@ def load():
 
 def overview():
     nodes_model = wiz.model("struct").nodes
+    monitoring = wiz.model("struct").nodes_monitoring
     body = wiz.request.query()
     code = 200
     payload = {}
 
     try:
-        payload = nodes_model.overview_summary(selected_id=body.get("selected_id"), auto_sync_local_master=False)
+        monitoring.tick()
+        payload = _with_monitoring_state(nodes_model.overview_summary(selected_id=body.get("selected_id"), auto_sync_local_master=False), monitoring)
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except nodes_model.LocalCommandError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _error_payload(exc)
+
+    wiz.response.status(code, **payload)
+
+
+def ensure_monitoring_agent():
+    monitoring = wiz.model("struct").nodes_monitoring
+    nodes_model = wiz.model("struct").nodes
+    operations_model = wiz.model("struct").operations
+    body = wiz.request.query()
+    code = 200
+    payload = {}
+
+    try:
+        result = monitoring.ensure_exporters(body)
+        payload = {
+            **result,
+            **nodes_model.overview_summary(selected_id=body.get("node_id"), auto_sync_local_master=False),
+        }
+        payload = _with_monitoring_state(payload, monitoring)
+    except nodes_model.NodeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except operations_model.OperationError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except RuntimeError as exc:
@@ -205,6 +245,7 @@ def detail():
 
 def cached_detail():
     nodes_model = wiz.model("struct").nodes
+    monitoring = wiz.model("struct").nodes_monitoring
     body = wiz.request.query()
     node_id = body.get("node_id")
     if not node_id:
@@ -214,7 +255,7 @@ def cached_detail():
     code = 200
     payload = {}
     try:
-        payload = nodes_model.cached_detail(node_id)
+        payload = _with_monitoring_state(nodes_model.cached_detail(node_id), monitoring)
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -229,6 +270,7 @@ def cached_detail():
 
 def refresh_metrics():
     nodes_model = wiz.model("struct").nodes
+    monitoring = wiz.model("struct").nodes_monitoring
     body = wiz.request.query()
     node_id = body.get("node_id")
     if not node_id:
@@ -238,7 +280,7 @@ def refresh_metrics():
     code = 200
     payload = {}
     try:
-        payload = nodes_model.metric_snapshot(node_id)
+        payload = _with_monitoring_state(nodes_model.metric_snapshot(node_id), monitoring)
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -251,8 +293,8 @@ def refresh_metrics():
     wiz.response.status(code, **payload)
 
 
-def refresh_containers():
-    nodes_model = wiz.model("struct").nodes
+def resource_history():
+    history_model = wiz.model("struct").nodes_metric_history
     body = wiz.request.query()
     node_id = body.get("node_id")
     if not node_id:
@@ -262,7 +304,57 @@ def refresh_containers():
     code = 200
     payload = {}
     try:
-        payload = nodes_model.refresh_containers_panel(node_id)
+        payload = history_model.query(
+            node_id=node_id,
+            start_date=body.get("start_date"),
+            end_date=body.get("end_date"),
+            start_at=body.get("start_at"),
+            end_at=body.get("end_at"),
+            limit=body.get("limit") or 1440,
+        )
+    except Exception as exc:
+        code, payload = _error_payload(exc)
+
+    wiz.response.status(code, **payload)
+
+
+def delete_resource_history():
+    history_model = wiz.model("struct").nodes_metric_history
+    body = wiz.request.query()
+    node_id = body.get("node_id")
+    if not node_id:
+        wiz.response.status(400, message="node_id는 필수입니다.", error_code="NODE_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = history_model.delete_range(
+            node_id=node_id,
+            start_date=body.get("start_date"),
+            end_date=body.get("end_date"),
+            start_at=body.get("start_at"),
+            end_at=body.get("end_at"),
+        )
+    except Exception as exc:
+        code, payload = _error_payload(exc)
+
+    wiz.response.status(code, **payload)
+
+
+def refresh_containers():
+    nodes_model = wiz.model("struct").nodes
+    monitoring = wiz.model("struct").nodes_monitoring
+    body = wiz.request.query()
+    node_id = body.get("node_id")
+    if not node_id:
+        wiz.response.status(400, message="node_id는 필수입니다.", error_code="NODE_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = _with_monitoring_state(nodes_model.refresh_containers_panel(node_id), monitoring)
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

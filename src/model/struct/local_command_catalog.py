@@ -70,11 +70,52 @@ def _docker_container_restart_command(params): return ["docker", "restart", *_co
 def _docker_container_delete_command(params): return ["docker", "rm", "-f", *_container_ids(params)]
 
 
+def _node_exporter_ensure_command(params):
+    image = str((params or {}).get("image") or "quay.io/prometheus/node-exporter:v1.8.2").strip()
+    if not image or any(char.isspace() for char in image):
+        raise LocalCommandError(400, "node_exporter image가 필요합니다.", "NODE_EXPORTER_IMAGE_REQUIRED")
+    container_name = str((params or {}).get("container_name") or "docker-infra-node-exporter").strip()
+    if NETWORK_NAME_RE.match(container_name) is None:
+        raise LocalCommandError(400, "node_exporter container 이름이 올바르지 않습니다.", "INVALID_NODE_EXPORTER_CONTAINER")
+    service_name = str((params or {}).get("service_name") or "docker-infra-node-exporter.service").strip()
+    unit_name = service_name[:-8] if service_name.endswith(".service") else service_name
+    if NETWORK_NAME_RE.match(unit_name) is None:
+        raise LocalCommandError(400, "node_exporter service 이름이 올바르지 않습니다.", "INVALID_NODE_EXPORTER_SERVICE")
+    script = (
+        "set -eu\n"
+        "SUDO=''\n"
+        "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+        "DOCKER_BIN=$(command -v docker)\n"
+        f"UNIT=/etc/systemd/system/{shlex.quote(service_name)}\n"
+        f"cat > /tmp/{shlex.quote(service_name)} <<EOF\n"
+        "[Unit]\n"
+        "Description=Docker Infra node exporter\n"
+        "After=docker.service network-online.target\n"
+        "Wants=docker.service network-online.target\n\n"
+        "[Service]\n"
+        "Restart=always\n"
+        "RestartSec=5\n"
+        f"ExecStartPre=-${{DOCKER_BIN}} rm -f {container_name}\n"
+        f"ExecStart=${{DOCKER_BIN}} run --rm --name {container_name} --pid=host --net=host -v /:/host:ro,rslave {image} --path.rootfs=/host\n"
+        f"ExecStop=-${{DOCKER_BIN}} rm -f {container_name}\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+        "EOF\n"
+        f"$SUDO mv /tmp/{shlex.quote(service_name)} \"$UNIT\"\n"
+        "$SUDO systemctl daemon-reload\n"
+        f"$SUDO systemctl enable --now {shlex.quote(service_name)}\n"
+        f"$SUDO systemctl restart {shlex.quote(service_name)}\n"
+        f"$SUDO systemctl is-active --quiet {shlex.quote(service_name)}\n"
+        f"$SUDO systemctl --no-pager --full status {shlex.quote(service_name)} | sed -n '1,12p'\n"
+    )
+    return ["sh", "-lc", script]
+
+
 def _docker_image_remove_command(params):
     image_ref = str((params or {}).get("image_ref") or "").strip()
     if not image_ref:
         raise LocalCommandError(400, "image_ref가 필요합니다.", "IMAGE_REF_REQUIRED")
-    return ["docker", "image", "rm", image_ref]
+    return ["docker", "image", "rm", "-f", image_ref]
 
 
 def _stack_name_param(params):
@@ -135,6 +176,37 @@ def _service_stack_deploy_command(params):
 def _service_stack_remove_command(params):
     stack_name = _stack_name_param(params)
     return ["docker", "stack", "rm", stack_name]
+
+
+def _service_stack_volumes_remove_command(params):
+    stack_name = _stack_name_param(params)
+    script = (
+        "set -eu\n"
+        f"STACK={shlex.quote(stack_name)}\n"
+        "tmp=$(mktemp)\n"
+        "trap 'rm -f \"$tmp\" \"${tmp}.uniq\"' EXIT\n"
+        "docker volume ls -q --filter \"label=com.docker.stack.namespace=${STACK}\" 2>/dev/null >> \"$tmp\" || true\n"
+        "docker volume ls -q 2>/dev/null | awk -v prefix=\"${STACK}_\" 'index($0, prefix) == 1 {print $0}' >> \"$tmp\" || true\n"
+        "sort -u \"$tmp\" | awk 'NF' > \"${tmp}.uniq\"\n"
+        "mv \"${tmp}.uniq\" \"$tmp\"\n"
+        "if [ ! -s \"$tmp\" ]; then echo 'no stack volumes found'; exit 0; fi\n"
+        "echo 'stack volumes:'\n"
+        "cat \"$tmp\"\n"
+        "attempt=1\n"
+        "while [ \"$attempt\" -le 30 ]; do\n"
+        "  failed=0\n"
+        "  while IFS= read -r volume; do\n"
+        "    [ -n \"$volume\" ] || continue\n"
+        "    docker volume inspect \"$volume\" >/dev/null 2>&1 || continue\n"
+        "    docker volume rm -f \"$volume\" || failed=1\n"
+        "  done < \"$tmp\"\n"
+        "  if [ \"$failed\" -eq 0 ]; then exit 0; fi\n"
+        "  if [ \"$attempt\" -eq 30 ]; then exit 1; fi\n"
+        "  sleep 2\n"
+        "  attempt=$((attempt + 1))\n"
+        "done\n"
+    )
+    return ["sh", "-lc", script]
 
 
 def _service_stack_services_command(params):
@@ -215,21 +287,47 @@ def _filesystem_target(params, required_type=None):
 
 def _filesystem_list_command(params):
     argv, target = _filesystem_target(params, "dir")
-    script = (
-        "import json, os, sys; "
-        "from pathlib import Path; "
-        "root = Path(sys.argv[1]).expanduser().resolve(); "
-        "items = []; "
-        "children = sorted(root.iterdir(), key=lambda item: (item.is_file(), item.name.lower())); "
-        "items = [{"
-        "'name': child.name, "
-        "'path': str(child), "
-        "'type': 'folder' if child.is_dir() else 'file', "
-        "'size': 0 if child.is_dir() else child.stat().st_size"
-        "} for child in children]; "
-        "print(json.dumps({'path': str(root), 'items': items}, ensure_ascii=False))"
-    )
-    return [sys.executable, "-c", script, target]
+    show_hidden = "1" if str((params or {}).get("show_hidden") or "").strip().lower() in {"1", "true", "yes", "on"} else "0"
+    try:
+        limit = max(100, min(int((params or {}).get("limit") or 5000), 20000))
+    except Exception:
+        limit = 5000
+    script = """
+import json
+import os
+import sys
+import time
+
+root = os.path.abspath(os.path.expanduser(sys.argv[1]))
+show_hidden = sys.argv[2] == "1"
+limit = int(sys.argv[3] or "5000")
+started = time.monotonic()
+items = []
+total_count = 0
+with os.scandir(root) as iterator:
+    for child in iterator:
+        if not show_hidden and child.name.startswith("."):
+            continue
+        total_count += 1
+        try:
+            is_dir = child.is_dir(follow_symlinks=False)
+            size = 0 if is_dir else child.stat(follow_symlinks=False).st_size
+        except OSError:
+            is_dir = False
+            size = 0
+        items.append({
+            "name": child.name,
+            "path": os.path.join(root, child.name) if root != "/" else "/" + child.name,
+            "type": "folder" if is_dir else "file",
+            "size": size,
+        })
+items.sort(key=lambda item: (item["type"] != "folder", item["name"].lower()))
+truncated = len(items) > limit
+if truncated:
+    items = items[:limit]
+print(json.dumps({"path": root, "items": items, "total_count": total_count, "truncated": truncated, "limit": limit, "duration_ms": int((time.monotonic() - started) * 1000)}, ensure_ascii=False))
+""".strip()
+    return [sys.executable, "-c", script, target, show_hidden, str(limit)]
 
 
 def _filesystem_read_command(params):
@@ -249,7 +347,7 @@ DOCKER_IMAGE_USAGE_SCRIPT = scripts.DOCKER_IMAGE_USAGE_SCRIPT
 COMMAND_SPECS = {
     "docker.version": {"category": "docker", "argv": ["docker", "version", "--format", "{{json .}}"]},
     "docker.info": {"category": "docker", "argv": ["docker", "info", "--format", "{{json .}}"]},
-    "docker.containers": {"category": "docker", "argv": ["docker", "ps", "-a", "--format", "{{json .}}"]},
+    "docker.containers": {"category": "docker", "argv": ["docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}"]},
     "docker.images": {"category": "docker", "argv": ["docker", "image", "ls", "--digests", "--no-trunc", "--format", "{{json .}}"]},
     "docker.images.usage": {"category": "docker", "argv": ["sh", "-lc", DOCKER_IMAGE_USAGE_SCRIPT]},
     "docker.container.start": {"category": "docker", "factory": _docker_container_start_command, "destructive": True},
@@ -259,6 +357,7 @@ COMMAND_SPECS = {
     "docker.image.remove": {"category": "docker", "factory": _docker_image_remove_command, "destructive": True},
     "service.stack.deploy": {"category": "service", "factory": _service_stack_deploy_command, "destructive": True, "default_timeout_seconds": 300},
     "service.stack.remove": {"category": "service", "factory": _service_stack_remove_command, "destructive": True, "default_timeout_seconds": 120},
+    "service.stack.volumes.remove": {"category": "service", "factory": _service_stack_volumes_remove_command, "destructive": True, "default_timeout_seconds": 90},
     "service.stack.services": {"category": "service", "factory": _service_stack_services_command, "default_timeout_seconds": 20},
     "service.stack.ps": {"category": "service", "factory": _service_stack_ps_command, "default_timeout_seconds": 20},
     "certbot.nginx.issue": {"category": "certbot", "factory": _certbot_nginx_issue_command, "destructive": True, "default_timeout_seconds": 300},
@@ -268,6 +367,7 @@ COMMAND_SPECS = {
     "backup.harbor.down": {"category": "backup", "factory": _backup_harbor_down_command, "destructive": True, "default_timeout_seconds": 300},
     "backup.harbor.restart": {"category": "backup", "factory": _backup_harbor_restart_command, "destructive": True, "default_timeout_seconds": 300},
     "backup.harbor.ps": {"category": "backup", "factory": _backup_harbor_ps_command},
+    "monitoring.node_exporter.ensure": {"category": "monitoring", "factory": _node_exporter_ensure_command, "destructive": True, "default_timeout_seconds": 120},
     "system.metrics": {"category": "system", "argv": ["sh", "-lc", SYSTEM_METRICS_SCRIPT]},
     "filesystem.list": {"category": "filesystem", "factory": _filesystem_list_command},
     "filesystem.read": {"category": "filesystem", "factory": _filesystem_read_command},

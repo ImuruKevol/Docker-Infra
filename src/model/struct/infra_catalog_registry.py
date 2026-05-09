@@ -9,6 +9,7 @@ system = wiz.model("struct/system")
 local_command_catalog = wiz.model("struct/local_command_catalog")
 domains_model = wiz.model("struct/domains")
 backup_system = wiz.model("struct/backup_system")
+metric_history = wiz.model("struct/nodes_metric_history")
 
 
 def _serialize(value):
@@ -91,12 +92,39 @@ class InfraCatalog:
                 nodes = _rows(
                     cursor,
                     """
-                    SELECT id, name, role, host, status, is_local_master, updated_at
-                    FROM nodes
-                    ORDER BY is_local_master DESC, created_at DESC
+                    SELECT
+                        n.id,
+                        n.name,
+                        n.role,
+                        n.host,
+                        n.status,
+                        n.is_local_master,
+                        n.updated_at,
+                        m.cpu_percent AS latest_cpu_percent,
+                        m.memory AS latest_memory,
+                        m.storage AS latest_storage,
+                        m.containers AS latest_containers,
+                        m.reported_at AS latest_reported_at
+                    FROM nodes n
+                    LEFT JOIN LATERAL (
+                        SELECT cpu_percent, memory, storage, containers, reported_at
+                        FROM node_metrics
+                        WHERE node_id = n.id
+                        ORDER BY reported_at DESC, created_at DESC
+                        LIMIT 1
+                    ) m ON true
+                    ORDER BY n.is_local_master DESC, n.created_at DESC
                     LIMIT 6
                     """,
                 )
+                for node in nodes:
+                    node["latest_metric"] = {
+                        "cpu_percent": node.pop("latest_cpu_percent", None),
+                        "memory": node.pop("latest_memory", None) or {},
+                        "storage": node.pop("latest_storage", None) or {},
+                        "containers": node.pop("latest_containers", None) or {},
+                        "reported_at": node.pop("latest_reported_at", None),
+                    }
                 cursor.execute(
                     """
                     SELECT status, count(*) AS count
@@ -112,6 +140,8 @@ class InfraCatalog:
             "health": system.health(),
             "setup": setup_status,
             "nodes": nodes,
+            "node_metric_history": metric_history.dashboard_summary(),
+            "node_resource_chart": metric_history.dashboard_chart(),
             "recent_operations": recent_operations,
             "operation_statuses": operation_statuses,
             "integrations": self.integrations(),

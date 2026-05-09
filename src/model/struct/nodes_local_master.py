@@ -3,6 +3,7 @@ from psycopg.types.json import Jsonb
 connect = wiz.model("db/postgres").connect
 setup = wiz.model("struct/setup")
 shared = wiz.model("struct/nodes_shared")
+metric_history = wiz.model("struct/nodes_metric_history")
 DEFAULT_OVERLAY_NETWORK = shared.DEFAULT_OVERLAY_NETWORK
 NodeError = shared.NodeError
 _node_to_dict = shared.node_to_dict
@@ -33,7 +34,12 @@ class NodeLocalMasterMixin:
                 Jsonb(metadata or {}),
             ),
         )
-        return cursor.fetchone()
+        row = cursor.fetchone()
+        try:
+            metric_history.append_db_row(row, source=(metadata or {}).get("source"))
+        except Exception:
+            pass
+        return row
 
     def _local_metric_payload(self, env=None):
         metric_result = self.local_executor.run("system.metrics", timeout_seconds=5, env=env)

@@ -1,0 +1,8 @@
+{
+    "id": "api-file-tree-upload",
+    "title": "File Tree Upload API",
+    "route": "/api/file-tree/upload",
+    "category": "filesystem",
+    "viewuri": "",
+    "controller": "user"
+}

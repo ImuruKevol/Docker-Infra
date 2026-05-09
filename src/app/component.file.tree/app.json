@@ -1,0 +1,12 @@
+{
+    "id": "component.file.tree",
+    "mode": "component",
+    "title": "file.tree",
+    "namespace": "file.tree",
+    "category": "infra",
+    "viewuri": "",
+    "preview": "",
+    "controller": "base",
+    "layout": "",
+    "template": "wiz-component-file-tree([title]=\"\", [description]=\"\", [scope]=\"\", [context]=\"\", [rootLabel]=\"\", [allowUpload]=\"\", [allowMutate]=\"\", [allowRead]=\"\")"
+}

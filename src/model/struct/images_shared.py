@@ -85,16 +85,21 @@ def parse_docker_image_lines(stdout):
         size = str(payload.get("Size") or payload.get("VirtualSize") or "").strip()
         if repository in {"", "<none>"} and image_id == "":
             continue
+        digest_value = "" if digest == "<none>" else digest
         remove_ref = image_id
-        if repository not in {"", "<none>"} and tag not in {"", "<none>"}:
+        if repository not in {"", "<none>"} and tag not in {"", "<none>"} and digest_value:
+            remove_ref = f"{repository}:{tag}@{digest_value}"
+        elif repository not in {"", "<none>"} and tag not in {"", "<none>"}:
             remove_ref = f"{repository}:{tag}"
+        elif repository not in {"", "<none>"} and digest_value:
+            remove_ref = f"{repository}@{digest_value}"
         elif repository not in {"", "<none>"}:
             remove_ref = repository
         items.append(
             {
                 "repository": repository,
                 "tag": tag,
-                "digest": "" if digest == "<none>" else digest,
+                "digest": digest_value,
                 "image_id": image_id,
                 "created_at": created_at,
                 "created_since": created_since,

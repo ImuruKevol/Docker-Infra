@@ -136,7 +136,7 @@ class NodeRegistryMixin:
         )
         containers_result = self._run_ssh_command(
             node,
-            ["docker", "ps", "-a", "--format", "{{json .}}"],
+            ["docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}"],
             timeout_seconds=10,
             env=env,
         )

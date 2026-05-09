@@ -170,9 +170,13 @@ main(class="space-y-5 px-5 py-5")
                         div
                             h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{selectedNodeName()}}
                             p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{selectedNodeHost()}}
-                        span(*ngIf="localBusy()", class="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400")
-                            i(class="fa-solid fa-spinner fa-spin")
-                            span 로컬 저장소 조회 중
+                        div(class="flex flex-wrap items-center gap-2")
+                            span(*ngIf="localBusy()", class="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400")
+                                i(class="fa-solid fa-spinner fa-spin")
+                                span 로컬 저장소 조회 중
+                            button(type="button", (click)="openFileTree()", [disabled]="!selectedNodeId()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                i(class="fa-solid fa-folder-tree")
+                                span 서버 파일
                     div(*ngIf="!selectedNodeId()", class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400") 왼쪽에서 서버를 선택하세요.
                     div(*ngIf="selectedNodeId()", class="space-y-4 p-4")
                         div(*ngIf="isLocalDockerUnavailable()", class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
@@ -250,3 +254,14 @@ div(*ngIf="showCreateProjectModal()", class="fixed inset-0 z-[80] flex items-cen
             button(type="button", (click)="createHarborProject()", [disabled]="createProjectBusy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-950 bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                 i(*ngIf="createProjectBusy()", class="fa-solid fa-spinner fa-spin")
                 span 생성
+
+div(*ngIf="fileTreeOpen()", class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 px-4 py-6")
+    section(class="relative max-h-[calc(100vh-3rem)] w-full max-w-5xl overflow-auto rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
+        div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            div
+                h2(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") 이미지 관련 서버 파일
+                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{selectedNodeName()}} · {{selectedNodeHost()}}
+            button(type="button", (click)="closeFileTree()", class="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                i(class="fa-solid fa-xmark")
+        div(class="p-5")
+            wiz-component-file-tree([title]="'서버 파일'", [description]="'Dockerfile, compose, image import 자료를 확인하고 업로드합니다.'", [scope]="'node'", [context]="imageFileTreeContext()", [rootLabel]="selectedNodeName()", [allowUpload]="true", [allowMutate]="true", [allowRead]="true")

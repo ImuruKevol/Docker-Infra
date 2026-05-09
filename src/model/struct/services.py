@@ -16,6 +16,7 @@ validator = wiz.model("struct/compose_validator")
 shared = wiz.model("struct/services_shared")
 service_compose = wiz.model("struct/services_compose")
 image_backups = wiz.model("struct/service_image_backups")
+placement_selector = wiz.model("struct/services_placement")
 ServiceRuntimeMixin = wiz.model("struct/services_runtime")
 ServiceDeployMixin = wiz.model("struct/services_deploy")
 ServiceDeleteMixin = wiz.model("struct/services_delete")
@@ -103,6 +104,14 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
         volumes = payload.get("volumes") or []
         placement_mode = payload.get("placement_mode") or "auto"
         node_id = (payload.get("node_id") or "").strip()
+        placement_recommendation = None
+        if placement_mode == "auto" and not node_id:
+            try:
+                placement_recommendation = placement_selector.recommend(payload, env=env)
+                selected = placement_recommendation.get("selected") or {}
+                node_id = ((selected.get("node") or {}).get("id") or "").strip()
+            except Exception as exc:
+                placement_recommendation = {"error": str(exc), "strategy": "least_loaded_resource_score"}
         test_run_id = payload.get("test_run_id")
         source = payload.get("source") or "ui_wizard"
         source_ref = payload.get("source_ref")
@@ -156,7 +165,12 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
                     "ssl_mode": ssl_mode,
                     "env_vars": env_vars,
                     "volumes": volumes,
-                    "placement": {"mode": placement_mode, "node_id": node_id},
+                    "placement": {
+                        "mode": placement_mode,
+                        "node_id": node_id,
+                        "auto_selected": placement_mode == "auto" and bool(node_id),
+                        "recommendation": placement_recommendation,
+                    },
                 }
                 if source_ref:
                     metadata["source_ref"] = source_ref
@@ -173,7 +187,14 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
                         name,
                         str(file_path),
                         validation["stack_name"],
-                        Jsonb({"mode": "swarm", "replicas": 1, "placement": placement_mode, "node_id": node_id}),
+                        Jsonb({
+                            "mode": "swarm",
+                            "replicas": 1,
+                            "placement": placement_mode,
+                            "node_id": node_id,
+                            "auto_selected": placement_mode == "auto" and bool(node_id),
+                            "recommendation": placement_recommendation,
+                        }),
                         test_run_id,
                         Jsonb(metadata),
                     ),

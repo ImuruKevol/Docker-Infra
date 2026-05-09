@@ -20,6 +20,57 @@ DOCKER_IMAGE_USAGE_COMMAND = [
 
 
 class ImagesLocalMixin:
+    def _is_local_master_node(self, node):
+        return bool(node.get("is_local_master") or node.get("role") == "local_master" or node.get("name") == "local-master")
+
+    def _image_ref_candidates(self, node, image_ref, env=None):
+        requested = str(image_ref or "").strip()
+        if not requested:
+            return []
+        candidates = [requested]
+        try:
+            result = self._run_node_command(node, env=env)
+            items = parse_docker_image_lines(result.get("stdout")) if result.get("status") == "ok" else []
+        except Exception:
+            items = []
+        for item in items:
+            repository = str(item.get("repository") or "").strip()
+            tag = str(item.get("tag") or "").strip()
+            digest = str(item.get("digest") or "").strip()
+            image_id = str(item.get("image_id") or "").strip()
+            tag_ref = f"{repository}:{tag}" if repository not in {"", "<none>"} and tag not in {"", "<none>"} else ""
+            digest_ref = f"{repository}@{digest}" if repository not in {"", "<none>"} and digest else ""
+            tag_digest_ref = f"{repository}:{tag}@{digest}" if tag_ref and digest else ""
+            known = {value for value in [tag_ref, digest_ref, tag_digest_ref, image_id, item.get("remove_ref")] if value}
+            if requested not in known:
+                continue
+            for value in [tag_digest_ref, digest_ref, image_id, tag_ref, item.get("remove_ref")]:
+                if value:
+                    candidates.append(value)
+        deduped = []
+        seen = set()
+        for value in candidates:
+            if value in seen:
+                continue
+            seen.add(value)
+            deduped.append(value)
+        return deduped
+
+    def _image_not_found(self, result):
+        output = str(result.get("stderr") or result.get("stdout") or "").lower()
+        return "no such image" in output or "image not known" in output
+
+    def _remove_image_with_fallbacks(self, node, image_ref, env=None):
+        last_result = None
+        for candidate in self._image_ref_candidates(node, image_ref, env=env):
+            result = self._run_node_command(node, remove_ref=candidate, env=env)
+            if result.get("status") == "ok":
+                return result, candidate
+            last_result = result
+            if not self._image_not_found(result):
+                break
+        return last_result or {"status": "error", "stderr": "이미지 참조를 확인할 수 없습니다."}, image_ref
+
     def local_node_detail(self, node_id, env=None):
         node = nodes.detail(node_id, env=env)
         result = self._run_node_command(node, env=env)
@@ -72,7 +123,7 @@ class ImagesLocalMixin:
         node = nodes.detail(node_id, env=env)
         deleted = []
         for image_ref in image_refs:
-            result = self._run_node_command(node, remove_ref=image_ref, env=env)
+            result, deleted_ref = self._remove_image_with_fallbacks(node, image_ref, env=env)
             if result["status"] != "ok":
                 self._record_operation(
                     "image.local.delete",
@@ -84,7 +135,7 @@ class ImagesLocalMixin:
                     env=env,
                 )
                 raise ImageError(409, self._command_failure(result), "LOCAL_IMAGE_DELETE_FAILED", image_ref=image_ref, check=serialize(result))
-            deleted.append(image_ref)
+            deleted.append(deleted_ref)
         self._record_operation(
             "image.local.delete",
             target_type="node",
@@ -96,14 +147,14 @@ class ImagesLocalMixin:
         return self.local_node_detail(node_id, env=env)
 
     def _run_node_command(self, node, remove_ref="", env=None):
-        if node["is_local_master"]:
+        if self._is_local_master_node(node):
             command_id = "docker.image.remove" if remove_ref else "docker.images"
             return local_executor.run(command_id, params={"image_ref": remove_ref} if remove_ref else {}, timeout_seconds=20, env=env)
-        command = ["docker", "image", "rm", remove_ref] if remove_ref else DEFAULT_DOCKER_IMAGE_COMMAND
+        command = ["docker", "image", "rm", "-f", remove_ref] if remove_ref else DEFAULT_DOCKER_IMAGE_COMMAND
         return nodes._run_ssh_command(node, command, timeout_seconds=20, env=env)
 
     def _run_usage_command(self, node, env=None):
-        if node["is_local_master"]:
+        if self._is_local_master_node(node):
             return local_executor.run("docker.images.usage", timeout_seconds=20, env=env)
         return nodes._run_ssh_command(node, DOCKER_IMAGE_USAGE_COMMAND, timeout_seconds=20, env=env)
 

@@ -28,7 +28,7 @@ class NodeRuntimeMixin(files_mixin):
         return node, node.get("test_run_id")
 
     def _run_node_command(self, node, local_command_id=None, local_params=None, remote_command=None, timeout_seconds=None, env=None):
-        if node["is_local_master"]:
+        if self._is_local_master_node(node):
             return self.local_executor.run(local_command_id, params=local_params or {}, timeout_seconds=timeout_seconds, env=env)
         return self._run_ssh_command(node, remote_command, timeout_seconds=timeout_seconds, env=env)
 
@@ -133,7 +133,7 @@ class NodeRuntimeMixin(files_mixin):
         result = self._run_node_command(
             node,
             local_command_id="docker.containers",
-            remote_command=["docker", "ps", "-a", "--format", "{{json .}}"],
+            remote_command=["docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}"],
             timeout_seconds=10,
             env=env,
         )
@@ -180,6 +180,13 @@ class NodeRuntimeMixin(files_mixin):
             env=env,
         )
 
+    def _container_id_matches(self, actual, requested):
+        actual = str(actual or "").strip()
+        requested = str(requested or "").strip()
+        if not actual or not requested:
+            return False
+        return actual == requested or actual.startswith(requested) or requested.startswith(actual)
+
     def _record_runtime_operation(self, node_id, operation_type, action, result, payload=None, env=None):
         status = "succeeded" if result.get("status") == "ok" else "failed"
         operation = self.operations.create(
@@ -215,6 +222,11 @@ class NodeRuntimeMixin(files_mixin):
             raise NodeError(400, "지원하지 않는 컨테이너 동작입니다.", "INVALID_CONTAINER_ACTION")
         if not container_id:
             raise NodeError(400, "container_id는 필수입니다.", "CONTAINER_ID_REQUIRED")
+        panel = self.live_containers(node_id, persist=False, env=env)
+        target = next((item for item in panel.get("items") or [] if self._container_id_matches(item.get("id"), container_id)), None)
+        if target is None:
+            raise NodeError(404, "선택한 컨테이너를 이 서버에서 찾을 수 없습니다.", "CONTAINER_NOT_FOUND")
+        container_id = str(target.get("id") or container_id)
         node, _ = self._target_node(node_id, env=env)
         result = self._run_container_action(node, action, [container_id], env=env)
         operation = self._record_runtime_operation(
