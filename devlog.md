@@ -108,3 +108,16 @@
 | 2026-05-10 | 106 | 웹 요청 기반 모니터링 데몬 시작 제거와 systemd 상태 확인 정리 | [상세](devlog/2026-05-10/106-monitoring-systemd-only-no-web-trigger.md) |
 | 2026-05-10 | 107 | 도메인 관리 레코드 UI와 DNS 기본값 정리 | [상세](devlog/2026-05-10/107-domain-management-record-ui-search-select.md) |
 | 2026-05-10 | 108 | 도메인 인증서 서비스 상세 링크와 Search Select 선택 타이밍 보강 | [상세](devlog/2026-05-10/108-domain-service-link-search-select-mousedown.md) |
+| 2026-05-10 | 109 | 시스템 설정 탭 구조와 AI 설정/모델 조회/자원 확인 추가 | [상세](devlog/2026-05-10/109-system-ai-settings.md) |
+| 2026-05-10 | 110 | AI 모델 상세 메타데이터와 Search Select 적용 | [상세](devlog/2026-05-10/110-ai-model-metadata-search-select.md) |
+| 2026-05-10 | 111 | 템플릿/서비스 AI 생성 계약과 자동 구성 UI 연결 | [상세](devlog/2026-05-10/111-ai-template-service-assistant.md) |
+| 2026-05-10 | 112 | AI 사용 화면 모델 선택과 Thinking 스트림 UI 추가 | [상세](devlog/2026-05-10/112-ai-model-picker-thinking-stream.md) |
+| 2026-05-10 | 113 | 템플릿 상세 버전 탭 분리와 AI 수정안 적용/롤백 추가 | [상세](devlog/2026-05-10/113-template-version-tabs-ai-edit-proposal.md) |
+| 2026-05-10 | 114 | AI 사용 모델 선택 범위와 진행 스트림 표시 정리 | [상세](devlog/2026-05-10/114-ai-selected-models-stream-validation.md) |
+| 2026-05-10 | 115 | AI 진행 상태 갱신 표시와 한국어 결과 생성 지시 보강 | [상세](devlog/2026-05-10/115-ai-progress-line-korean-output.md) |
+| 2026-05-10 | 116 | AI 템플릿 values YAML 보정과 placeholder 기본값 보강 | [상세](devlog/2026-05-10/116-ai-template-values-yaml-repair.md) |
+| 2026-05-10 | 117 | AI 템플릿 Compose placeholder YAML-safe 보정 | [상세](devlog/2026-05-10/117-ai-template-compose-placeholder-repair.md) |
+| 2026-05-10 | 118 | AI output 검증 실패 시 모델 재요청 보정 루프 적용 | [상세](devlog/2026-05-10/118-ai-output-repair-retry.md) |
+| 2026-05-10 | 119 | AI 템플릿 수정안 YAML 보정 재요청 진단 강화 | [상세](devlog/2026-05-10/119-ai-template-yaml-repair-diagnostics.md) |
+| 2026-05-10 | 120 | AI output 포맷 계약과 values 기본값 객체 반환 규칙 추가 | [상세](devlog/2026-05-10/120-ai-output-format-contract.md) |
+| 2026-05-10 | 121 | AI 재시도 20회 확대와 Gemini 템플릿 수정 실검증 | [상세](devlog/2026-05-10/121-ai-retry-20-gemini-template-verification.md) |

@@ -56,12 +56,47 @@ main(class="space-y-5 px-5 py-5")
                             i(class="fa-solid fa-lock mr-1")
                             span(*ngIf="!importSource()") 템플릿은 다음 단계로 넘어간 뒤 고정됩니다.
                             span(*ngIf="importSource()") 가져온 Compose 기준으로 생성하므로 템플릿 선택은 잠겨 있습니다.
-                    div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
-                        p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 자동으로 처리되는 값
-                        div(class="mt-3 space-y-2 text-xs text-zinc-600 dark:text-zinc-300")
-                            p 내부 식별값과 컨테이너 이름은 자동 생성됩니다.
-                            p 포트 충돌은 배포 직전에 자동으로 다음 가용 port로 조정합니다.
-                            p SSL은 등록 도메인의 인증서 상태에 따라 자동 선택됩니다.
+                    div(class="space-y-3")
+                        div(class="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 dark:border-sky-900/70 dark:bg-sky-950/30")
+                            div(class="flex items-center justify-between gap-3")
+                                p(class="text-sm font-semibold text-sky-950 dark:text-sky-100") AI 자동 구성
+                                button(type="button", (click)="generateServiceWithAi()", [disabled]="aiBusy() || templateLoading()", class="inline-flex h-8 items-center gap-2 rounded-md bg-sky-600 px-2.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-60")
+                                    i(class="fa-solid", [ngClass]="aiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
+                                    span {{aiBusy() ? '생성 중' : '적용'}}
+                            label(class="mt-3 block")
+                                span(class="mb-1 block text-xs font-semibold text-sky-700 dark:text-sky-300") 사용할 모델
+                                wiz-component-search-select([items]="aiModelOptions()", [value]="aiForm.model_ref", (valueChange)="aiForm.model_ref = $event", [placeholder]="'AI 모델 선택'", [searchPlaceholder]="'모델 검색'", [emptyText]="'시스템 설정에서 모델 목록을 불러오세요.'")
+                            textarea([(ngModel)]="aiForm.intent", rows="5", placeholder="예: 내부용 Wiki. PostgreSQL 포함, wiki만 도메인으로 공개, 데이터는 영구 보관, 비밀번호는 자동 생성.", class="mt-3 w-full resize-none rounded-md border border-sky-200 bg-white px-3 py-2 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-sky-900/70 dark:bg-zinc-950 dark:text-zinc-100")
+                            div(*ngIf="aiBusy() || aiStreamRows().length", class="mt-3 rounded-md border border-sky-200 bg-white/70 px-3 py-2 dark:border-sky-900/70 dark:bg-zinc-950")
+                                div(class="flex items-center justify-between gap-2")
+                                    p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") AI 진행 상태
+                                    span(class="text-[11px] font-semibold text-sky-500 dark:text-sky-400") {{aiOutputTokenCount()}} chars
+                                div(class="mt-2 max-h-28 space-y-1 overflow-auto")
+                                    p(*ngFor="let event of aiStreamRows()", class="text-xs leading-5", [ngClass]="event.type === 'error' ? 'text-rose-600 dark:text-rose-300' : 'text-sky-900 dark:text-sky-100'")
+                                        i(*ngIf="event.type === 'progress'", class="fa-solid fa-spinner fa-spin mr-1")
+                                        span(class="font-semibold") {{event.label || (event.type === 'provider' ? 'model' : event.type)}}
+                                        span  · {{event.message || event.text || event.provider?.label + ' / ' + event.provider?.model}}
+                            div(class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2")
+                                div
+                                    p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") Input
+                                    div(class="mt-1 space-y-1")
+                                        p(*ngFor="let row of serviceAiInputRows()", class="text-xs text-sky-900 dark:text-sky-100")
+                                            span(class="font-semibold") {{row.key}}
+                                            span(class="text-sky-700 dark:text-sky-300")  · {{row.value}}
+                                div
+                                    p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") Output
+                                    div(class="mt-1 space-y-1")
+                                        p(*ngFor="let row of serviceAiOutputRows()", class="text-xs text-sky-900 dark:text-sky-100")
+                                            span(class="font-semibold") {{row.key}}
+                                            span(class="text-sky-700 dark:text-sky-300")  · {{row.value}}
+                            div(*ngIf="aiResult?.warnings?.length", class="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
+                                p(*ngFor="let warning of aiResult.warnings") {{warning}}
+                        div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
+                            p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 자동으로 처리되는 값
+                            div(class="mt-3 space-y-2 text-xs text-zinc-600 dark:text-zinc-300")
+                                p 내부 식별값과 컨테이너 이름은 자동 생성됩니다.
+                                p 포트 충돌은 배포 직전에 자동으로 다음 가용 port로 조정합니다.
+                                p SSL은 등록 도메인의 인증서 상태에 따라 자동 선택됩니다.
 
                 div(*ngIf="step() === 2", class="space-y-4")
                     div(*ngFor="let item of components; let i = index", class="rounded-md border border-zinc-200 px-4 py-4 dark:border-zinc-800")

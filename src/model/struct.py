@@ -28,6 +28,14 @@ class Struct:
         return self._load("appearance")
 
     @property
+    def ai_settings(self):
+        return self._load("ai_settings")
+
+    @property
+    def ai_assistant(self):
+        return self._load("ai_assistant")
+
+    @property
     def compose_validator(self):
         return self._load("compose_validator")
 

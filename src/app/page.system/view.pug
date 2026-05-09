@@ -14,8 +14,13 @@ main(class="space-y-5 px-5 py-5")
     div(*ngIf="error()", class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300") {{error()}}
 
     div(*ngIf="!loading() && !error()", class="space-y-5")
-        section(class="grid grid-cols-1 gap-5 xl:grid-cols-[460px_1fr]")
-            div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+        div(class="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-zinc-800")
+            button(*ngFor="let item of tabItems()", type="button", (click)="setActiveTab(item.key)", class="inline-flex h-10 items-center gap-2 border-b-2 px-3 text-sm font-semibold transition-colors", [ngClass]="activeTab() === item.key ? 'border-zinc-950 text-zinc-950 dark:border-zinc-100 dark:text-zinc-50' : 'border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'")
+                i(class="fa-solid", [ngClass]="item.icon")
+                span {{item.label}}
+
+        section(class="grid grid-cols-1 gap-5")
+            div(*ngIf="activeTab() === 'general'", class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
                 div(class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
                     h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") General
                     p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 브라우저 제목, favicon, 사이드바 로고를 저장 시 한 번에 적용합니다.
@@ -67,7 +72,7 @@ main(class="space-y-5 px-5 py-5")
                         i(class="fa-solid fa-floppy-disk")
                         span {{savingGeneral() ? '저장 중...' : '일반 설정 저장'}}
 
-            div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+            div(*ngIf="activeTab() === 'backup'", class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
                 div(class="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
                     div
                         h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 서비스 백업 시스템
@@ -176,6 +181,155 @@ main(class="space-y-5 px-5 py-5")
                             button(type="button", (click)="openBackupResetModal()", [disabled]="backupBusy()", class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-rose-300 bg-white px-3 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300")
                                 i(class="fa-solid fa-triangle-exclamation")
                                 span 초기화
+
+        section(*ngIf="activeTab() === 'ai'", class="space-y-5")
+            div(class="grid grid-cols-1 gap-5 xl:grid-cols-2")
+                div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+                    div(class="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                        div
+                            h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") OpenAI GPT
+                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 토큰 상태 {{tokenStatus('openai')}} · 마지막 모델 갱신 {{modelCacheCheckedAt('openai')}}
+                        label(class="flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300")
+                            input(type="checkbox", [(ngModel)]="aiSettings.openai.enabled", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
+                            span 사용
+                    div(class="space-y-4 p-4")
+                        div(class="grid grid-cols-1 gap-3 md:grid-cols-2")
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") API Base URL
+                                input(type="text", [(ngModel)]="aiSettings.openai.base_url", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") API Token
+                                input(type="password", autocomplete="off", [(ngModel)]="aiSecrets.openai_api_token", [placeholder]="aiTokens.openai?.configured ? '저장된 토큰 유지' : 'API Token'", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        div(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 모델
+                            wiz-component-search-select([items]="modelSelectorItems('openai')", [value]="aiSettings.openai.selected_model", (valueChange)="selectAiModel('openai', $event)", [placeholder]="'모델 선택 안 함'", [searchPlaceholder]="'모델명, 기능, 요금 검색'", [emptyText]="'먼저 모델 목록을 갱신하세요.'")
+                        div(*ngIf="selectedProviderModel('openai')", class="grid grid-cols-1 gap-2 md:grid-cols-2")
+                            div(*ngFor="let row of modelDetailRows('openai')", class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{row.label}}
+                                p(class="mt-1 text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{row.value}}
+                                a(*ngIf="row.source", [href]="row.source", target="_blank", rel="noopener noreferrer", class="mt-1 inline-flex text-xs font-semibold text-sky-700 hover:text-sky-800 dark:text-sky-300") 공식 출처
+                        div(class="rounded-md border px-3 py-2 text-sm", [ngClass]="aiStatusClass(aiProviderStatus('openai'))") {{aiProviderStatus('openai').message}}
+                        button(type="button", (click)="refreshAiModels('openai')", [disabled]="aiProviderBusy('openai')", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                            i(class="fa-solid", [ngClass]="aiProviderBusy('openai') ? 'fa-spinner fa-spin' : 'fa-rotate-right'")
+                            span 모델 목록 갱신
+
+                div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+                    div(class="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                        div
+                            h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") Google Gemini
+                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 토큰 상태 {{tokenStatus('gemini')}} · 마지막 모델 갱신 {{modelCacheCheckedAt('gemini')}}
+                        label(class="flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300")
+                            input(type="checkbox", [(ngModel)]="aiSettings.gemini.enabled", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
+                            span 사용
+                    div(class="space-y-4 p-4")
+                        div(class="grid grid-cols-1 gap-3 md:grid-cols-2")
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") API Version
+                                select([(ngModel)]="aiSettings.gemini.api_version", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                    option(value="v1beta") v1beta
+                                    option(value="v1") v1
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") API Token
+                                input(type="password", autocomplete="off", [(ngModel)]="aiSecrets.gemini_api_token", [placeholder]="aiTokens.gemini?.configured ? '저장된 토큰 유지' : 'API Token'", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        div(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 모델
+                            wiz-component-search-select([items]="modelSelectorItems('gemini')", [value]="aiSettings.gemini.selected_model", (valueChange)="selectAiModel('gemini', $event)", [placeholder]="'모델 선택 안 함'", [searchPlaceholder]="'모델명, 기능, 요금 검색'", [emptyText]="'먼저 모델 목록을 갱신하세요.'")
+                        div(*ngIf="selectedProviderModel('gemini')", class="grid grid-cols-1 gap-2 md:grid-cols-2")
+                            div(*ngFor="let row of modelDetailRows('gemini')", class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{row.label}}
+                                p(class="mt-1 text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{row.value}}
+                                a(*ngIf="row.source", [href]="row.source", target="_blank", rel="noopener noreferrer", class="mt-1 inline-flex text-xs font-semibold text-sky-700 hover:text-sky-800 dark:text-sky-300") 공식 출처
+                        div(class="rounded-md border px-3 py-2 text-sm", [ngClass]="aiStatusClass(aiProviderStatus('gemini'))") {{aiProviderStatus('gemini').message}}
+                        button(type="button", (click)="refreshAiModels('gemini')", [disabled]="aiProviderBusy('gemini')", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                            i(class="fa-solid", [ngClass]="aiProviderBusy('gemini') ? 'fa-spinner fa-spin' : 'fa-rotate-right'")
+                            span 모델 목록 갱신
+
+            div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+                div(class="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                    div
+                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") Ollama
+                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 마지막 모델 갱신 {{modelCacheCheckedAt('ollama')}}
+                    label(class="flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300")
+                        input(type="checkbox", [(ngModel)]="aiSettings.ollama.enabled", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
+                        span 사용
+                div(class="space-y-4 p-4")
+                    div(class="grid grid-cols-1 gap-3 md:grid-cols-[140px_1fr_140px]")
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Scheme
+                            select([(ngModel)]="aiSettings.ollama.scheme", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                option(value="http") http
+                                option(value="https") https
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") IP / Host
+                            input(type="text", [(ngModel)]="aiSettings.ollama.host", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Port
+                            input(type="number", min="1", max="65535", [(ngModel)]="aiSettings.ollama.port", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                    div(class="block")
+                        span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 모델
+                        wiz-component-search-select([items]="modelSelectorItems('ollama')", [value]="aiSettings.ollama.selected_model", (valueChange)="selectAiModel('ollama', $event)", [placeholder]="'모델 선택 안 함'", [searchPlaceholder]="'모델명, 기능, 요금 검색'", [emptyText]="'Ollama에서 불러온 모델이 없습니다.'")
+                    div(*ngIf="selectedProviderModel('ollama')", class="grid grid-cols-1 gap-2 md:grid-cols-2")
+                        div(*ngFor="let row of modelDetailRows('ollama')", class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                            p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{row.label}}
+                            p(class="mt-1 text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{row.value}}
+                            a(*ngIf="row.source", [href]="row.source", target="_blank", rel="noopener noreferrer", class="mt-1 inline-flex text-xs font-semibold text-sky-700 hover:text-sky-800 dark:text-sky-300") 공식 출처
+                    div(class="rounded-md border px-3 py-2 text-sm", [ngClass]="aiStatusClass(aiProviderStatus('ollama'))") {{aiProviderStatus('ollama').message}}
+                    button(type="button", (click)="refreshAiModels('ollama')", [disabled]="aiProviderBusy('ollama')", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                        i(class="fa-solid", [ngClass]="aiProviderBusy('ollama') ? 'fa-spinner fa-spin' : 'fa-rotate-right'")
+                        span 모델 목록 갱신
+
+            div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+                div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-start md:justify-between")
+                    div
+                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") AI 실행 대상
+                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") Docker Infra 서버와 등록 노드의 CPU/GPU 상태를 확인합니다.
+                    button(type="button", (click)="refreshAiResources()", [disabled]="refreshingAiResources()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                        i(class="fa-solid", [ngClass]="refreshingAiResources() ? 'fa-spinner fa-spin' : 'fa-microchip'")
+                        span 자원 갱신
+                div(class="space-y-4 p-4")
+                    div(class="grid grid-cols-1 gap-3 md:grid-cols-4")
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 실행 모드
+                            select([(ngModel)]="aiSettings.runtime.mode", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                option(value="cloud_api") Cloud API
+                                option(value="external_ollama") External Ollama
+                                option(value="local_server") Local Server
+                                option(value="registered_node") Registered Node
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 대상 노드
+                            select([(ngModel)]="aiSettings.runtime.target_node_id", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                option(value="") 자동 선택
+                                option(*ngFor="let node of aiNodeOptions()", [value]="node.id") {{node.name}} · {{node.host}}
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Node Ollama Port
+                            input(type="number", min="1", max="65535", [(ngModel)]="aiSettings.runtime.node_ollama_port", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        label(class="flex min-h-10 items-center gap-3 rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800 md:mt-5")
+                            input(type="checkbox", [(ngModel)]="aiSettings.runtime.prefer_gpu", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
+                            span(class="text-sm font-semibold text-zinc-900 dark:text-zinc-100") GPU 우선
+                    div(class="grid grid-cols-1 gap-3 xl:grid-cols-2")
+                        div(*ngFor="let item of aiResources.nodes", class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
+                            div(class="flex items-start justify-between gap-3")
+                                div
+                                    p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{item.node?.name || '-'}}
+                                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{item.node?.host || '-'}} · {{item.node?.is_local_master ? 'local' : item.node?.role}}
+                                span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="item.resource?.status === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300' : item.resource?.status === 'error' ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300' : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300'") {{resourceStatusLabel(item)}}
+                            div(class="mt-3 grid grid-cols-2 gap-2 text-sm")
+                                div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                    p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") CPU
+                                    p(class="mt-1 font-semibold text-zinc-950 dark:text-zinc-50") {{resourcePayload(item).cpu?.logical_cores || '-'}} cores
+                                div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                    p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") Memory
+                                    p(class="mt-1 font-semibold text-zinc-950 dark:text-zinc-50") {{formatBytes(resourcePayload(item).memory?.total)}}
+                                div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                    p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") GPU
+                                    p(class="mt-1 font-semibold text-zinc-950 dark:text-zinc-50") {{gpuSummary(item)}}
+                                div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                    p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") Driver
+                                    p(class="mt-1 font-semibold text-zinc-950 dark:text-zinc-50") NVIDIA {{driverLabel(item, 'nvidia')}} · Radeon {{driverLabel(item, 'radeon')}}
+                            p(*ngIf="item.resource?.check?.stderr", class="mt-3 text-xs text-rose-600 dark:text-rose-300") {{item.resource.check.stderr}}
+                    button(type="button", (click)="saveAiSettings()", [disabled]="savingAi()", class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                        i(class="fa-solid", [ngClass]="savingAi() ? 'fa-spinner fa-spin' : 'fa-floppy-disk'")
+                        span {{savingAi() ? '저장 중...' : 'AI 설정 저장'}}
 
 div(*ngIf="resetModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 px-4")
     div(class="w-full max-w-lg rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")

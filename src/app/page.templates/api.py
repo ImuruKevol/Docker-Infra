@@ -1,3 +1,27 @@
+import json
+
+
+def _request_payload():
+    body = wiz.request.query()
+    raw = body.get("payload") if isinstance(body, dict) else None
+    if raw:
+        return json.loads(raw)
+    return body
+
+
+def _stream_events(events):
+    flask = wiz.response._flask
+
+    def generate():
+        for event in events:
+            yield "data: %s\n\n" % json.dumps(event, ensure_ascii=False)
+
+    resp = flask.Response(generate(), mimetype="text/event-stream")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Accel-Buffering"] = "no"
+    wiz.response.response(resp)
+
+
 def load():
     templates_model = wiz.model("struct").templates
     code = 200
@@ -82,6 +106,57 @@ def preview_template():
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
     wiz.response.status(code, **payload)
+
+
+def ai_contract():
+    ai_assistant = wiz.model("struct").ai_assistant
+    wiz.response.status(200, contract=ai_assistant.template_contract())
+
+
+def ai_model_options():
+    ai_assistant = wiz.model("struct").ai_assistant
+    code = 200
+    payload = {}
+    try:
+        payload = ai_assistant.model_options()
+    except Exception as exc:
+        code = getattr(exc, "status_code", 400)
+        payload = {
+            "message": getattr(exc, "message", str(exc)),
+            "error_code": getattr(exc, "code", "AI_MODEL_OPTIONS_FAILED"),
+        }
+    wiz.response.status(code, **payload)
+
+
+def generate_template_ai():
+    ai_assistant = wiz.model("struct").ai_assistant
+    code = 200
+    payload = {}
+    try:
+        payload = ai_assistant.generate_template(wiz.request.query())
+    except Exception as exc:
+        code = getattr(exc, "status_code", 400)
+        payload = {
+            "message": getattr(exc, "message", str(exc)),
+            "error_code": getattr(exc, "code", "AI_TEMPLATE_GENERATE_FAILED"),
+            **getattr(exc, "details", {}),
+        }
+
+    wiz.response.status(code, **payload)
+
+
+def stream_template_ai():
+    ai_assistant = wiz.model("struct").ai_assistant
+    try:
+        payload = _request_payload()
+        events = ai_assistant.stream_template(payload)
+    except Exception as exc:
+        events = [{
+            "type": "error",
+            "message": getattr(exc, "message", str(exc)),
+            "error_code": getattr(exc, "code", "AI_TEMPLATE_STREAM_FAILED"),
+        }]
+    _stream_events(events)
 
 
 def delete_template():

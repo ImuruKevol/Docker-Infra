@@ -7,12 +7,23 @@ const ASSET_KINDS = ['favicon', 'logo'];
 export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
     public error = signal<string>('');
+    public activeTab = signal<string>('general');
     public savingGeneral = signal<boolean>(false);
+    public savingAi = signal<boolean>(false);
     public savingBackupPolicy = signal<boolean>(false);
     public runningBackupPolicy = signal<boolean>(false);
     public cleanupBusy = signal<boolean>(false);
     public backupBusy = signal<boolean>(false);
+    public refreshingAiProvider = signal<string>('');
+    public refreshingAiResources = signal<boolean>(false);
     public general: any = { browser_title: 'Docker Infra', favicon_url: AppearanceRuntime.assetRoute('favicon'), logo_url: AppearanceRuntime.assetRoute('logo') };
+    public aiSettings: any = this.defaultAiSettings();
+    public aiTokens: any = { openai: {}, gemini: {} };
+    public aiSecrets: any = { openai_api_token: '', gemini_api_token: '' };
+    public aiModelCache: any = this.defaultAiModelCache();
+    public aiResources: any = { nodes: [], checked_at: null, probe: false };
+    public aiSources: any = {};
+    public aiProviderErrors: any = {};
     public backupSystem: any = {};
     public backupPolicy: any = this.defaultBackupPolicy();
     public backupPolicyResult: any = null;
@@ -67,11 +78,71 @@ export class Component implements OnInit, OnDestroy {
         if (code === 200) {
             this.general = data.general || this.general;
             this.backupSystem = data.backup_system || {};
+            this.syncAiPayload(data.ai_settings || {});
             this.syncBackupPolicy();
         } else {
             this.error.set(data?.message || '시스템 설정을 불러올 수 없습니다.');
         }
         this.loading.set(false);
+        await this.service.render();
+    }
+
+    public setActiveTab(tab: string) {
+        this.activeTab.set(tab);
+    }
+
+    public async saveAiSettings() {
+        if (this.savingAi()) return;
+        this.savingAi.set(true);
+        await this.service.render();
+        const payload = {
+            ...this.aiSettings,
+            openai_api_token: this.aiSecrets.openai_api_token,
+            gemini_api_token: this.aiSecrets.gemini_api_token,
+        };
+        const { code, data } = await wiz.call('save_ai_settings', payload);
+        this.savingAi.set(false);
+        if (code === 200) {
+            this.aiSecrets = { openai_api_token: '', gemini_api_token: '' };
+            this.syncAiPayload(data.ai_settings || {});
+            await this.alert('AI 설정을 저장했습니다.', 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || 'AI 설정을 저장할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async refreshAiModels(provider: string) {
+        if (this.refreshingAiProvider()) return;
+        this.refreshingAiProvider.set(provider);
+        this.aiProviderErrors[provider] = '';
+        await this.service.render();
+        const payload = this.aiModelPayload(provider);
+        const { code, data } = await wiz.call('ai_models', payload);
+        this.refreshingAiProvider.set('');
+        if (code === 200) {
+            this.aiModelCache[provider] = data.result || this.aiModelCache[provider];
+            await this.service.render();
+            return;
+        }
+        this.aiProviderErrors[provider] = data?.message || '모델 목록을 불러올 수 없습니다.';
+        await this.alert(this.aiProviderErrors[provider]);
+        await this.service.render();
+    }
+
+    public async refreshAiResources() {
+        if (this.refreshingAiResources()) return;
+        this.refreshingAiResources.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call('ai_resources', {});
+        this.refreshingAiResources.set(false);
+        if (code === 200) {
+            this.aiResources = data.resources || this.aiResources;
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || 'AI 실행 자원 정보를 갱신할 수 없습니다.');
         await this.service.render();
     }
 
@@ -268,6 +339,183 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
+    public tabItems() {
+        return [
+            { key: 'general', label: 'General', icon: 'fa-sliders' },
+            { key: 'backup', label: 'Backup', icon: 'fa-box-archive' },
+            { key: 'ai', label: 'AI', icon: 'fa-wand-magic-sparkles' },
+        ];
+    }
+
+    public providerModels(provider: string) {
+        return this.aiModelCache?.[provider]?.models || [];
+    }
+
+    public modelLabel(model: any) {
+        if (!model) return '';
+        return model.label || model.id || model.name || '';
+    }
+
+    public modelSelectorItems(provider: string) {
+        const empty = {
+            value: '',
+            label: '모델 선택 안 함',
+            description: '설정 저장 시 모델을 고정하지 않습니다.',
+            badge: '',
+            badgeClass: ''
+        };
+        return [empty, ...this.providerModels(provider).map((model: any) => ({
+            value: model.id,
+            label: this.modelLabel(model),
+            description: this.modelDescription(model),
+            badge: this.modelBadge(model),
+            badgeClass: this.modelBadgeClass(model),
+        }))];
+    }
+
+    public selectAiModel(provider: string, value: string) {
+        if (!this.aiSettings?.[provider]) return;
+        this.aiSettings[provider].selected_model = value || '';
+    }
+
+    public selectedProviderModel(provider: string) {
+        const selected = String(this.aiSettings?.[provider]?.selected_model || '').replace(/^models\//, '');
+        if (!selected) return null;
+        return this.providerModels(provider).find((model: any) => model?.id === selected || model?.full_name === selected || model?.full_name === `models/${selected}`) || null;
+    }
+
+    public modelDescription(model: any) {
+        if (!model) return '';
+        return [
+            model.id || model.name,
+            this.capabilitySummary(model),
+            this.tokenProfileLabel(model),
+            this.modelPricingLabel(model),
+        ].filter(Boolean).join(' · ');
+    }
+
+    public modelBadge(model: any) {
+        const state = model?.state || {};
+        if (state.level === 'error') return '지원종료';
+        if (state.level === 'warning') return '주의';
+        return model?.efficiency?.label || '';
+    }
+
+    public modelBadgeClass(model: any) {
+        const state = model?.state || {};
+        if (state.level === 'error') return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300';
+        if (state.level === 'warning') return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+        const level = model?.efficiency?.level || 'standard';
+        if (level === 'efficient' || level === 'balanced') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
+        if (level === 'performance') return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
+    public modelDetailRows(provider: string) {
+        const model = this.selectedProviderModel(provider);
+        if (!model) return [];
+        const rows = [
+            { label: '지원', value: this.capabilitySummary(model), source: '' },
+            { label: '토큰', value: this.tokenProfileLabel(model), source: model?.token_profile?.source || '' },
+            { label: '효율', value: this.efficiencyLabel(model), source: '' },
+            { label: '요금', value: this.modelPricingLabel(model), source: model?.pricing?.source || '' },
+        ];
+        const state = model?.state || {};
+        if (state.message) rows.push({ label: '상태', value: state.message, source: state.source || '' });
+        return rows.filter((row: any) => row.value);
+    }
+
+    public capabilitySummary(model: any) {
+        const labels = model?.capabilities?.labels || [];
+        if (labels.length) return labels.join(', ');
+        return '텍스트';
+    }
+
+    public tokenProfileLabel(model: any) {
+        const token = model?.token_profile || {};
+        const input = this.formatCount(token.input_limit);
+        const output = this.formatCount(token.output_limit);
+        if (input && output) return `입력 ${input} / 출력 ${output} tokens`;
+        if (input) return `입력 ${input} tokens`;
+        return token.label || '';
+    }
+
+    public efficiencyLabel(model: any) {
+        const efficiency = model?.efficiency || {};
+        return efficiency.note ? `${efficiency.label || '표준'} (${efficiency.note})` : (efficiency.label || '표준');
+    }
+
+    public modelPricingLabel(model: any) {
+        return model?.pricing?.label || '';
+    }
+
+    public aiProviderBusy(provider: string) {
+        return this.refreshingAiProvider() === provider;
+    }
+
+    public aiProviderStatus(provider: string) {
+        const error = this.aiProviderErrors[provider];
+        if (error) return { level: 'error', message: error };
+        const cache = this.aiModelCache?.[provider] || {};
+        const validation = cache.validation || {};
+        if (validation.message) return validation;
+        if (cache.message) return { level: cache.status === 'ok' ? 'ok' : 'info', message: cache.message };
+        return { level: 'info', message: '아직 모델 목록을 불러오지 않았습니다.' };
+    }
+
+    public aiStatusClass(status: any) {
+        const level = status?.level || 'info';
+        if (level === 'error') return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300';
+        if (level === 'warning') return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+        if (level === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
+    public tokenStatus(provider: string) {
+        return this.aiTokens?.[provider]?.configured ? '저장됨' : '미설정';
+    }
+
+    public aiNodeOptions() {
+        const nodes = this.aiResources?.nodes || [];
+        return nodes.map((item: any) => item.node).filter((node: any) => node?.id);
+    }
+
+    public resourcePayload(item: any) {
+        return item?.resource?.payload || {};
+    }
+
+    public resourceStatusLabel(item: any) {
+        const status = item?.resource?.status;
+        if (status === 'ok') return '확인됨';
+        if (status === 'error') return '오류';
+        return '미확인';
+    }
+
+    public gpuSummary(item: any) {
+        const payload = this.resourcePayload(item);
+        const gpu = payload.gpu || {};
+        const nvidiaCount = (gpu.nvidia?.gpus || []).length;
+        const radeonCount = (gpu.radeon?.gpus || []).length;
+        const pciCount = (gpu.devices || []).length;
+        if (nvidiaCount || radeonCount) return `NVIDIA ${nvidiaCount} · Radeon ${radeonCount}`;
+        if (pciCount) return `PCI GPU ${pciCount}`;
+        return 'GPU 없음';
+    }
+
+    public driverLabel(item: any, driver: string) {
+        const gpu = this.resourcePayload(item).gpu || {};
+        const info = gpu[driver] || {};
+        return info.driver_installed ? '설치됨' : '미설치';
+    }
+
+    public modelCacheCheckedAt(provider: string) {
+        const value = this.aiModelCache?.[provider]?.checked_at;
+        if (!value) return '없음';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '없음';
+        return date.toLocaleString();
+    }
+
     public backupStatusLabel() {
         const status = this.backupSystem?.status || 'disabled';
         const labels: any = {
@@ -287,6 +535,12 @@ export class Component implements OnInit, OnDestroy {
         const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
         const amount = bytes / Math.pow(1024, index);
         return `${amount.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+    }
+
+    public formatCount(value: any) {
+        const count = Number(value || 0);
+        if (count <= 0) return '';
+        return count.toLocaleString();
     }
 
     public backupPolicyLastRunLabel() {
@@ -369,6 +623,59 @@ export class Component implements OnInit, OnDestroy {
 
     private bumpAssetVersion() {
         this.assetVersion = Date.now();
+    }
+
+    private defaultAiSettings() {
+        return {
+            openai: { enabled: false, base_url: 'https://api.openai.com/v1', selected_model: '' },
+            gemini: { enabled: false, api_version: 'v1beta', selected_model: '' },
+            ollama: { enabled: false, scheme: 'http', host: '127.0.0.1', port: 11434, selected_model: '' },
+            runtime: { mode: 'cloud_api', target_node_id: '', node_ollama_port: 11434, prefer_gpu: true, selected_model: '' },
+        };
+    }
+
+    private defaultAiModelCache() {
+        return {
+            openai: { status: 'not_checked', models: [], checked_at: null, message: '' },
+            gemini: { status: 'not_checked', models: [], checked_at: null, message: '' },
+            ollama: { status: 'not_checked', models: [], checked_at: null, message: '' },
+        };
+    }
+
+    private syncAiPayload(payload: any) {
+        const defaults = this.defaultAiSettings();
+        const config = payload?.config || {};
+        this.aiSettings = {
+            openai: { ...defaults.openai, ...(config.openai || {}) },
+            gemini: { ...defaults.gemini, ...(config.gemini || {}) },
+            ollama: { ...defaults.ollama, ...(config.ollama || {}) },
+            runtime: { ...defaults.runtime, ...(config.runtime || {}) },
+        };
+        this.aiTokens = payload?.tokens || { openai: {}, gemini: {} };
+        this.aiModelCache = { ...this.defaultAiModelCache(), ...(payload?.model_cache || {}) };
+        this.aiResources = payload?.resources || this.aiResources;
+        this.aiSources = payload?.sources || {};
+    }
+
+    private aiModelPayload(provider: string) {
+        if (provider === 'openai') {
+            return {
+                provider,
+                ...this.aiSettings.openai,
+                api_token: this.aiSecrets.openai_api_token,
+            };
+        }
+        if (provider === 'gemini') {
+            return {
+                provider,
+                ...this.aiSettings.gemini,
+                api_token: this.aiSecrets.gemini_api_token,
+            };
+        }
+        return {
+            provider,
+            ...this.aiSettings.ollama,
+        };
     }
 
     private defaultBackupPolicy() {

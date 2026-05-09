@@ -1,8 +1,9 @@
 import { HostListener, OnDestroy, OnInit, signal } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
 
-type EditorTab = 'compose' | 'defaults' | 'schema' | 'readme' | 'preview';
+type EditorTab = 'compose' | 'defaults' | 'schema' | 'readme' | 'preview' | 'versions';
 type VersionFileTab = 'compose' | 'defaults' | 'schema' | 'readme';
+type VersionPanelTab = 'history' | 'content';
 
 export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
@@ -18,10 +19,13 @@ export class Component implements OnInit, OnDestroy {
     public detail = signal<any>(null);
     public currentTab = signal<EditorTab>('compose');
     public createModalOpen = signal<boolean>(false);
+    public aiModalOpen = signal<boolean>(false);
+    public aiBusy = signal<boolean>(false);
     public fileTreeOpen = signal<boolean>(false);
     public selectedVersionId = signal<string>('');
     public selectedVersion = signal<any>(null);
     public selectedVersionTab = signal<VersionFileTab>('compose');
+    public versionPanelTab = signal<VersionPanelTab>('history');
     public editorOptions: any = {
         language: 'yaml',
         theme: 'vs',
@@ -41,6 +45,21 @@ export class Component implements OnInit, OnDestroy {
         language: 'markdown',
     };
     public createForm: any = this.emptyCreateForm();
+    public aiForm: any = { intent: '', model_ref: 'auto' };
+    public aiResult: any = null;
+    public aiModelOptions = signal<any[]>([]);
+    public aiDefaultModelRef = signal<string>('auto');
+    public aiStreamEvents = signal<any[]>([]);
+    public aiOutputTokenCount = signal<number>(0);
+    public aiEditBusy = signal<boolean>(false);
+    public aiEditForm: any = { intent: '', model_ref: 'auto' };
+    public aiEditResult: any = null;
+    public aiEditProposal: any = null;
+    public aiEditOriginal: any = null;
+    public aiEditRollbackSnapshot: any = null;
+    public aiEditApplied = signal<boolean>(false);
+    public aiEditStreamEvents = signal<any[]>([]);
+    public aiEditOutputTokenCount = signal<number>(0);
     private themeObserver: MutationObserver | null = null;
 
     constructor(public service: Service) { }
@@ -50,6 +69,7 @@ export class Component implements OnInit, OnDestroy {
         this.syncEditorTheme();
         this.startThemeObserver();
         await this.load();
+        await this.loadAiModelOptions();
     }
 
     public ngOnDestroy() {
@@ -179,6 +199,26 @@ export class Component implements OnInit, OnDestroy {
         };
     }
 
+    private currentTemplateDefinition() {
+        const payload = this.buildTemplatePayload();
+        return {
+            template: {
+                id: payload.id || '',
+                name: payload.name || '',
+                namespace: payload.namespace || '',
+                description: payload.description || '',
+                enabled: payload.enabled !== false,
+                metadata: payload.metadata || {},
+            },
+            files: {
+                'docker-compose.yaml': payload.compose || '',
+                'values.default.yaml': payload.values_default || '',
+                'values.schema.json': payload.values_schema || '',
+                'README.md': payload.readme || '',
+            },
+        };
+    }
+
     public async alert(message: string, status: string = 'error') {
         return await this.service.modal.show({
             title: '',
@@ -224,6 +264,15 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
+    public async loadAiModelOptions() {
+        const { code, data } = await wiz.call('ai_model_options', {});
+        if (code === 200) {
+            this.aiModelOptions.set(data.options || []);
+            this.aiDefaultModelRef.set(data.default_model_ref || 'auto');
+            this.aiEditForm.model_ref = data.default_model_ref || 'auto';
+        }
+    }
+
     public filteredTemplates() {
         const query = String(this.search() || '').trim().toLowerCase();
         if (!query) return this.templates();
@@ -251,6 +300,7 @@ export class Component implements OnInit, OnDestroy {
         if (code === 200) {
             this.detail.set(this.ensureTemplateFields(data));
             this.currentTab.set('compose');
+            this.resetAiEditState();
         } else if (!silent) {
             await this.alert(data?.message || '템플릿 상세를 불러올 수 없습니다.');
         }
@@ -267,6 +317,240 @@ export class Component implements OnInit, OnDestroy {
         if (this.busy()) return;
         this.createModalOpen.set(false);
         this.createForm = this.emptyCreateForm();
+    }
+
+    public openAiModal() {
+        this.aiForm = {
+            intent: '',
+            model_ref: this.aiDefaultModelRef() || 'auto',
+        };
+        this.aiResult = null;
+        this.resetAiStream();
+        this.aiModalOpen.set(true);
+    }
+
+    public closeAiModal() {
+        if (this.aiBusy()) return;
+        this.aiModalOpen.set(false);
+    }
+
+    public templateAiInputRows() {
+        return [
+            { key: 'intent', value: '요구사항' },
+            { key: 'model', value: 'AI 설정에서 사용 가능한 모델' },
+            { key: 'constraints', value: '포트, 보안, 볼륨 제약' },
+        ];
+    }
+
+    public templateAiOutputRows() {
+        return [
+            { key: 'template', value: '이름, 네임스페이스, 설명, 메타데이터' },
+            { key: 'compose', value: 'docker-compose.yaml' },
+            { key: 'values', value: '기본값 YAML, Schema JSON' },
+            { key: 'result', value: '요약, 경고, 렌더 미리보기' },
+        ];
+    }
+
+    private resetAiStream() {
+        this.aiStreamEvents.set([]);
+        this.aiOutputTokenCount.set(0);
+    }
+
+    private pushAiEvent(event: any) {
+        const events = [...this.aiStreamEvents(), event].slice(-120);
+        this.aiStreamEvents.set(events);
+        if (event?.type === 'delta') {
+            this.aiOutputTokenCount.set(this.aiOutputTokenCount() + String(event.text || '').length);
+        }
+    }
+
+    public aiStreamRows() {
+        return this.compactAiStreamRows(this.aiStreamEvents());
+    }
+
+    private streamLines(value: any) {
+        return String(value || '')
+            .replace(/\r/g, '')
+            .split('\n')
+            .map((line: string) => line.replace(/\s+/g, ' ').trim())
+            .filter((line: string) => !!line)
+            .map((line: string) => line.length > 220 ? `${line.slice(0, 217)}...` : line);
+    }
+
+    private latestStreamLine(value: any) {
+        const lines = this.streamLines(value);
+        if (!lines.length) return '';
+        const cleaned = lines[lines.length - 1]
+            .replace(/^[\s"',:{}\[\]]+|[\s"',:{}\[\]]+$/g, '')
+            .replace(/\\"/g, '"')
+            .trim();
+        if (!cleaned || /^[{}\[\],:"]+$/.test(cleaned)) return '';
+        return cleaned.length > 120 ? `${cleaned.slice(0, 117)}...` : cleaned;
+    }
+
+    private streamProgressMessage(value: any) {
+        const text = String(value || '');
+        let stage = 'AI 응답 작성 중';
+        if (text.includes('"README.md"')) stage = 'README 작성 중';
+        else if (text.includes('"values.schema.json"')) stage = 'Schema 작성 중';
+        else if (text.includes('"values.default.yaml"')) stage = '기본값 작성 중';
+        else if (text.includes('"docker-compose.yaml"') || text.includes('"compose"')) stage = 'Compose 작성 중';
+        else if (text.includes('"components"')) stage = '컴포넌트 설정 작성 중';
+        else if (text.includes('"form"')) stage = '서비스 기본 정보 작성 중';
+        else if (text.includes('"template"')) stage = '템플릿 메타데이터 작성 중';
+        const latest = this.latestStreamLine(text);
+        return latest ? `${stage} · ${latest}` : stage;
+    }
+
+    private compactAiStreamRows(events: any[]) {
+        const rows: any[] = [];
+        let thinkingBuffer = '';
+        let deltaBuffer = '';
+        let progressIndex = -1;
+        const pushRow = (row: any) => {
+            const message = row?.message || row?.text || row?.provider?.label;
+            if (!message && row?.type !== 'provider') return;
+            const last = rows[rows.length - 1];
+            if (last?.type === row?.type && (last?.message || last?.text) === (row?.message || row?.text)) return;
+            rows.push(row);
+        };
+        const upsertProgress = () => {
+            if (!deltaBuffer) return;
+            const row = { type: 'progress', label: '생각 중', message: this.streamProgressMessage(deltaBuffer) };
+            if (progressIndex >= 0) rows[progressIndex] = row;
+            else {
+                progressIndex = rows.length;
+                rows.push(row);
+            }
+        };
+        const flushThinking = (force: boolean = false) => {
+            if (!thinkingBuffer) return;
+            const parts = thinkingBuffer.split('\n');
+            thinkingBuffer = parts.pop() || '';
+            for (const line of parts) {
+                for (const text of this.streamLines(line)) {
+                    pushRow({ type: 'thinking', message: text, text });
+                }
+            }
+            if (force && thinkingBuffer.trim()) {
+                const text = this.streamLines(thinkingBuffer).join(' ');
+                if (text) pushRow({ type: 'thinking', message: text, text });
+                thinkingBuffer = '';
+            }
+        };
+        for (const event of events || []) {
+            if (!['provider', 'status', 'thinking', 'error', 'delta'].includes(event?.type)) continue;
+            if (event.type === 'delta') {
+                deltaBuffer += String(event.text || '');
+                upsertProgress();
+                continue;
+            }
+            if (event.type === 'thinking') {
+                thinkingBuffer += String(event.text || event.message || '');
+                flushThinking(false);
+                continue;
+            }
+            flushThinking(true);
+            if (event.type === 'provider') {
+                pushRow(event);
+                continue;
+            }
+            for (const text of this.streamLines(event.message || event.text || '')) {
+                pushRow({ ...event, message: text, text });
+            }
+        }
+        flushThinking(true);
+        return rows.slice(-8);
+    }
+
+    private async streamAi(functionName: string, payload: any, onDone: (data: any) => Promise<void>) {
+        const formData = new FormData();
+        formData.append('payload', JSON.stringify(payload || {}));
+        const response = await fetch(`/wiz/api/page.templates/${functionName}`, { method: 'POST', body: formData });
+        if (!response.ok || !response.body) {
+            throw new Error(`AI 스트림 요청 실패: HTTP ${response.status}`);
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const blocks = buffer.split('\n\n');
+            buffer = blocks.pop() || '';
+            for (const block of blocks) {
+                const line = block.split('\n').find((item: string) => item.startsWith('data: '));
+                if (!line) continue;
+                const event = JSON.parse(line.slice(6));
+                this.pushAiEvent(event);
+                if (event.type === 'error') {
+                    throw new Error(event.message || 'AI 스트림 처리 중 오류가 발생했습니다.');
+                }
+                if (event.type === 'done') {
+                    await onDone(event.data);
+                }
+            }
+            await this.service.render();
+        }
+    }
+
+    private resetAiEditStream() {
+        this.aiEditStreamEvents.set([]);
+        this.aiEditOutputTokenCount.set(0);
+    }
+
+    private resetAiEditState() {
+        this.aiEditResult = null;
+        this.aiEditProposal = null;
+        this.aiEditOriginal = null;
+        this.aiEditRollbackSnapshot = null;
+        this.aiEditApplied.set(false);
+        this.resetAiEditStream();
+    }
+
+    private pushAiEditEvent(event: any) {
+        const events = [...this.aiEditStreamEvents(), event].slice(-80);
+        this.aiEditStreamEvents.set(events);
+        if (event?.type === 'delta') {
+            this.aiEditOutputTokenCount.set(this.aiEditOutputTokenCount() + String(event.text || '').length);
+        }
+    }
+
+    public aiEditStreamRows() {
+        return this.compactAiStreamRows(this.aiEditStreamEvents());
+    }
+
+    private async streamAiEdit(payload: any, onDone: (data: any) => Promise<void>) {
+        const formData = new FormData();
+        formData.append('payload', JSON.stringify(payload || {}));
+        const response = await fetch('/wiz/api/page.templates/stream_template_ai', { method: 'POST', body: formData });
+        if (!response.ok || !response.body) {
+            throw new Error(`AI 스트림 요청 실패: HTTP ${response.status}`);
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const blocks = buffer.split('\n\n');
+            buffer = blocks.pop() || '';
+            for (const block of blocks) {
+                const line = block.split('\n').find((item: string) => item.startsWith('data: '));
+                if (!line) continue;
+                const event = JSON.parse(line.slice(6));
+                this.pushAiEditEvent(event);
+                if (event.type === 'error') {
+                    throw new Error(event.message || 'AI 스트림 처리 중 오류가 발생했습니다.');
+                }
+                if (event.type === 'done') {
+                    await onDone(event.data);
+                }
+            }
+            await this.service.render();
+        }
     }
 
     public openFileTree() {
@@ -324,6 +608,164 @@ export class Component implements OnInit, OnDestroy {
         this.selectedVersionId.set('');
         this.currentTab.set('compose');
         this.createModalOpen.set(false);
+    }
+
+    private clone(value: any) {
+        return JSON.parse(JSON.stringify(value || null));
+    }
+
+    private applyAiTemplateDraft(draft: any, preview: any, target: string = 'update') {
+        const current = target === 'update' ? this.detail() : null;
+        const template = {
+            ...(current?.template || {}),
+            ...(draft?.template || {}),
+        };
+        if (target === 'update' && !template.id && current?.template?.id) {
+            template.id = current.template.id;
+        } else if (target !== 'update') {
+            template.id = '';
+        }
+        const files = {
+            'docker-compose.yaml': '',
+            'values.default.yaml': '{}\n',
+            'values.schema.json': '{}',
+            'README.md': '',
+            ...(current?.files || {}),
+            ...(draft?.files || {}),
+        };
+        this.detail.set(this.ensureTemplateFields({
+            template,
+            files,
+            versions: target === 'update' ? (current?.versions || []) : [],
+            preview: preview || current?.preview || null,
+        }));
+        this.selectedTemplateId.set(template.id || '');
+        this.selectedVersion.set(null);
+        this.selectedVersionId.set('');
+        this.currentTab.set('preview');
+    }
+
+    public async generateTemplateWithAi() {
+        const intent = String(this.aiForm.intent || '').trim();
+        if (!intent) {
+            await this.alert('AI 요청 내용을 입력해주세요.');
+            return;
+        }
+        this.aiBusy.set(true);
+        this.resetAiStream();
+        try {
+            await this.streamAi('stream_template_ai', {
+                intent,
+                mode: 'template_create',
+                model_ref: this.aiForm.model_ref || 'auto',
+                current: null,
+            }, async (data: any) => {
+                this.aiResult = data;
+                this.applyAiTemplateDraft(data?.draft, data?.preview, 'new');
+            });
+            this.aiModalOpen.set(false);
+            await this.alert(this.aiResult?.summary || 'AI 템플릿 초안을 적용했습니다. 저장 전 내용을 검토하세요.', 'success');
+        } catch (error: any) {
+            await this.alert(error?.message || 'AI 템플릿 초안을 생성할 수 없습니다.');
+        }
+        this.aiBusy.set(false);
+        await this.service.render();
+    }
+
+    public async generateTemplateEditWithAi() {
+        const intent = String(this.aiEditForm.intent || '').trim();
+        if (!this.detail()?.template) {
+            await this.alert('수정할 템플릿을 먼저 선택해주세요.');
+            return;
+        }
+        if (!intent) {
+            await this.alert('AI 수정 요청 내용을 입력해주세요.');
+            return;
+        }
+        this.aiEditBusy.set(true);
+        this.aiEditResult = null;
+        this.aiEditProposal = null;
+        this.aiEditApplied.set(false);
+        this.resetAiEditStream();
+        this.aiEditOriginal = this.clone(this.currentTemplateDefinition());
+        this.aiEditRollbackSnapshot = this.clone(this.currentTemplateDefinition());
+        try {
+            await this.streamAiEdit({
+                intent,
+                mode: 'template_update',
+                model_ref: this.aiEditForm.model_ref || this.aiDefaultModelRef() || 'auto',
+                current: this.currentTemplateDefinition(),
+            }, async (data: any) => {
+                this.aiEditResult = data;
+                this.aiEditProposal = data?.draft || null;
+            });
+        } catch (error: any) {
+            await this.alert(error?.message || 'AI 수정안을 생성할 수 없습니다.');
+        }
+        this.aiEditBusy.set(false);
+        await this.service.render();
+    }
+
+    public aiEditChanges() {
+        const before = this.aiEditOriginal;
+        const after = this.aiEditProposal;
+        if (!before?.template || !after?.template) return [];
+        const rows: any[] = [];
+        const add = (label: string, beforeValue: any, afterValue: any) => {
+            const previous = this.compactValue(beforeValue);
+            const next = this.compactValue(afterValue);
+            if (previous !== next) rows.push({ label, before: previous || '-', after: next || '-' });
+        };
+        add('이름', before.template.name, after.template.name);
+        add('네임스페이스', before.template.namespace, after.template.namespace);
+        add('설명', before.template.description, after.template.description);
+        add('사용 여부', before.template.enabled !== false ? '사용' : '꺼짐', after.template.enabled !== false ? '사용' : '꺼짐');
+        add('대표 이미지', before.template.metadata?.primary_image, after.template.metadata?.primary_image);
+        for (const file of ['docker-compose.yaml', 'values.default.yaml', 'values.schema.json', 'README.md']) {
+            const previous = before.files?.[file] || '';
+            const next = after.files?.[file] || '';
+            if (previous !== next) {
+                rows.push({
+                    label: file,
+                    before: `${this.lineCount(previous)} lines · ${previous.length} chars`,
+                    after: `${this.lineCount(next)} lines · ${next.length} chars`,
+                });
+            }
+        }
+        return rows;
+    }
+
+    private compactValue(value: any) {
+        if (value === undefined || value === null) return '';
+        return String(value).replace(/\s+/g, ' ').trim();
+    }
+
+    private lineCount(value: any) {
+        const text = String(value || '');
+        if (!text) return 0;
+        return text.split(/\r?\n/).length;
+    }
+
+    public async applyAiEditProposal() {
+        if (!this.aiEditProposal) return;
+        this.applyAiTemplateDraft(this.aiEditProposal, this.aiEditResult?.preview, 'update');
+        this.aiEditApplied.set(true);
+        await this.alert('AI 수정안을 편집기에 적용했습니다. 저장 전 내용을 검토하세요.', 'success');
+        await this.service.render();
+    }
+
+    public async rollbackAiEditProposal() {
+        if (!this.aiEditRollbackSnapshot) return;
+        const current = this.detail();
+        this.detail.set(this.ensureTemplateFields({
+            template: this.clone(this.aiEditRollbackSnapshot.template),
+            files: this.clone(this.aiEditRollbackSnapshot.files),
+            versions: current?.versions || [],
+            preview: null,
+        }));
+        this.aiEditApplied.set(false);
+        this.currentTab.set('compose');
+        await this.service.render();
     }
 
     public async saveTemplate() {
@@ -431,6 +873,10 @@ export class Component implements OnInit, OnDestroy {
 
     public setVersionTab(tab: VersionFileTab) {
         this.selectedVersionTab.set(tab);
+    }
+
+    public setVersionPanelTab(tab: VersionPanelTab) {
+        this.versionPanelTab.set(tab);
     }
 
     public selectedVersionContent() {

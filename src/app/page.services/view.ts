@@ -47,6 +47,7 @@ export class Component implements OnInit, OnDestroy {
     public filePreviewContent = signal<string>('');
     public editModalOpen = signal<boolean>(false);
     public editBusy = signal<boolean>(false);
+    public editAiBusy = signal<boolean>(false);
     public editAdvancedSettings = signal<boolean>(false);
     public rollbackModalOpen = signal<boolean>(false);
     public rollbackBusy = signal<boolean>(false);
@@ -62,6 +63,13 @@ export class Component implements OnInit, OnDestroy {
     public volumes: any[] = [];
     public editForm: any = {};
     public editComponents: any[] = [];
+    public editAiIntent = signal<string>('');
+    public editAiResult: any = null;
+    public editAiModelRef = signal<string>('auto');
+    public aiModelOptions = signal<any[]>([]);
+    public aiDefaultModelRef = signal<string>('auto');
+    public editAiStreamEvents = signal<any[]>([]);
+    public editAiOutputTokenCount = signal<number>(0);
     public nginxConfigDrafts: any = {};
     private operationPollTimer: any = null;
     private detailRequestSeq = 0;
@@ -77,6 +85,7 @@ export class Component implements OnInit, OnDestroy {
         this.refreshCompose(true);
         const params = new URLSearchParams(window.location.search || '');
         await this.load(params.get('service_id') || params.get('selected_service_id') || '');
+        await this.loadAiModelOptions();
     }
 
     public ngOnDestroy() {
@@ -221,6 +230,15 @@ export class Component implements OnInit, OnDestroy {
         }
         this.loading.set(false);
         await this.service.render();
+    }
+
+    public async loadAiModelOptions() {
+        const { code, data } = await wiz.call('ai_model_options', {});
+        if (code === 200) {
+            this.aiModelOptions.set(data.options || []);
+            this.aiDefaultModelRef.set(data.default_model_ref || 'auto');
+            this.editAiModelRef.set(data.default_model_ref || 'auto');
+        }
     }
 
     public async selectService(service: any, silent: boolean = false) {
@@ -1006,6 +1024,10 @@ export class Component implements OnInit, OnDestroy {
         if (domain?.domain) this.matchEditDomainZone(domain.domain);
         this.ensureEditDomainTarget();
         this.editAdvancedSettings.set(false);
+        this.editAiIntent.set('');
+        this.editAiModelRef.set(this.aiDefaultModelRef() || 'auto');
+        this.resetEditAiStream();
+        this.editAiResult = null;
         this.editModalOpen.set(true);
     }
 
@@ -1046,6 +1068,167 @@ export class Component implements OnInit, OnDestroy {
             }
         }
         return options.sort((a: any, b: any) => Number(!!b.recommended) - Number(!!a.recommended));
+    }
+
+    public editAiInputRows() {
+        return [
+            { key: 'intent', value: '수정 요구사항' },
+            { key: 'model', value: 'AI 설정에서 사용 가능한 모델' },
+            { key: 'form', value: '현재 서비스와 도메인' },
+            { key: 'components', value: '현재 이미지, 포트, 환경변수, 볼륨' },
+            { key: 'base_content', value: '현재 Compose 원문' },
+        ];
+    }
+
+    private resetEditAiStream() {
+        this.editAiStreamEvents.set([]);
+        this.editAiOutputTokenCount.set(0);
+    }
+
+    private pushEditAiEvent(event: any) {
+        this.editAiStreamEvents.set([...this.editAiStreamEvents(), event].slice(-120));
+        if (event?.type === 'delta') {
+            this.editAiOutputTokenCount.set(this.editAiOutputTokenCount() + String(event.text || '').length);
+        }
+    }
+
+    public editAiStreamRows() {
+        return this.compactAiStreamRows(this.editAiStreamEvents());
+    }
+
+    private streamLines(value: any) {
+        return String(value || '')
+            .replace(/\r/g, '')
+            .split('\n')
+            .map((line: string) => line.replace(/\s+/g, ' ').trim())
+            .filter((line: string) => !!line)
+            .map((line: string) => line.length > 220 ? `${line.slice(0, 217)}...` : line);
+    }
+
+    private latestStreamLine(value: any) {
+        const lines = this.streamLines(value);
+        if (!lines.length) return '';
+        const cleaned = lines[lines.length - 1]
+            .replace(/^[\s"',:{}\[\]]+|[\s"',:{}\[\]]+$/g, '')
+            .replace(/\\"/g, '"')
+            .trim();
+        if (!cleaned || /^[{}\[\],:"]+$/.test(cleaned)) return '';
+        return cleaned.length > 120 ? `${cleaned.slice(0, 117)}...` : cleaned;
+    }
+
+    private streamProgressMessage(value: any) {
+        const text = String(value || '');
+        let stage = 'AI 응답 작성 중';
+        if (text.includes('"README.md"')) stage = 'README 작성 중';
+        else if (text.includes('"values.schema.json"')) stage = 'Schema 작성 중';
+        else if (text.includes('"values.default.yaml"')) stage = '기본값 작성 중';
+        else if (text.includes('"docker-compose.yaml"') || text.includes('"compose"')) stage = 'Compose 작성 중';
+        else if (text.includes('"components"')) stage = '컴포넌트 설정 작성 중';
+        else if (text.includes('"form"')) stage = '서비스 기본 정보 작성 중';
+        else if (text.includes('"template"')) stage = '템플릿 메타데이터 작성 중';
+        const latest = this.latestStreamLine(text);
+        return latest ? `${stage} · ${latest}` : stage;
+    }
+
+    private compactAiStreamRows(events: any[]) {
+        const rows: any[] = [];
+        let thinkingBuffer = '';
+        let deltaBuffer = '';
+        let progressIndex = -1;
+        const pushRow = (row: any) => {
+            const message = row?.message || row?.text || row?.provider?.label;
+            if (!message && row?.type !== 'provider') return;
+            const last = rows[rows.length - 1];
+            if (last?.type === row?.type && (last?.message || last?.text) === (row?.message || row?.text)) return;
+            rows.push(row);
+        };
+        const upsertProgress = () => {
+            if (!deltaBuffer) return;
+            const row = { type: 'progress', label: '생각 중', message: this.streamProgressMessage(deltaBuffer) };
+            if (progressIndex >= 0) rows[progressIndex] = row;
+            else {
+                progressIndex = rows.length;
+                rows.push(row);
+            }
+        };
+        const flushThinking = (force: boolean = false) => {
+            if (!thinkingBuffer) return;
+            const parts = thinkingBuffer.split('\n');
+            thinkingBuffer = parts.pop() || '';
+            for (const line of parts) {
+                for (const text of this.streamLines(line)) {
+                    pushRow({ type: 'thinking', message: text, text });
+                }
+            }
+            if (force && thinkingBuffer.trim()) {
+                const text = this.streamLines(thinkingBuffer).join(' ');
+                if (text) pushRow({ type: 'thinking', message: text, text });
+                thinkingBuffer = '';
+            }
+        };
+        for (const event of events || []) {
+            if (!['provider', 'status', 'thinking', 'error', 'delta'].includes(event?.type)) continue;
+            if (event.type === 'delta') {
+                deltaBuffer += String(event.text || '');
+                upsertProgress();
+                continue;
+            }
+            if (event.type === 'thinking') {
+                thinkingBuffer += String(event.text || event.message || '');
+                flushThinking(false);
+                continue;
+            }
+            flushThinking(true);
+            if (event.type === 'provider') {
+                pushRow(event);
+                continue;
+            }
+            for (const text of this.streamLines(event.message || event.text || '')) {
+                pushRow({ ...event, message: text, text });
+            }
+        }
+        flushThinking(true);
+        return rows.slice(-8);
+    }
+
+    private async streamEditAi(functionName: string, payload: any, onDone: (data: any) => Promise<void>) {
+        const formData = new FormData();
+        formData.append('payload', JSON.stringify(payload || {}));
+        const response = await fetch(`/wiz/api/page.services/${functionName}`, { method: 'POST', body: formData });
+        if (!response.ok || !response.body) {
+            throw new Error(`AI 스트림 요청 실패: HTTP ${response.status}`);
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const blocks = buffer.split('\n\n');
+            buffer = blocks.pop() || '';
+            for (const block of blocks) {
+                const line = block.split('\n').find((item: string) => item.startsWith('data: '));
+                if (!line) continue;
+                const event = JSON.parse(line.slice(6));
+                this.pushEditAiEvent(event);
+                if (event.type === 'error') {
+                    throw new Error(event.message || 'AI 스트림 처리 중 오류가 발생했습니다.');
+                }
+                if (event.type === 'done') {
+                    await onDone(event.data);
+                }
+            }
+            await this.service.render();
+        }
+    }
+
+    public editAiOutputRows() {
+        return [
+            { key: 'form', value: '서비스 정보와 도메인 대상' },
+            { key: 'components', value: '수정된 컴포넌트 설정' },
+            { key: 'warnings', value: '확인 필요 항목' },
+        ];
     }
 
     public ensureEditDomainTarget() {
@@ -1130,6 +1313,59 @@ export class Component implements OnInit, OnDestroy {
 
     public removeEditVolume(item: any, index: number) {
         item.volumes.splice(index, 1);
+    }
+
+    private applyEditAiDraft(draft: any) {
+        const serviceId = this.editForm.service_id;
+        if (draft?.form) {
+            this.editForm = {
+                ...this.editForm,
+                ...draft.form,
+                service_id: serviceId,
+            };
+        }
+        if (Array.isArray(draft?.components) && draft.components.length) {
+            this.editComponents = draft.components;
+            this.editAdvancedSettings.set(true);
+        }
+        this.ensureEditDomainTarget();
+        this.syncEditDomain();
+    }
+
+    public async generateEditServiceWithAi() {
+        const intent = String(this.editAiIntent() || '').trim();
+        if (!intent) {
+            await this.alert('AI 요청 내용을 입력해주세요.');
+            return;
+        }
+        if (!this.editComponents.length) {
+            await this.alert('서비스 구성을 불러오지 못했습니다.');
+            return;
+        }
+        this.editAiBusy.set(true);
+        this.resetEditAiStream();
+        try {
+            await this.streamEditAi('stream_service_ai', {
+                mode: 'service_update',
+                intent,
+                model_ref: this.editAiModelRef() || this.aiDefaultModelRef() || 'auto',
+                form: this.editForm,
+                components: this.editComponents,
+                base_content: this.detail()?.compose_content || '',
+                template_id: '',
+                templates: this.templates(),
+                zones: this.zones(),
+                service: this.detail()?.service || {},
+            }, async (data: any) => {
+                this.editAiResult = data;
+                this.applyEditAiDraft(data?.draft);
+            });
+            await this.alert(this.editAiResult?.summary || 'AI 수정안을 적용했습니다. 저장 전 내용을 검토하세요.', 'success');
+        } catch (error: any) {
+            await this.alert(error?.message || 'AI 수정안을 생성할 수 없습니다.');
+        }
+        this.editAiBusy.set(false);
+        await this.service.render();
     }
 
     private editPayload() {

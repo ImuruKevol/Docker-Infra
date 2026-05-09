@@ -13,6 +13,7 @@ export class Component implements OnInit {
     public advancedSettings = signal<boolean>(false);
     public templateLocked = signal<boolean>(false);
     public importLoading = signal<boolean>(false);
+    public aiBusy = signal<boolean>(false);
     public importSource = signal<any>(null);
     public importWarnings = signal<any[]>([]);
     public templates = signal<any[]>([]);
@@ -32,12 +33,19 @@ export class Component implements OnInit {
         domain_target_port: 80,
     };
     public components: any[] = [];
+    public aiForm: any = { intent: '', model_ref: 'auto' };
+    public aiResult: any = null;
+    public aiModelOptions = signal<any[]>([]);
+    public aiDefaultModelRef = signal<string>('auto');
+    public aiStreamEvents = signal<any[]>([]);
+    public aiOutputTokenCount = signal<number>(0);
 
     constructor(public service: Service) { }
 
     public async ngOnInit() {
         await this.service.init();
         await this.load();
+        await this.loadAiModelOptions();
         if (!this.error()) await this.loadImportFromQuery();
     }
 
@@ -56,6 +64,15 @@ export class Component implements OnInit {
         }
         this.loading.set(false);
         await this.service.render();
+    }
+
+    public async loadAiModelOptions() {
+        const { code, data } = await wiz.call('ai_model_options', {});
+        if (code === 200) {
+            this.aiModelOptions.set(data.options || []);
+            this.aiDefaultModelRef.set(data.default_model_ref || 'auto');
+            this.aiForm.model_ref = data.default_model_ref || 'auto';
+        }
     }
 
     private importQuery() {
@@ -137,6 +154,167 @@ export class Component implements OnInit {
         return this.zones().find((zone: any) => zone.id === this.form.zone_id) || null;
     }
 
+    public serviceAiInputRows() {
+        return [
+            { key: 'intent', value: '배포 요구사항' },
+            { key: 'model', value: 'AI 설정에서 사용 가능한 모델' },
+            { key: 'form', value: '서비스 이름, 설명, 도메인' },
+            { key: 'components', value: '이미지, 포트, 환경변수, 볼륨' },
+            { key: 'base_content', value: '선택 템플릿 Compose' },
+        ];
+    }
+
+    public serviceAiOutputRows() {
+        return [
+            { key: 'form', value: '서비스 기본 정보와 도메인 대상' },
+            { key: 'components', value: '컴포넌트별 실행 설정' },
+            { key: 'warnings', value: '지원 불가 또는 확인 필요 항목' },
+        ];
+    }
+
+    private resetAiStream() {
+        this.aiStreamEvents.set([]);
+        this.aiOutputTokenCount.set(0);
+    }
+
+    private pushAiEvent(event: any) {
+        this.aiStreamEvents.set([...this.aiStreamEvents(), event].slice(-120));
+        if (event?.type === 'delta') {
+            this.aiOutputTokenCount.set(this.aiOutputTokenCount() + String(event.text || '').length);
+        }
+    }
+
+    public aiStreamRows() {
+        return this.compactAiStreamRows(this.aiStreamEvents());
+    }
+
+    private streamLines(value: any) {
+        return String(value || '')
+            .replace(/\r/g, '')
+            .split('\n')
+            .map((line: string) => line.replace(/\s+/g, ' ').trim())
+            .filter((line: string) => !!line)
+            .map((line: string) => line.length > 220 ? `${line.slice(0, 217)}...` : line);
+    }
+
+    private latestStreamLine(value: any) {
+        const lines = this.streamLines(value);
+        if (!lines.length) return '';
+        const cleaned = lines[lines.length - 1]
+            .replace(/^[\s"',:{}\[\]]+|[\s"',:{}\[\]]+$/g, '')
+            .replace(/\\"/g, '"')
+            .trim();
+        if (!cleaned || /^[{}\[\],:"]+$/.test(cleaned)) return '';
+        return cleaned.length > 120 ? `${cleaned.slice(0, 117)}...` : cleaned;
+    }
+
+    private streamProgressMessage(value: any) {
+        const text = String(value || '');
+        let stage = 'AI 응답 작성 중';
+        if (text.includes('"README.md"')) stage = 'README 작성 중';
+        else if (text.includes('"values.schema.json"')) stage = 'Schema 작성 중';
+        else if (text.includes('"values.default.yaml"')) stage = '기본값 작성 중';
+        else if (text.includes('"docker-compose.yaml"') || text.includes('"compose"')) stage = 'Compose 작성 중';
+        else if (text.includes('"components"')) stage = '컴포넌트 설정 작성 중';
+        else if (text.includes('"form"')) stage = '서비스 기본 정보 작성 중';
+        else if (text.includes('"template"')) stage = '템플릿 메타데이터 작성 중';
+        const latest = this.latestStreamLine(text);
+        return latest ? `${stage} · ${latest}` : stage;
+    }
+
+    private compactAiStreamRows(events: any[]) {
+        const rows: any[] = [];
+        let thinkingBuffer = '';
+        let deltaBuffer = '';
+        let progressIndex = -1;
+        const pushRow = (row: any) => {
+            const message = row?.message || row?.text || row?.provider?.label;
+            if (!message && row?.type !== 'provider') return;
+            const last = rows[rows.length - 1];
+            if (last?.type === row?.type && (last?.message || last?.text) === (row?.message || row?.text)) return;
+            rows.push(row);
+        };
+        const upsertProgress = () => {
+            if (!deltaBuffer) return;
+            const row = { type: 'progress', label: '생각 중', message: this.streamProgressMessage(deltaBuffer) };
+            if (progressIndex >= 0) rows[progressIndex] = row;
+            else {
+                progressIndex = rows.length;
+                rows.push(row);
+            }
+        };
+        const flushThinking = (force: boolean = false) => {
+            if (!thinkingBuffer) return;
+            const parts = thinkingBuffer.split('\n');
+            thinkingBuffer = parts.pop() || '';
+            for (const line of parts) {
+                for (const text of this.streamLines(line)) {
+                    pushRow({ type: 'thinking', message: text, text });
+                }
+            }
+            if (force && thinkingBuffer.trim()) {
+                const text = this.streamLines(thinkingBuffer).join(' ');
+                if (text) pushRow({ type: 'thinking', message: text, text });
+                thinkingBuffer = '';
+            }
+        };
+        for (const event of events || []) {
+            if (!['provider', 'status', 'thinking', 'error', 'delta'].includes(event?.type)) continue;
+            if (event.type === 'delta') {
+                deltaBuffer += String(event.text || '');
+                upsertProgress();
+                continue;
+            }
+            if (event.type === 'thinking') {
+                thinkingBuffer += String(event.text || event.message || '');
+                flushThinking(false);
+                continue;
+            }
+            flushThinking(true);
+            if (event.type === 'provider') {
+                pushRow(event);
+                continue;
+            }
+            for (const text of this.streamLines(event.message || event.text || '')) {
+                pushRow({ ...event, message: text, text });
+            }
+        }
+        flushThinking(true);
+        return rows.slice(-8);
+    }
+
+    private async streamAi(functionName: string, payload: any, onDone: (data: any) => Promise<void>) {
+        const formData = new FormData();
+        formData.append('payload', JSON.stringify(payload || {}));
+        const response = await fetch(`/wiz/api/page.services.create/${functionName}`, { method: 'POST', body: formData });
+        if (!response.ok || !response.body) {
+            throw new Error(`AI 스트림 요청 실패: HTTP ${response.status}`);
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const blocks = buffer.split('\n\n');
+            buffer = blocks.pop() || '';
+            for (const block of blocks) {
+                const line = block.split('\n').find((item: string) => item.startsWith('data: '));
+                if (!line) continue;
+                const event = JSON.parse(line.slice(6));
+                this.pushAiEvent(event);
+                if (event.type === 'error') {
+                    throw new Error(event.message || 'AI 스트림 처리 중 오류가 발생했습니다.');
+                }
+                if (event.type === 'done') {
+                    await onDone(event.data);
+                }
+            }
+            await this.service.render();
+        }
+    }
+
     public async selectTemplate(templateId: string) {
         if (this.step() !== 1 || this.templateLocked()) return;
         this.selectedTemplateId.set(templateId || '');
@@ -160,6 +338,61 @@ export class Component implements OnInit {
             await this.alert(data?.message || '템플릿을 불러올 수 없습니다.');
         }
         this.templateLoading.set(false);
+        await this.service.render();
+    }
+
+    private applyAiServiceDraft(draft: any) {
+        if (draft?.form) {
+            this.form = {
+                ...this.form,
+                ...draft.form,
+            };
+        }
+        if (Array.isArray(draft?.components) && draft.components.length) {
+            this.components = draft.components;
+        }
+        this.ensureDomainTarget();
+        this.syncDomain();
+        this.preflight.set(null);
+    }
+
+    public async generateServiceWithAi() {
+        const intent = String(this.aiForm.intent || '').trim();
+        if (!intent) {
+            await this.alert('AI 요청 내용을 입력해주세요.');
+            return;
+        }
+        if (!this.importSource() && !this.selectedTemplateId()) {
+            await this.alert('AI 자동 구성 전에 서비스 종류를 선택해주세요.');
+            return;
+        }
+        if (!this.components.length) {
+            await this.alert('서비스 구성을 먼저 불러와주세요.');
+            return;
+        }
+        this.aiBusy.set(true);
+        this.resetAiStream();
+        try {
+            await this.streamAi('stream_service_ai', {
+                mode: 'service_create',
+                intent,
+                model_ref: this.aiForm.model_ref || this.aiDefaultModelRef() || 'auto',
+                form: this.form,
+                components: this.components,
+                base_content: this.baseContent,
+                template_id: this.selectedTemplateId(),
+                templates: this.templates(),
+                zones: this.zones(),
+                service: {},
+            }, async (data: any) => {
+                this.aiResult = data;
+                this.applyAiServiceDraft(data?.draft);
+            });
+            await this.alert(this.aiResult?.summary || 'AI 서비스 구성을 적용했습니다. 다음 단계에서 검토하세요.', 'success');
+        } catch (error: any) {
+            await this.alert(error?.message || 'AI 서비스 구성을 생성할 수 없습니다.');
+        }
+        this.aiBusy.set(false);
         await this.service.render();
     }
 

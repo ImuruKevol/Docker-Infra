@@ -359,6 +359,7 @@ def _filesystem_read_command(params):
 
 SYSTEM_METRICS_SCRIPT = scripts.SYSTEM_METRICS_SCRIPT
 DOCKER_IMAGE_USAGE_SCRIPT = scripts.DOCKER_IMAGE_USAGE_SCRIPT
+AI_RESOURCE_SCRIPT = scripts.AI_RESOURCE_SCRIPT
 
 
 COMMAND_SPECS = {
@@ -387,6 +388,7 @@ COMMAND_SPECS = {
     "monitoring.node_exporter.ensure": {"category": "monitoring", "factory": _node_exporter_ensure_command, "destructive": True, "default_timeout_seconds": 120},
     "monitoring.node_exporter.status": {"category": "monitoring", "factory": _node_exporter_status_command, "default_timeout_seconds": 20},
     "system.metrics": {"category": "system", "argv": ["sh", "-lc", SYSTEM_METRICS_SCRIPT]},
+    "ai.resources": {"category": "ai", "argv": ["sh", "-lc", AI_RESOURCE_SCRIPT], "default_timeout_seconds": 12},
     "filesystem.list": {"category": "filesystem", "factory": _filesystem_list_command},
     "filesystem.read": {"category": "filesystem", "factory": _filesystem_read_command},
     "swarm.info": {"category": "swarm", "argv": ["docker", "info", "--format", "{{json .Swarm}}"]},
@@ -413,6 +415,7 @@ class LocalCommandCatalog:
     SYSTEM_METRICS_SCRIPT = SYSTEM_METRICS_SCRIPT
     LocalCommandError = LocalCommandError
     COMMAND_SPECS = COMMAND_SPECS
+    AI_RESOURCE_SCRIPT = AI_RESOURCE_SCRIPT
 
 
 Model = LocalCommandCatalog()
