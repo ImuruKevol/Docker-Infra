@@ -13,6 +13,17 @@ DomainError = wiz.model("struct/domains_shared")
 operations = wiz.model("struct/operations")
 
 CLOUDFLARE_API = "https://api.cloudflare.com/client/v4"
+DEFAULT_TTL_BY_TYPE = {
+    "A": 1,
+    "AAAA": 1,
+    "CNAME": 1,
+    "MX": 1,
+    "TXT": 1,
+    "SRV": 1,
+    "NS": 1,
+}
+PROXIED_CAPABLE_TYPES = {"A", "AAAA", "CNAME"}
+DEFAULT_PRIORITY_BY_TYPE = {"MX": 10, "SRV": 10}
 
 
 def serialize(value):
@@ -243,25 +254,28 @@ class DomainCloudflareMixin:
     def save_record(self, zone_id, payload, env=None):
         payload = dict(payload or {})
         record_type = str(payload.get("record_type") or payload.get("type") or "").strip().upper()
-        record_name = str(payload.get("record_name") or payload.get("name") or "").strip()
+        record_name = str(payload.get("record_name") or payload.get("name") or "").strip() or "@"
         content = str(payload.get("content") or "").strip()
         record_id = str(payload.get("cloudflare_record_id") or payload.get("id") or "").strip()
         if record_type == "":
             raise DomainError(400, "레코드 타입을 선택해주세요.", "RECORD_TYPE_REQUIRED")
-        if record_name == "":
-            raise DomainError(400, "레코드 이름을 입력해주세요.", "RECORD_NAME_REQUIRED")
         if content == "" and record_type not in {"TXT"}:
             raise DomainError(400, "레코드 값을 입력해주세요.", "RECORD_CONTENT_REQUIRED")
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 zone = self._fetch_zone(cursor, zone_id, env=env)
-        cf_payload = {"type": record_type, "name": record_name, "content": content, "ttl": int(payload.get("ttl") or 1)}
-        if payload.get("proxied") is not None:
-            cf_payload["proxied"] = bool(payload.get("proxied"))
+        cf_payload = {
+            "type": record_type,
+            "name": record_name,
+            "content": content,
+            "ttl": DEFAULT_TTL_BY_TYPE.get(record_type, 1),
+        }
+        if record_type in PROXIED_CAPABLE_TYPES:
+            cf_payload["proxied"] = False
         if payload.get("comment") not in [None, ""]:
             cf_payload["comment"] = str(payload.get("comment"))
-        if payload.get("priority") not in [None, ""]:
-            cf_payload["priority"] = int(payload.get("priority"))
+        if record_type in DEFAULT_PRIORITY_BY_TYPE:
+            cf_payload["priority"] = DEFAULT_PRIORITY_BY_TYPE[record_type]
         if record_id:
             cf_request(zone.get("api_token_value"), "PUT", f"/zones/{zone['zone_id']}/dns_records/{record_id}", payload=cf_payload)
         else:

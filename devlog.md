@@ -106,3 +106,5 @@
 | 2026-05-10 | 104 | 파일 트리 렌더 누락과 서버 자원 자동 갱신 지연 개선 | [상세](devlog/2026-05-10/104-file-tree-render-auto-refresh-cpu.md) |
 | 2026-05-10 | 105 | 모니터링 자동 구성과 10분 주기 백그라운드 수집 분리 | [상세](devlog/2026-05-10/105-monitoring-auto-config-daemon-interval.md) |
 | 2026-05-10 | 106 | 웹 요청 기반 모니터링 데몬 시작 제거와 systemd 상태 확인 정리 | [상세](devlog/2026-05-10/106-monitoring-systemd-only-no-web-trigger.md) |
+| 2026-05-10 | 107 | 도메인 관리 레코드 UI와 DNS 기본값 정리 | [상세](devlog/2026-05-10/107-domain-management-record-ui-search-select.md) |
+| 2026-05-10 | 108 | 도메인 인증서 서비스 상세 링크와 Search Select 선택 타이밍 보강 | [상세](devlog/2026-05-10/108-domain-service-link-search-select-mousedown.md) |

@@ -1,4 +1,4 @@
-import { ElementRef, EventEmitter, HostListener, Input, Output } from '@angular/core';
+import { ChangeDetectorRef, ElementRef, EventEmitter, HostListener, Input, Output } from '@angular/core';
 
 export class Component {
     @Input() items: any[] = [];
@@ -19,7 +19,7 @@ export class Component {
     public open = false;
     public query = '';
 
-    constructor(private elementRef: ElementRef) { }
+    constructor(private elementRef: ElementRef, private cdr: ChangeDetectorRef) { }
 
     @HostListener('document:click', ['$event'])
     public handleDocumentClick(event: MouseEvent) {
@@ -28,8 +28,16 @@ export class Component {
         this.close();
     }
 
+    public stopEvent(event?: Event, preventDefault: boolean = false) {
+        if (!event) return;
+        if (preventDefault) event.preventDefault();
+        event.stopPropagation();
+        const nativeEvent: any = event;
+        if (typeof nativeEvent.stopImmediatePropagation === 'function') nativeEvent.stopImmediatePropagation();
+    }
+
     public toggle(event?: Event) {
-        if (event) event.stopPropagation();
+        this.stopEvent(event);
         if (this.disabled) return;
         this.open = !this.open;
         if (this.open) {
@@ -64,10 +72,13 @@ export class Component {
         });
     }
 
-    public selectItem(item: any) {
+    public selectItem(item: any, event?: Event) {
+        this.stopEvent(event, true);
         if (this.itemDisabled(item)) return;
-        this.valueChange.emit(this.itemValue(item));
+        this.value = this.itemValue(item);
+        this.valueChange.emit(this.value);
         this.close();
+        this.cdr.detectChanges();
     }
 
     public itemValue(item: any) {

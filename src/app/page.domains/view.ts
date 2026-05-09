@@ -11,6 +11,15 @@ const RECORD_TYPE_HELP: any = {
     SRV: '서비스 포트와 대상을 지정합니다.',
     NS: '하위 영역 nameserver를 지정합니다.'
 };
+const DEFAULT_TTL_BY_TYPE: any = {
+    A: 1,
+    AAAA: 1,
+    CNAME: 1,
+    MX: 1,
+    TXT: 1,
+    SRV: 1,
+    NS: 1
+};
 
 export class Component implements OnInit {
     public loading = signal<boolean>(true);
@@ -22,12 +31,14 @@ export class Component implements OnInit {
     public detail = signal<any>(this.emptyDetail());
     public zoneModalOpen = signal<boolean>(false);
     public recordModalOpen = signal<boolean>(false);
+    public recordDetailModalOpen = signal<boolean>(false);
     public certificateModalOpen = signal<boolean>(false);
     public certificateBusy = signal<boolean>(false);
     public zoneForm: any = this.emptyZoneForm();
     public recordForm: any = this.emptyRecordForm();
+    public recordDetail: any = null;
     public certificateForm: any = this.emptyCertificateForm();
-    public recordFilters: any = { types: [], name: '', content: '', ipv4: '' };
+    public recordFilters: any = { types: [], query: '', ipv4: '' };
 
     constructor(public service: Service) { }
 
@@ -162,7 +173,14 @@ export class Component implements OnInit {
     }
 
     public async saveRecord() {
-        const { code, data } = await wiz.call('save_record', this.recordForm);
+        const payload = {
+            ...this.recordForm,
+            record_name: String(this.recordForm.record_name || '').trim() || '@',
+            proxied: false,
+            ttl: this.defaultTtlForType(this.recordForm.record_type),
+            priority: undefined
+        };
+        const { code, data } = await wiz.call('save_record', payload);
         if (code === 200) {
             this.recordModalOpen.set(false);
             this.detail.set({ ...this.emptyDetail(), ...data });
@@ -171,6 +189,16 @@ export class Component implements OnInit {
             return;
         }
         await this.alert(data?.message || 'DNS 레코드를 저장할 수 없습니다.');
+    }
+
+    public openRecordDetail(record: any) {
+        this.recordDetail = record || null;
+        this.recordDetailModalOpen.set(Boolean(record));
+    }
+
+    public closeRecordDetail() {
+        this.recordDetailModalOpen.set(false);
+        this.recordDetail = null;
     }
 
     public async deleteRecord(record: any) {
@@ -275,13 +303,19 @@ export class Component implements OnInit {
 
     public visibleRecords() {
         const filters = this.recordFilters;
-        const name = String(filters.name || '').trim().toLowerCase();
-        const content = String(filters.content || '').trim().toLowerCase();
+        const query = String(filters.query || '').trim().toLowerCase();
         const ipv4 = String(filters.ipv4 || '').trim();
         return (this.detail()?.records || []).filter((record: any) => {
             if (filters.types.length > 0 && !filters.types.includes(record.record_type)) return false;
-            if (name && !String(record.record_name || '').toLowerCase().includes(name)) return false;
-            if (content && !String(record.content || '').toLowerCase().includes(content)) return false;
+            if (query) {
+                const target = [
+                    record.record_name,
+                    record.content,
+                    record.comment,
+                    this.fqdn(record.record_name, this.selectedZone()?.domain)
+                ].join(' ').toLowerCase();
+                if (!target.includes(query)) return false;
+            }
             if (ipv4 && !(record.record_type === 'A' && String(record.content || '') === ipv4)) return false;
             return true;
         });
@@ -317,7 +351,7 @@ export class Component implements OnInit {
     }
 
     public resetRecordFilters() {
-        this.recordFilters = { types: [], name: '', content: '', ipv4: '' };
+        this.recordFilters = { types: [], query: '', ipv4: '' };
     }
 
     public hasIpv4Filter() {
@@ -366,6 +400,11 @@ export class Component implements OnInit {
         return this.detail()?.service_links || [];
     }
 
+    public serviceDetailHref(item: any) {
+        const serviceId = String(item?.service_id || '').trim();
+        return serviceId ? `/services?service_id=${encodeURIComponent(serviceId)}` : '/services';
+    }
+
     public certificateAppliedServiceLinks() {
         return this.serviceLinks().filter((item: any) => item.certificate_applied === true);
     }
@@ -392,6 +431,15 @@ export class Component implements OnInit {
         return RECORD_TYPES;
     }
 
+    public setRecordType(type: string) {
+        this.recordForm.record_type = type;
+        this.recordForm.ttl = this.defaultTtlForType(type);
+    }
+
+    public defaultTtlForType(type: string) {
+        return DEFAULT_TTL_BY_TYPE[String(type || '').toUpperCase()] || 1;
+    }
+
     public recordTypeDescription(type: string) {
         return RECORD_TYPE_HELP[type] || '레코드 타입 설명';
     }
@@ -413,15 +461,31 @@ export class Component implements OnInit {
         return this.recordForm.record_type === 'CNAME' ? `${host} 접속 시 ${content} 도메인으로 연결됩니다.` : `${host} 접속 시 ${content} 주소로 연결됩니다.`;
     }
 
-    public recordExposure(record: any) {
-        if (record.is_internal_only) return '내부 전용';
-        if (record.proxied === true) return 'Cloudflare Proxy';
-        if (record.proxied === false) return '직접 노출';
-        return '기본값';
+    public recordNameHelper() {
+        if (this.recordForm.record_type !== 'A') return '';
+        return 'Name을 비우면 @와 동일하게 루트 도메인에 연결됩니다. @는 루트, *는 모든 하위 도메인, _ 접두어는 검증/SRV 같은 특수 레이블에 사용합니다.';
     }
 
-    public contentPreview(record: any) {
-        return String(record.content || '-');
+    public isAddressRecord(record: any) {
+        return ['A', 'AAAA'].includes(String(record?.record_type || '').toUpperCase());
+    }
+
+    public contentSummary(record: any) {
+        if (!record?.content) return '-';
+        if (this.isAddressRecord(record)) return String(record.content);
+        return `${record.record_type || 'DNS'} 상세`;
+    }
+
+    public recordDetailRows() {
+        const record = this.recordDetail || {};
+        return [
+            { label: 'Type', value: record.record_type || '-' },
+            { label: 'Name', value: record.record_name || '-' },
+            { label: 'FQDN', value: this.fqdn(record.record_name, this.selectedZone()?.domain) || '-' },
+            { label: 'Content', value: record.content || '-' },
+            { label: 'Comment', value: record.comment || '-' },
+            { label: '동기화', value: this.formatDate(record.last_synced_at) }
+        ];
     }
 
     private emptyDetail() {
@@ -448,9 +512,9 @@ export class Component implements OnInit {
             record_type: record.record_type || record.type || 'A',
             record_name: record.record_name || record.name || '@',
             content: record.content || '',
-            proxied: record.proxied === true,
-            ttl: record.ttl || 1,
-            priority: record.priority || '',
+            proxied: false,
+            ttl: record.ttl || this.defaultTtlForType(record.record_type || record.type || 'A'),
+            priority: '',
             comment: record.comment || ''
         };
     }
