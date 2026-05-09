@@ -19,7 +19,6 @@ def load():
     payload = {}
 
     try:
-        monitoring.tick()
         payload = _with_monitoring_state(nodes_model.overview_summary(selected_id=body.get("selected_id"), auto_sync_local_master=False), monitoring)
     except nodes_model.NodeError as exc:
         code = exc.status_code
@@ -44,7 +43,6 @@ def overview():
     payload = {}
 
     try:
-        monitoring.tick()
         payload = _with_monitoring_state(nodes_model.overview_summary(selected_id=body.get("selected_id"), auto_sync_local_master=False), monitoring)
     except nodes_model.NodeError as exc:
         code = exc.status_code
@@ -70,7 +68,7 @@ def ensure_monitoring_agent():
     payload = {}
 
     try:
-        result = monitoring.ensure_exporters(body)
+        result = monitoring.check_exporters(body)
         payload = {
             **result,
             **nodes_model.overview_summary(selected_id=body.get("node_id"), auto_sync_local_master=False),
@@ -93,16 +91,28 @@ def ensure_monitoring_agent():
 
 def ensure_local_master():
     nodes_model = wiz.model("struct").nodes
+    monitoring = wiz.model("struct").nodes_monitoring
     body = wiz.request.query()
     code = 200
     payload = {}
 
     try:
         result = nodes_model.ensure_local_master(body)
-        nodes = nodes_model.list()
+        monitoring_result = None
         selected = result["local_master"]
+        if selected:
+            try:
+                monitoring_result = monitoring.ensure_exporters({"node_id": selected["id"]})
+                selected = nodes_model.detail(selected["id"])
+                result["local_master"] = selected
+            except Exception as exc:
+                monitoring_result = {"status": "failed", "message": str(exc)}
+        nodes = nodes_model.list()
         containers = nodes_model.containers(selected["id"])["containers"] if selected else []
-        payload = {"result": result, "nodes": nodes, "selected": selected, "containers": containers}
+        payload = _with_monitoring_state(
+            {"result": result, "monitoring_auto_configure": monitoring_result, "nodes": nodes, "selected": selected, "containers": containers},
+            monitoring,
+        )
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -120,13 +130,29 @@ def ensure_local_master():
 
 def register_slave():
     nodes_model = wiz.model("struct").nodes
+    monitoring = wiz.model("struct").nodes_monitoring
     body = wiz.request.query()
     code = 200
     payload = {}
 
     try:
+        is_new = not body.get("node_id")
         node = nodes_model.save_slave(body)
-        payload = {"node": node, **nodes_model.overview(selected_id=node["id"], auto_sync_local_master=False)}
+        monitoring_result = None
+        if is_new:
+            try:
+                monitoring_result = monitoring.ensure_exporters({"node_id": node["id"]})
+                node = nodes_model.detail(node["id"])
+            except Exception as exc:
+                monitoring_result = {"status": "failed", "message": str(exc)}
+        payload = _with_monitoring_state(
+            {
+                "node": node,
+                "monitoring_auto_configure": monitoring_result,
+                **nodes_model.overview(selected_id=node["id"], auto_sync_local_master=False),
+            },
+            monitoring,
+        )
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -280,7 +306,9 @@ def refresh_metrics():
     code = 200
     payload = {}
     try:
-        payload = _with_monitoring_state(nodes_model.metric_snapshot(node_id), monitoring)
+        persist = str(body.get("persist") or body.get("record") or "").strip().lower() in {"1", "true", "yes", "on"}
+        payload = nodes_model.metric_snapshot(node_id) if persist else nodes_model.live_metric(node_id)
+        payload = _with_monitoring_state(payload, monitoring)
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

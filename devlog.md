@@ -103,3 +103,6 @@
 | 2026-05-10 | 101 | 자원 차트 Chart.js 전환과 기간 조회·파일 트리 성능 최적화 | [상세](devlog/2026-05-10/101-chartjs-date-range-file-tree-performance.md) |
 | 2026-05-10 | 102 | Chart.js canvas 참조와 렌더 타이밍 수정 | [상세](devlog/2026-05-10/102-chartjs-canvas-reference-render-timing.md) |
 | 2026-05-10 | 103 | Chart.js template reference NG0301 제거 | [상세](devlog/2026-05-10/103-chartjs-ng0301-reference-removal.md) |
+| 2026-05-10 | 104 | 파일 트리 렌더 누락과 서버 자원 자동 갱신 지연 개선 | [상세](devlog/2026-05-10/104-file-tree-render-auto-refresh-cpu.md) |
+| 2026-05-10 | 105 | 모니터링 자동 구성과 10분 주기 백그라운드 수집 분리 | [상세](devlog/2026-05-10/105-monitoring-auto-config-daemon-interval.md) |
+| 2026-05-10 | 106 | 웹 요청 기반 모니터링 데몬 시작 제거와 systemd 상태 확인 정리 | [상세](devlog/2026-05-10/106-monitoring-systemd-only-no-web-trigger.md) |

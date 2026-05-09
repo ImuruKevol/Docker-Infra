@@ -93,6 +93,8 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
         self.assertIn("filesystem.list", local_commands)
         self.assertIn("show_hidden", local_commands)
         self.assertIn("/api/file-tree/upload", file_tree_component)
+        self.assertIn("@wiz/libs/portal/season/service", file_tree_component)
+        self.assertIn("await this.service.render()", file_tree_component)
         self.assertIn("webkitdirectory", file_tree_component_template)
         self.assertIn("dropOn", file_tree_component)
         self.assertIn("file_tree.list", file_tree_route)

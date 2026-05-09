@@ -70,6 +70,7 @@ export class Component implements OnInit, OnDestroy {
     };
     private refreshTimer: ReturnType<typeof setInterval> | null = null;
     private metricRequestRunning = false;
+    private autoRefreshRequestRunning = false;
     private backgroundRefreshToken = 0;
     private selectionEpoch = 0;
     private macroRequestToken = 0;
@@ -242,16 +243,20 @@ export class Component implements OnInit, OnDestroy {
         return `${base}\n\n${details.join('\n')}`;
     }
 
+    private applyCachedDetail(data: any) {
+        if (data.monitoring) this.monitoringState.set(data.monitoring);
+        this.setSelectedNode(data.node || null);
+        this.applyContainerPanel(data);
+        this.detailError.set('');
+    }
+
     private async fetchCachedDetail(nodeId: string, silent: boolean = false, epoch: number = this.selectionEpoch) {
         if (!nodeId) return;
         this.detailLoading.set(true);
         const { code, data } = await wiz.call("cached_detail", { node_id: nodeId });
         if (!this.isActiveSelection(nodeId, epoch)) return;
         if (code === 200) {
-            if (data.monitoring) this.monitoringState.set(data.monitoring);
-            this.setSelectedNode(data.node || null);
-            this.applyContainerPanel(data);
-            this.detailError.set('');
+            this.applyCachedDetail(data);
             this.restartAutoRefresh();
         } else if (silent) {
             this.detailError.set(data?.message || '저장된 서버 상세 정보를 불러올 수 없습니다.');
@@ -262,21 +267,22 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
-    private async refreshDetailInBackground(nodeId: string, epoch: number = this.selectionEpoch) {
-        if (!nodeId) return;
+    private async refreshCachedDetailInBackground(nodeId: string, epoch: number = this.selectionEpoch) {
+        if (!nodeId || this.autoRefreshRequestRunning) return;
         const token = ++this.backgroundRefreshToken;
-        this.panelRefreshing.set(true);
-        await this.service.render();
+        this.autoRefreshRequestRunning = true;
         try {
             if (!this.isActiveSelection(nodeId, epoch) || token !== this.backgroundRefreshToken) return;
-            await this.fetchMetrics(true, nodeId, epoch);
+            const { code, data } = await wiz.call("cached_detail", { node_id: nodeId });
             if (!this.isActiveSelection(nodeId, epoch) || token !== this.backgroundRefreshToken) return;
-            await this.refreshContainers(true, nodeId, epoch);
-        } finally {
-            if (token === this.backgroundRefreshToken && this.isActiveSelection(nodeId, epoch)) {
-                this.panelRefreshing.set(false);
-                await this.service.render();
+            if (code === 200) {
+                this.applyCachedDetail(data);
+            } else {
+                this.detailError.set(data?.message || '저장된 서버 상세 정보를 불러올 수 없습니다.');
             }
+        } finally {
+            this.autoRefreshRequestRunning = false;
+            if (token === this.backgroundRefreshToken && this.isActiveSelection(nodeId, epoch)) await this.service.render();
         }
     }
 
@@ -291,7 +297,7 @@ export class Component implements OnInit, OnDestroy {
         if (!this.selected()?.id) return;
         const epoch = this.selectionEpoch;
         this.refreshTimer = setInterval(() => {
-            if (this.busy() || this.metricRequestRunning) return;
+            if (this.busy() || this.metricRequestRunning || this.autoRefreshRequestRunning) return;
             void this.fetchMetrics(true, this.selected()?.id, epoch);
         }, this.refreshSeconds() * 1000);
     }
@@ -342,7 +348,7 @@ export class Component implements OnInit, OnDestroy {
         const nodeId = targetNodeId || this.selected()?.id;
         if (!nodeId || this.metricRequestRunning) return;
         this.metricRequestRunning = true;
-        const { code, data } = await wiz.call("refresh_metrics", { node_id: nodeId });
+        const { code, data } = await wiz.call("refresh_metrics", { node_id: nodeId, persist: false });
         this.metricRequestRunning = false;
         if (!this.isActiveSelection(nodeId, epoch)) return;
         if (code === 200) {
@@ -425,7 +431,6 @@ export class Component implements OnInit, OnDestroy {
             if (data.selected?.id) {
                 void this.loadMacros(data.selected.id);
                 void this.fetchCachedDetail(data.selected.id, true, epoch);
-                void this.refreshDetailInBackground(data.selected.id, epoch);
             }
             return;
         } else {
@@ -440,7 +445,6 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
         void this.loadMacros(node.id);
         void this.fetchCachedDetail(node.id, false, epoch);
-        void this.refreshDetailInBackground(node.id, epoch);
     }
 
     public serverFileTreeContext() {
@@ -937,7 +941,17 @@ export class Component implements OnInit, OnDestroy {
             this.applyContainerPanel(data);
             this.restartAutoRefresh();
             this.actionTitle.set('중심 서버 확인 결과');
-            this.actionResult.set({ checks: { docker: 'ok', swarm: data.result?.swarm?.manager ? 'ok' : 'warning', network: data.result?.overlay_network?.status || 'ok' } });
+            const monitoringStatus = data.monitoring_auto_configure
+                ? ((data.monitoring_auto_configure.failed || data.monitoring_auto_configure.status === 'failed') ? 'warning' : 'ok')
+                : undefined;
+            this.actionResult.set({
+                checks: {
+                    docker: 'ok',
+                    swarm: data.result?.swarm?.manager ? 'ok' : 'warning',
+                    network: data.result?.overlay_network?.status || 'ok',
+                    ...(monitoringStatus ? { monitoring: monitoringStatus } : {}),
+                },
+            });
             this.actionModalOpen.set(true);
         } else {
             await this.alert(data?.message || '중심 서버 상태를 확인할 수 없습니다.');
@@ -975,7 +989,14 @@ export class Component implements OnInit, OnDestroy {
             this.applyContainerPanel(data);
             this.restartAutoRefresh();
             this.actionTitle.set(this.isEditing() ? '서버 정보 수정 결과' : '서버 등록 결과');
-            this.actionResult.set({ checks: data.node?.metadata?.connection_checks || {}, node: data.node });
+            const monitoringStatus = data.monitoring_auto_configure
+                ? ((data.monitoring_auto_configure.failed || data.monitoring_auto_configure.status === 'failed') ? 'warning' : 'ok')
+                : undefined;
+            this.actionResult.set({
+                checks: { ...(data.node?.metadata?.connection_checks || {}), ...(monitoringStatus ? { monitoring: monitoringStatus } : {}) },
+                monitoring: data.monitoring_auto_configure || null,
+                node: data.node,
+            });
             this.serverModalOpen.set(false);
             this.editingNodeId.set('');
             this.resetServerForm();
@@ -1553,7 +1574,7 @@ export class Component implements OnInit, OnDestroy {
 
     public isNodeCollecting(node: any) {
         const ids = this.monitoringState()?.collecting_node_ids || [];
-        return Boolean(node?.id && ids.includes(node.id));
+        return Boolean(node?.id && (ids.includes(node.id) || this.monitoringConfigured(node)));
     }
 
     public statusLabel(status: string) {
@@ -1758,6 +1779,7 @@ export class Component implements OnInit, OnDestroy {
             ssh: 'SSH 접속',
             docker: 'Docker 상태',
             metric: '자원 정보 수집',
+            monitoring: '모니터링 자동 구성',
             operation: '작업 실행',
             import: '서비스 등록',
             command: '명령 실행',

@@ -71,7 +71,7 @@ class NodeLocalMasterMixin:
                 is_local_master = true,
                 labels = %s,
                 test_run_id = COALESCE(%s, test_run_id),
-                metadata = %s
+                metadata = COALESCE(metadata, '{}'::jsonb) || %s
             WHERE is_local_master = true
             RETURNING *
             """,

@@ -38,7 +38,6 @@ main(class="space-y-5 px-5 py-5")
                                     span(*ngIf="isNodeCollecting(node)", class="inline-flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-sky-500 shadow-[0_0_0_4px_rgba(14,165,233,0.18)]", title="정보 수집 중")
                                     p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{node.name}}
                                     span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="node.is_local_master ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300' : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300'") {{roleLabel(node)}}
-                                    span(*ngIf="monitoringConfigured(node)", class="hidden rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300 md:inline-flex") 수집 구성
                                 p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400") {{node.host}}
                                 p(class="mt-1 truncate text-xs text-zinc-400 dark:text-zinc-500") {{roleDescription(node)}}
                             span(class="inline-flex shrink-0 rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(node.status)") {{statusLabel(node.status)}}
@@ -63,7 +62,6 @@ main(class="space-y-5 px-5 py-5")
                                             span 정보 수집 중
                                         h2(class="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50") {{selected()?.name}}
                                         span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="selected()?.is_local_master ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300' : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300'") {{roleLabel(selected())}}
-                                        span(*ngIf="monitoringConfigured(selected())", class="inline-flex rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300") 모니터링 구성됨
                                     p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400") {{roleDescription(selected())}} · {{selected()?.host}} · {{selected()?.swarm_node_id || '-'}}
                                 div(class="flex flex-wrap items-center gap-2")
                                     button(*ngIf="!selected()?.is_local_master", type="button", (click)="openEditServer()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
@@ -72,15 +70,12 @@ main(class="space-y-5 px-5 py-5")
                                     button(type="button", (click)="checkSelected()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                         i(class="fa-solid fa-stethoscope")
                                         span 점검
-                                    button(*ngIf="!monitoringConfigured(selected())", type="button", (click)="ensureMonitoringAgent()", [disabled]="busy() || monitoringBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                        i(class="fa-solid", [ngClass]="monitoringBusy() ? 'fa-spinner fa-spin' : 'fa-chart-line'")
-                                        span 모니터링 구성
                                     button(*ngIf="showJoinSwarmButton(selected())", type="button", (click)="joinSelected()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                                         i(class="fa-solid fa-link")
                                         span Swarm 연결
                         div(class="space-y-3 px-4 py-3")
                             div(class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between")
-                                p(class="text-xs text-zinc-500 dark:text-zinc-400") 자동 갱신은 CPU, Memory, Storage만 다시 확인합니다. 컨테이너/서비스 정보는 필요할 때만 갱신합니다.
+                                p(class="text-xs text-zinc-500 dark:text-zinc-400") 화면 값은 선택한 주기로 즉시 확인하고, 장기 자원 기록은 백그라운드에서 10분마다 저장합니다.
                                 div(class="flex flex-wrap items-center gap-2")
                                     button(type="button", (click)="openResourceChart()", [disabled]="!selected()?.id", class="inline-flex h-8 items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-950")
                                         i(class="fa-solid fa-chart-area")

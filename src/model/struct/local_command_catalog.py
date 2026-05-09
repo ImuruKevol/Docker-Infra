@@ -103,9 +103,26 @@ def _node_exporter_ensure_command(params):
         "EOF\n"
         f"$SUDO mv /tmp/{shlex.quote(service_name)} \"$UNIT\"\n"
         "$SUDO systemctl daemon-reload\n"
-        f"$SUDO systemctl enable --now {shlex.quote(service_name)}\n"
-        f"$SUDO systemctl restart {shlex.quote(service_name)}\n"
+        f"$SUDO systemctl enable {shlex.quote(service_name)}\n"
+        f"$SUDO systemctl start {shlex.quote(service_name)}\n"
         f"$SUDO systemctl is-active --quiet {shlex.quote(service_name)}\n"
+        "printf 'Running\n'\n"
+        f"$SUDO systemctl --no-pager --full status {shlex.quote(service_name)} | sed -n '1,12p'\n"
+    )
+    return ["sh", "-lc", script]
+
+
+def _node_exporter_status_command(params):
+    service_name = str((params or {}).get("service_name") or "docker-infra-node-exporter.service").strip()
+    unit_name = service_name[:-8] if service_name.endswith(".service") else service_name
+    if NETWORK_NAME_RE.match(unit_name) is None:
+        raise LocalCommandError(400, "node_exporter service 이름이 올바르지 않습니다.", "INVALID_NODE_EXPORTER_SERVICE")
+    script = (
+        "set -eu\n"
+        "SUDO=''\n"
+        "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+        f"$SUDO systemctl is-active --quiet {shlex.quote(service_name)}\n"
+        "printf 'Running\n'\n"
         f"$SUDO systemctl --no-pager --full status {shlex.quote(service_name)} | sed -n '1,12p'\n"
     )
     return ["sh", "-lc", script]
@@ -368,6 +385,7 @@ COMMAND_SPECS = {
     "backup.harbor.restart": {"category": "backup", "factory": _backup_harbor_restart_command, "destructive": True, "default_timeout_seconds": 300},
     "backup.harbor.ps": {"category": "backup", "factory": _backup_harbor_ps_command},
     "monitoring.node_exporter.ensure": {"category": "monitoring", "factory": _node_exporter_ensure_command, "destructive": True, "default_timeout_seconds": 120},
+    "monitoring.node_exporter.status": {"category": "monitoring", "factory": _node_exporter_status_command, "default_timeout_seconds": 20},
     "system.metrics": {"category": "system", "argv": ["sh", "-lc", SYSTEM_METRICS_SCRIPT]},
     "filesystem.list": {"category": "filesystem", "factory": _filesystem_list_command},
     "filesystem.read": {"category": "filesystem", "factory": _filesystem_read_command},

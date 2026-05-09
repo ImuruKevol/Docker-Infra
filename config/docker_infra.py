@@ -16,7 +16,7 @@ DEFAULT_BACKUP_HARBOR_HTTP_PORT = "5000"
 DEFAULT_BACKUP_HARBOR_HTTPS_PORT = "5443"
 DEFAULT_BACKUP_HARBOR_VERSION = "v2.15.0"
 DEFAULT_NODE_EXPORTER_IMAGE = "quay.io/prometheus/node-exporter:v1.8.2"
-DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS = "60"
+DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS = "600"
 CONFIG_ENV_NAME = "config.env"
 LOCAL_EXECUTOR_ALLOWLIST_ENV = "DOCKER_INFRA_LOCAL_EXECUTOR_ALLOWLIST"
 DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
@@ -38,6 +38,7 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "backup.harbor.down",
     "backup.harbor.restart",
     "monitoring.node_exporter.ensure",
+    "monitoring.node_exporter.status",
 ]
 
 
@@ -189,7 +190,7 @@ def node_metric_collection_interval_seconds(env=None):
         seconds = int(value)
     except (TypeError, ValueError):
         seconds = int(DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS)
-    return max(15, min(seconds, 3600))
+    return max(600, min(seconds, 3600))
 
 
 def backup_harbor_installer_url(env=None):

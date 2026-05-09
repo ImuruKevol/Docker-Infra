@@ -34,11 +34,9 @@ def load():
     templates_model = wiz.model("struct").templates
     domains_model = wiz.model("struct").domains
     webserver = wiz.model("struct/webserver")
-    monitoring = wiz.model("struct").nodes_monitoring
     code = 200
     payload = {}
     try:
-        monitoring.tick()
         zones = []
         for zone in domains_model.load().get("zones", []):
             if zone.get("usable_for_service") is False or zone.get("enabled") is False:

@@ -50,9 +50,20 @@ class NodesMonitoring:
             "EOF\n"
             f"$SUDO mv /tmp/{shlex.quote(EXPORTER_SERVICE)} \"$UNIT\"\n"
             "$SUDO systemctl daemon-reload\n"
-            f"$SUDO systemctl enable --now {shlex.quote(EXPORTER_SERVICE)}\n"
-            f"$SUDO systemctl restart {shlex.quote(EXPORTER_SERVICE)}\n"
+            f"$SUDO systemctl enable {shlex.quote(EXPORTER_SERVICE)}\n"
+            f"$SUDO systemctl start {shlex.quote(EXPORTER_SERVICE)}\n"
             f"$SUDO systemctl is-active --quiet {shlex.quote(EXPORTER_SERVICE)}\n"
+            "printf 'Running\n'\n"
+            f"$SUDO systemctl --no-pager --full status {shlex.quote(EXPORTER_SERVICE)} | sed -n '1,12p'\n"
+        )
+
+    def _exporter_status_script(self):
+        return (
+            "set -eu\n"
+            "SUDO=''\n"
+            "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+            f"$SUDO systemctl is-active --quiet {shlex.quote(EXPORTER_SERVICE)}\n"
+            "printf 'Running\n'\n"
             f"$SUDO systemctl --no-pager --full status {shlex.quote(EXPORTER_SERVICE)} | sed -n '1,12p'\n"
         )
 
@@ -72,6 +83,21 @@ class NodesMonitoring:
             env=env,
         )
 
+    def _run_exporter_status(self, node, env=None):
+        if node.get("is_local_master") or node.get("role") == "local_master" or node.get("name") == "local-master":
+            return nodes.local_executor.run(
+                "monitoring.node_exporter.status",
+                params={"service_name": EXPORTER_SERVICE},
+                timeout_seconds=20,
+                env=env,
+            )
+        return nodes._run_ssh_command(
+            node,
+            ["sh", "-lc", self._exporter_status_script()],
+            timeout_seconds=20,
+            env=env,
+        )
+
     def _mark_agent(self, node_id, result, env=None):
         configured = result.get("status") == "ok"
         with connect(env=env) as connection:
@@ -82,6 +108,8 @@ class NodesMonitoring:
                 metadata["monitoring_agent"] = {
                     "configured": configured,
                     "status": result.get("status"),
+                    "runtime_status": "running" if configured else "stopped",
+                    "running": configured,
                     "exit_code": result.get("exit_code"),
                     "service": EXPORTER_SERVICE,
                     "container": EXPORTER_CONTAINER,
@@ -98,6 +126,10 @@ class NodesMonitoring:
                 "last_result": self._last_result,
             }
 
+    def _monitoring_configured(self, node):
+        metadata = (node or {}).get("metadata") or {}
+        return bool((metadata.get("monitoring_agent") or {}).get("configured"))
+
     def _node_ids_for_payload(self, payload=None, env=None):
         body = payload or {}
         target_node_id = str(body.get("node_id") or "").strip()
@@ -107,6 +139,8 @@ class NodesMonitoring:
             return []
         if target_node_id:
             rows = [item for item in rows if item.get("id") == target_node_id]
+        elif not body.get("include_unconfigured"):
+            rows = [item for item in rows if self._monitoring_configured(item)]
         return [str(item.get("id")) for item in rows if item.get("id")]
 
     def ensure_exporters(self, payload=None, env=None):
@@ -152,6 +186,39 @@ class NodesMonitoring:
         )
         return {"operation": operation, "results": results, "failed": failed, "succeeded": len(results) - failed}
 
+    def check_exporters(self, payload=None, env=None):
+        body = payload or {}
+        target_node_id = str(body.get("node_id") or "").strip()
+        selected = []
+        for item in nodes.list(env=env):
+            if target_node_id and item.get("id") != target_node_id:
+                continue
+            selected.append(nodes.detail(item["id"], env=env))
+        if target_node_id and not selected:
+            raise nodes.NodeError(404, "서버를 찾을 수 없습니다.", "NODE_NOT_FOUND")
+        results = []
+        failed = 0
+        for node in selected:
+            result = self._run_exporter_status(node, env=env)
+            ok = result.get("status") == "ok"
+            try:
+                self._mark_agent(node["id"], result, env=env)
+            except Exception:
+                pass
+            if not ok:
+                failed += 1
+            results.append({
+                "node": {"id": node["id"], "name": node["name"], "host": node["host"]},
+                "status": "running" if ok else "stopped",
+                "check": {
+                    "status": result.get("status"),
+                    "exit_code": result.get("exit_code"),
+                    "stdout": result.get("stdout"),
+                    "stderr": result.get("stderr"),
+                },
+            })
+        return {"results": results, "failed": failed, "succeeded": len(results) - failed}
+
     def collect_node(self, node_id, env=None):
         metric = None
         containers = None
@@ -183,6 +250,8 @@ class NodesMonitoring:
         node_rows = nodes.list(env=env)
         if target_node_id:
             node_rows = [item for item in node_rows if item.get("id") == target_node_id]
+        elif not body.get("include_unconfigured"):
+            node_rows = [item for item in node_rows if self._monitoring_configured(item)]
         with self._lock:
             self._collecting_node_ids = [str(item.get("id")) for item in node_rows if item.get("id")]
         results = []
@@ -205,6 +274,8 @@ class NodesMonitoring:
         body = payload or {}
         interval = config.node_metric_collection_interval_seconds(env)
         collecting_node_ids = self._node_ids_for_payload(body, env=env)
+        if not collecting_node_ids:
+            return {"scheduled": False, "reason": "no_configured_nodes", "last_result": self._last_result}
         with self._lock:
             if self._running:
                 return {"scheduled": False, "reason": "running", "last_result": self._last_result}

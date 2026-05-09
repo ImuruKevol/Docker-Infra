@@ -39,12 +39,10 @@ def _service_detail_payload(service_id):
 
 def load():
     catalog = wiz.model("struct/infra_catalog_registry")
-    monitoring = wiz.model("struct").nodes_monitoring
     code = 200
     payload = {}
 
     try:
-        monitoring.tick()
         payload = catalog.services()
     except RuntimeError as exc:
         code = 503

@@ -1,4 +1,5 @@
 import { Input, OnChanges, OnInit, SimpleChanges } from '@angular/core';
+import { Service } from '@wiz/libs/portal/season/service';
 
 export class Component implements OnInit, OnChanges {
     @Input() title: string = '파일';
@@ -23,6 +24,8 @@ export class Component implements OnInit, OnChanges {
     public dragged: any = null;
     private contextKey = '';
 
+    constructor(public service: Service) { }
+
     public async ngOnInit() {
         await this.reload();
     }
@@ -34,6 +37,10 @@ export class Component implements OnInit, OnChanges {
             await this.reload();
         }
         this.contextKey = nextKey;
+    }
+
+    private async render() {
+        await this.service.render();
     }
 
     private async request(action: string, payload: any = {}) {
@@ -59,6 +66,7 @@ export class Component implements OnInit, OnChanges {
         if (!this.scope) return;
         this.busy = true;
         this.error = '';
+        await this.render();
         try {
             const data = await this.request('list', { path });
             this.path = data.path || '';
@@ -69,6 +77,7 @@ export class Component implements OnInit, OnChanges {
             this.error = error?.message || '파일 목록을 불러올 수 없습니다.';
         }
         this.busy = false;
+        await this.render();
     }
 
     public async openItem(item: any) {
@@ -78,6 +87,8 @@ export class Component implements OnInit, OnChanges {
         }
         if (!this.allowRead) return;
         this.busy = true;
+        this.error = '';
+        await this.render();
         try {
             const data = await this.request('read', { path: item.path });
             this.previewTitle = data.path || item.path;
@@ -87,12 +98,14 @@ export class Component implements OnInit, OnChanges {
             this.error = error?.message || '파일을 읽을 수 없습니다.';
         }
         this.busy = false;
+        await this.render();
     }
 
-    public closePreview() {
+    public async closePreview() {
         this.previewOpen = false;
         this.previewTitle = '';
         this.previewContent = '';
+        await this.render();
     }
 
     public crumbs() {
@@ -178,6 +191,8 @@ export class Component implements OnInit, OnChanges {
 
     private async mutate(action: string, path: string, extra: any = {}) {
         this.busy = true;
+        this.error = '';
+        await this.render();
         try {
             await this.request(action, { path, ...extra });
             await this.reload(this.path);
@@ -185,6 +200,7 @@ export class Component implements OnInit, OnChanges {
             this.error = error?.message || '파일 작업을 처리할 수 없습니다.';
         }
         this.busy = false;
+        await this.render();
     }
 
     public async uploadFiles(event: Event) {
@@ -194,6 +210,7 @@ export class Component implements OnInit, OnChanges {
         if (!files.length) return;
         this.busy = true;
         this.error = '';
+        await this.render();
         const fd = new FormData();
         fd.append('scope', this.scope);
         fd.append('context', JSON.stringify({ ...(this.context || {}), show_hidden: this.showHidden }));
@@ -214,6 +231,7 @@ export class Component implements OnInit, OnChanges {
         }
         input.value = '';
         this.busy = false;
+        await this.render();
     }
 
     public formatBytes(value: any) {

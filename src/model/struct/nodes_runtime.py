@@ -1,3 +1,5 @@
+import datetime
+
 connect = wiz.model("db/postgres").connect
 local_catalog = wiz.model("struct/local_command_catalog")
 shared = wiz.model("struct/nodes_shared")
@@ -46,7 +48,7 @@ class NodeRuntimeMixin(files_mixin):
             with connection.cursor() as cursor:
                 self._write_node_metric(cursor, node_id, payload, test_run_id=test_run_id, metadata={"source": source})
 
-    def metric_snapshot(self, node_id, env=None):
+    def _system_metric_payload(self, node_id, env=None):
         node, test_run_id = self._target_node(node_id, env=env)
         result = self._run_node_command(
             node,
@@ -59,8 +61,17 @@ class NodeRuntimeMixin(files_mixin):
             raise NodeError(409, f"서버 자원 정보를 갱신할 수 없습니다. {self._command_failure(result, 'metric refresh failed')}", "NODE_METRIC_REFRESH_FAILED", check=result)
         payload = self._latest_metric_payload(node_id, env=env)
         payload.update(_load_json(result["stdout"]))
+        payload["reported_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        return node, test_run_id, payload, result
+
+    def metric_snapshot(self, node_id, env=None):
+        node, test_run_id, payload, result = self._system_metric_payload(node_id, env=env)
         self._write_snapshot(node_id, payload, "metric_refresh", test_run_id=test_run_id, env=env)
         return {"node_id": node_id, "latest_metric": node_view.metric(self.latest_metric(node_id, env=env) or payload)}
+
+    def live_metric(self, node_id, env=None):
+        node, test_run_id, payload, result = self._system_metric_payload(node_id, env=env)
+        return {"node_id": node_id, "latest_metric": node_view.metric(payload)}
 
     def _services_map(self, env=None):
         with connect(env=env) as connection:

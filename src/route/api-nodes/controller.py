@@ -1,4 +1,5 @@
 nodes = wiz.model("struct").nodes
+monitoring = wiz.model("struct").nodes_monitoring
 method = wiz.request.method().upper()
 
 
@@ -17,7 +18,17 @@ try:
     if method == "GET":
         payload = {"nodes": nodes.overview_summary(auto_sync_local_master=False)["nodes"]}
     else:
-        payload = {"node": nodes.save_slave(wiz.request.query())}
+        body = wiz.request.query()
+        is_new = not body.get("node_id")
+        node = nodes.save_slave(body)
+        monitoring_result = None
+        if is_new:
+            try:
+                monitoring_result = monitoring.ensure_exporters({"node_id": node["id"]})
+                node = nodes.detail(node["id"])
+            except Exception as exc:
+                monitoring_result = {"status": "failed", "message": str(exc)}
+        payload = {"node": node, "monitoring_auto_configure": monitoring_result, "monitoring": monitoring.state()}
 except nodes.NodeError as exc:
     code = exc.status_code
     payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
