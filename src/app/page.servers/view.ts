@@ -16,7 +16,6 @@ export class Component implements OnInit, OnDestroy {
     public detailTab = signal<string>('overview');
     public containerStats = signal<any>({ total: 0, running: 0, stopped: 0 });
     public serviceGroups = signal<any[]>([]);
-    public unmanagedContainers = signal<any[]>([]);
     public macros = signal<any[]>([]);
     public globalMacros = signal<any[]>([]);
     public nodeMacros = signal<any[]>([]);
@@ -170,7 +169,7 @@ export class Component implements OnInit, OnDestroy {
         this.stopMacroRunPolling();
         this.disconnectTerminal(true);
         this.setSelectedNode(node || null);
-        this.applyContainerPanel({ summary: { total: 0, running: 0, stopped: 0 }, service_groups: [], unmanaged_containers: [] });
+        this.applyContainerPanel({ summary: { total: 0, running: 0, stopped: 0 }, service_groups: [] });
         this.terminalExpanded.set(false);
         this.globalMacros.set([]);
         this.nodeMacros.set([]);
@@ -199,7 +198,6 @@ export class Component implements OnInit, OnDestroy {
     private applyContainerPanel(data: any) {
         this.containerStats.set(data.summary || { total: 0, running: 0, stopped: 0 });
         this.serviceGroups.set(data.service_groups || []);
-        this.unmanagedContainers.set(data.unmanaged_containers || []);
     }
 
     private errorDetails(details: any[] = []) {
@@ -968,6 +966,10 @@ export class Component implements OnInit, OnDestroy {
             await this.alert('중심 서버는 이미 Docker Infra가 관리하는 서버입니다.', 'info');
             return;
         }
+        if (this.isSwarmConnected(node)) {
+            await this.alert('이미 Swarm으로 연결된 서버입니다.', 'info');
+            return;
+        }
         const confirmed = await this.service.modal.show({
             title: 'Swarm 연결',
             message: `${node.name || node.host} 서버를 Docker Infra 클러스터에 연결합니다.`,
@@ -1071,21 +1073,21 @@ export class Component implements OnInit, OnDestroy {
 
     public async importComposeFile(item: any) {
         if (!this.canImportFile(item)) return;
+        const nodeId = this.selected()?.id;
+        if (!nodeId) {
+            await this.alert('서버를 먼저 선택해주세요.');
+            return;
+        }
         const serviceName = this.composeImportNameValue();
         if (!serviceName) {
             await this.alert('서비스 이름을 입력해주세요.');
             return;
         }
-        const confirmed = await this.service.modal.show({
-            title: '서비스 등록',
-            message: `${item.path} 파일로 ${serviceName} 서비스 초안을 등록합니다.`,
-            cancel: '취소',
-            action: '등록',
-            actionBtn: 'primary',
-            status: 'info'
-        });
-        if (!confirmed) return;
-        await this.performImportCompose(item, false);
+        const params = new URLSearchParams();
+        params.set('import_node_id', String(nodeId));
+        params.set('import_path', String(item.path || ''));
+        params.set('import_name', serviceName);
+        this.service.href(`/services/create?${params.toString()}`);
     }
 
     private async performImportCompose(item: any, allowWarnings: boolean) {
@@ -1142,14 +1144,17 @@ export class Component implements OnInit, OnDestroy {
 
     public async runContainerAction(container: any, action: string) {
         if (!this.canRunContainerAction(container, action)) return;
-        const labels: any = { start: '실행', stop: '중지', restart: '재시작' };
+        const labels: any = { start: '실행', stop: '중지', restart: '재시작', delete: '삭제' };
+        const isDelete = action === 'delete';
         const confirmed = await this.service.modal.show({
             title: `컨테이너 ${labels[action]}`,
-            message: `${container.name || container.id} 컨테이너를 ${labels[action]}합니다.`,
+            message: isDelete
+                ? `${container.name || container.id} 컨테이너를 삭제합니다.\n\n실행 중이면 먼저 중지한 뒤 삭제합니다. 이 작업은 되돌릴 수 없습니다.`
+                : `${container.name || container.id} 컨테이너를 ${labels[action]}합니다.`,
             cancel: '취소',
             action: labels[action],
-            actionBtn: action === 'stop' ? 'warning' : 'primary',
-            status: 'info'
+            actionBtn: isDelete ? 'error' : (action === 'stop' ? 'warning' : 'primary'),
+            status: isDelete ? 'error' : 'info'
         });
         if (!confirmed) return;
 
@@ -1158,7 +1163,7 @@ export class Component implements OnInit, OnDestroy {
         if (code === 200) {
             this.setSelectedNode(data.node || null);
             this.applyContainerPanel(data);
-            this.actionTitle.set('컨테이너 동작 결과');
+            this.actionTitle.set(isDelete ? '컨테이너 삭제 결과' : '컨테이너 동작 결과');
             this.actionResult.set({ checks: { command: 'ok', containers: 'ok' }, command: data.result });
             this.actionModalOpen.set(true);
         } else {
@@ -1173,7 +1178,7 @@ export class Component implements OnInit, OnDestroy {
         const labels: any = { start: '일괄 실행', stop: '일괄 중지', restart: '일괄 재시작' };
         const confirmed = await this.service.modal.show({
             title: labels[action],
-            message: `${group.service?.name || group.service?.namespace} 서비스 컨테이너를 ${labels[action]}합니다.`,
+            message: `${group.service?.name || group.service?.namespace} 서비스를 ${labels[action]}합니다.`,
             cancel: '취소',
             action: labels[action],
             actionBtn: action === 'stop' ? 'warning' : 'primary',
@@ -1186,11 +1191,11 @@ export class Component implements OnInit, OnDestroy {
         if (code === 200) {
             this.setSelectedNode(data.node || null);
             this.applyContainerPanel(data);
-            this.actionTitle.set('서비스 컨테이너 동작 결과');
+            this.actionTitle.set('서비스 동작 결과');
             this.actionResult.set({ checks: { command: 'ok', containers: 'ok' }, command: data.result });
             this.actionModalOpen.set(true);
         } else {
-            await this.alert(data?.message || '서비스 컨테이너 동작을 실행할 수 없습니다.');
+            await this.alert(data?.message || '서비스 동작을 실행할 수 없습니다.');
         }
         this.busy.set(false);
         await this.service.render();
@@ -1242,6 +1247,15 @@ export class Component implements OnInit, OnDestroy {
 
     public workerCount() {
         return this.nodes().filter((node) => !node.is_local_master).length;
+    }
+
+    public isSwarmConnected(node: any) {
+        if (!node || node.is_local_master) return false;
+        return Boolean(node.swarm_node_id || node.status === 'active');
+    }
+
+    public showJoinSwarmButton(node: any) {
+        return Boolean(node && !node.is_local_master && !this.isSwarmConnected(node));
     }
 
     public statusLabel(status: string) {
@@ -1339,6 +1353,7 @@ export class Component implements OnInit, OnDestroy {
 
     public canRunContainerAction(container: any, action: string) {
         const state = this.containerSignal(container);
+        if (action === 'delete') return Boolean(container?.id) && state !== 'removing';
         const allowed: any = {
             start: ['created', 'exited', 'dead'],
             restart: ['running', 'healthy', 'unhealthy', 'starting', 'paused', 'created', 'exited', 'dead'],
@@ -1352,12 +1367,13 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public containerActionTitle(container: any, action: string) {
-        const labels: any = { start: '실행', stop: '중지', restart: '재시작' };
+        const labels: any = { start: '실행', stop: '중지', restart: '재시작', delete: '삭제' };
         if (this.canRunContainerAction(container, action)) return `컨테이너 ${labels[action]}`;
         const reasons: any = {
             start: '중지된 컨테이너만 실행할 수 있습니다.',
             stop: '실행 중인 컨테이너만 중지할 수 있습니다.',
             restart: '현재 상태에서는 재시작할 수 없습니다.',
+            delete: '삭제할 수 없는 상태입니다.',
         };
         return reasons[action] || labels[action];
     }
@@ -1371,6 +1387,63 @@ export class Component implements OnInit, OnDestroy {
             restart: '재시작할 수 있는 컨테이너가 없습니다.',
         };
         return reasons[action] || labels[action];
+    }
+
+    public serviceDisplayName(group: any) {
+        return group?.service?.name || group?.service?.namespace || '등록된 서비스';
+    }
+
+    public serviceDetailQueryParams(group: any) {
+        const id = group?.service?.id;
+        return id ? { service_id: id } : {};
+    }
+
+    public serviceRuntimeStatus(group: any) {
+        const summary = group?.summary || {};
+        const total = Number(summary.total || 0);
+        const running = Number(summary.running || 0);
+        if (!total) return { label: '상태 없음', status: 'unknown' };
+        if (running === total) return { label: '정상 운영', status: 'running' };
+        if (running > 0) return { label: `일부 운영 ${running}/${total}`, status: 'warning' };
+        return { label: '중지됨', status: 'failed' };
+    }
+
+    public serviceRuntimeLabel(group: any) {
+        return this.serviceRuntimeStatus(group).label;
+    }
+
+    public serviceRuntimeClass(group: any) {
+        return this.statusClass(this.serviceRuntimeStatus(group).status);
+    }
+
+    public servicePortBadges(group: any) {
+        const badges: any[] = [];
+        const seen = new Set<string>();
+        for (const container of group?.containers || []) {
+            for (const binding of container?.port_bindings || []) {
+                let label = '';
+                let tone = 'internal';
+                if (binding?.mapped) {
+                    label = `외부 ${this.portSourceLabel(binding)} -> 서비스 ${this.portTargetLabel(binding)}`;
+                    tone = 'public';
+                } else if (binding?.internal_only) {
+                    label = `내부 ${this.portTargetLabel(binding)}`;
+                }
+                if (!label) continue;
+                const key = `${tone}:${label}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                badges.push({ label, tone });
+            }
+        }
+        return badges;
+    }
+
+    public servicePortBadgeClass(badge: any) {
+        if (badge?.tone === 'public') {
+            return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
     }
 
     public isSelected(node: any) {

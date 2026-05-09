@@ -13,6 +13,7 @@ IMAGES_LOCAL_MODEL = ROOT / "src" / "model" / "struct" / "images_local.py"
 TEMPLATES_MODEL = ROOT / "src" / "model" / "struct" / "templates.py"
 TEMPLATES_STORE = ROOT / "src" / "model" / "struct" / "templates_store.py"
 TEMPLATES_SEED = ROOT / "src" / "model" / "struct" / "templates_seed.py"
+TEMPLATES_SEED_FILES = sorted((ROOT / "src" / "model" / "struct").glob("templates_seed*.py"))
 SERVICES_API = ROOT / "src" / "app" / "page.services" / "api.py"
 
 
@@ -25,6 +26,7 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
         templates_model = TEMPLATES_MODEL.read_text(encoding="utf-8")
         templates_store = TEMPLATES_STORE.read_text(encoding="utf-8")
         templates_seed = TEMPLATES_SEED.read_text(encoding="utf-8")
+        templates_seed_all = "\n".join(path.read_text(encoding="utf-8") for path in TEMPLATES_SEED_FILES)
         services_api = SERVICES_API.read_text(encoding="utf-8")
 
         self.assertIn("def harbor_detail():", images_api)
@@ -51,16 +53,14 @@ class ImagesTemplatesStaticContractTest(unittest.TestCase):
         self.assertIn("def release(self, payload, env=None):", templates_store)
         self.assertIn("def version_detail(self, version_id, env=None):", templates_store)
         for token in [
-            "nginx_static",
-            "node_api",
-            "springboot_api",
-            "postgres_db",
-            "mariadb_db",
-            "redis_cache",
-            "rabbitmq_queue",
+            "wordpress_site",
+            "nextcloud_stack",
+            "odoo_suite",
+            "wikijs_site",
+            "domain_ready",
         ]:
-            self.assertIn(token, templates_seed)
-        self.assertNotIn("harbor_registry", templates_seed)
+            self.assertIn(token, templates_seed_all)
+        self.assertIn("managed_namespaces", templates_seed)
 
 
 class ImagesTemplatesLiveFlowTest(unittest.TestCase):
@@ -74,9 +74,12 @@ class ImagesTemplatesLiveFlowTest(unittest.TestCase):
         data = load.json()["data"]
         self.assertIn("template_root", data)
         self.assertTrue(str(data["template_root"]).endswith("/data/templates"))
-        self.assertGreaterEqual(len(data.get("templates", [])), 5)
-        self.assertNotIn("gitlab_ce", {item["namespace"] for item in data.get("templates", [])})
-        self.assertNotIn("harbor_registry", {item["namespace"] for item in data.get("templates", [])})
+        namespaces = {item["namespace"] for item in data.get("templates", [])}
+        self.assertGreaterEqual(len(data.get("templates", [])), 4)
+        for namespace in ["wordpress_site", "nextcloud_stack", "odoo_suite", "wikijs_site"]:
+            self.assertIn(namespace, namespaces)
+        for namespace in ["gitlab_ce", "harbor_registry", "nginx_static", "postgres_db", "redis_cache"]:
+            self.assertNotIn(namespace, namespaces)
 
         first = data["templates"][0]
         detail = self.client.post(

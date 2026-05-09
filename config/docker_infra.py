@@ -24,6 +24,11 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "docker.container.stop",
     "docker.container.restart",
     "docker.image.remove",
+    "service.stack.deploy",
+    "service.stack.remove",
+    "proxy.nginx.reload",
+    "certbot.nginx.issue",
+    "openssl.self_signed_cert.issue",
     "backup.harbor.install",
     "backup.harbor.up",
     "backup.harbor.down",
@@ -192,3 +197,24 @@ def advertise_address(env=None):
 
 def session_cookie_secure(default=False, env=None):
     return _bool_value(runtime_env(env).get("DOCKER_INFRA_SESSION_COOKIE_SECURE"), default=default)
+
+
+def certbot_email(env=None):
+    return runtime_env(env).get("DOCKER_INFRA_CERTBOT_EMAIL", "").strip()
+
+
+def certbot_staging(env=None):
+    return _bool_value(runtime_env(env).get("DOCKER_INFRA_CERTBOT_STAGING"), default=False)
+
+
+def self_signed_cert_test_enabled(env=None):
+    return _bool_value(runtime_env(env).get("DOCKER_INFRA_SSL_SELF_SIGNED_TEST"), default=False)
+
+
+def self_signed_cert_days(env=None):
+    value = runtime_env(env).get("DOCKER_INFRA_SSL_SELF_SIGNED_DAYS", "7")
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        days = 7
+    return max(1, min(days, 365))

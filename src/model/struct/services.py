@@ -14,7 +14,14 @@ config = wiz.config("docker_infra")
 setup = wiz.model("struct/setup")
 validator = wiz.model("struct/compose_validator")
 shared = wiz.model("struct/services_shared")
+service_compose = wiz.model("struct/services_compose")
+image_backups = wiz.model("struct/service_image_backups")
 ServiceRuntimeMixin = wiz.model("struct/services_runtime")
+ServiceDeployMixin = wiz.model("struct/services_deploy")
+ServiceDeleteMixin = wiz.model("struct/services_delete")
+ServiceUpdateMixin = wiz.model("struct/services_update")
+ServiceRollbackMixin = wiz.model("struct/services_rollback")
+ServiceStatusMixin = wiz.model("struct/services_status")
 ServiceError = shared.ServiceError
 _row = shared.row
 
@@ -38,7 +45,7 @@ def _normalize_namespace(value):
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower())).strip("_")
 
 
-class ServiceManager(ServiceRuntimeMixin):
+class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixin, ServiceDeleteMixin, ServiceStatusMixin, ServiceRuntimeMixin):
     ServiceError = ServiceError
     ComposeValidationError = validator.ComposeValidationError
     IMPORT_WARNING_CODES = {"FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"}
@@ -54,29 +61,15 @@ class ServiceManager(ServiceRuntimeMixin):
     def service_dir(self, namespace):
         return self.template_root() / "services" / namespace
 
-    def default_compose(self, namespace, service_name="web", image="nginx:alpine", port=80):
-        service_name = service_name or "web"
-        port = _safe_int(port, 80)
-        compose = {
-            "services": {
-                service_name: {
-                    "image": image or "nginx:alpine",
-                    "ports": [f"{port}:{port}"],
-                    "healthcheck": {
-                        "test": ["CMD", "wget", "-qO-", f"http://127.0.0.1:{port}"],
-                        "interval": "30s",
-                        "timeout": "5s",
-                        "retries": 3,
-                    },
-                }
-            }
-        }
-        result = validator.validate({
-            "namespace": namespace,
-            "filename": "docker-compose.yaml",
-            "compose": compose,
-        })
-        return yaml.safe_dump(result["normalized"], sort_keys=False, allow_unicode=False)
+    def default_compose(self, namespace, service_name="web", image="nginx:alpine", port=80, env_vars=None, volumes=None):
+        return service_compose.default_compose(
+            namespace,
+            service_name=service_name,
+            image=image,
+            port=port,
+            env_vars=env_vars,
+            volumes=volumes,
+        )
 
     def _detect_port(self, normalized_compose, fallback=80):
         services = (normalized_compose or {}).get("services") or {}
@@ -97,6 +90,7 @@ class ServiceManager(ServiceRuntimeMixin):
         payload = payload or {}
         namespace = (payload.get("namespace") or "").strip()
         name = (payload.get("name") or namespace).strip()
+        description = (payload.get("description") or "").strip()
         filename = payload.get("filename") or "docker-compose.yaml"
         content = payload.get("content")
         domain = (payload.get("domain") or "").strip()
@@ -105,12 +99,24 @@ class ServiceManager(ServiceRuntimeMixin):
         ssl_mode = payload.get("ssl_mode") or "none"
         if ssl_mode == "upload":
             ssl_mode = "existing"
+        env_vars = payload.get("env_vars") or []
+        volumes = payload.get("volumes") or []
+        placement_mode = payload.get("placement_mode") or "auto"
+        node_id = (payload.get("node_id") or "").strip()
         test_run_id = payload.get("test_run_id")
         source = payload.get("source") or "ui_wizard"
         source_ref = payload.get("source_ref")
+        domain_metadata = {"source": "ui_wizard", **dict(payload.get("domain_metadata") or {})}
 
         if not content:
-            content = self.default_compose(namespace, port=port)
+            content = self.default_compose(
+                namespace,
+                service_name=payload.get("service_name") or "web",
+                image=payload.get("image") or "nginx:alpine",
+                port=port,
+                env_vars=env_vars,
+                volumes=volumes,
+            )
 
         validation = validation or validator.validate({
             "namespace": namespace,
@@ -144,12 +150,18 @@ class ServiceManager(ServiceRuntimeMixin):
                 metadata = {
                     "source": source,
                     "history_id": history_id,
+                    "description": description,
                     "port": port,
                     "proxy_type": proxy_type,
                     "ssl_mode": ssl_mode,
+                    "env_vars": env_vars,
+                    "volumes": volumes,
+                    "placement": {"mode": placement_mode, "node_id": node_id},
                 }
                 if source_ref:
                     metadata["source_ref"] = source_ref
+                if payload.get("wizard"):
+                    metadata["wizard"] = payload.get("wizard")
                 cursor.execute(
                     """
                     INSERT INTO services(namespace, name, status, compose_path, stack_name, target_node_policy, test_run_id, metadata)
@@ -161,7 +173,7 @@ class ServiceManager(ServiceRuntimeMixin):
                         name,
                         str(file_path),
                         validation["stack_name"],
-                        Jsonb({"mode": "swarm", "replicas": 1}),
+                        Jsonb({"mode": "swarm", "replicas": 1, "placement": placement_mode, "node_id": node_id}),
                         test_run_id,
                         Jsonb(metadata),
                     ),
@@ -183,7 +195,7 @@ class ServiceManager(ServiceRuntimeMixin):
                             proxy_type,
                             ssl_mode,
                             test_run_id,
-                            Jsonb({"source": "ui_wizard"}),
+                            Jsonb(domain_metadata),
                         ),
                     )
                     domain_row = _row(cursor.fetchone())
@@ -204,10 +216,20 @@ class ServiceManager(ServiceRuntimeMixin):
                 )
                 version = _row(cursor.fetchone())
 
+        image_rows = image_backups.record(
+            service,
+            validation["normalized"],
+            compose_version_id=version["id"],
+            source=source,
+            test_run_id=test_run_id,
+            metadata={"namespace": namespace},
+            env=env,
+        )
         return {
             "service": service,
             "domain": domain_row,
             "compose_version": version,
+            "image_backups": image_rows,
             "validation": validation,
             "paths": {
                 "service_dir": str(service_dir),

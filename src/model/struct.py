@@ -48,6 +48,10 @@ class Struct:
         return self._load("local_executor")
 
     @property
+    def local_command_scripts(self):
+        return self._load("local_command_scripts")
+
+    @property
     def macros(self):
         return self._load("macros")
 
@@ -66,6 +70,46 @@ class Struct:
     @property
     def services(self):
         return self._load("services")
+
+    @property
+    def services_wizard(self):
+        return self._load("services_wizard")
+
+    @property
+    def services_ports(self):
+        return self._load("services_ports")
+
+    @property
+    def services_preflight(self):
+        return self._load("services_preflight")
+
+    @property
+    def services_status(self):
+        return self._load("services_status")
+
+    @property
+    def service_nginx(self):
+        return self._load("service_nginx")
+
+    @property
+    def service_nginx_certificates(self):
+        return self._load("service_nginx_certificates")
+
+    @property
+    def service_image_backups(self):
+        return self._load("service_image_backups")
+
+    @property
+    def service_image_backup_scheduler(self):
+        return self._load("service_image_backup_scheduler")
+
+    @property
+    def service_image_backup_tick(self):
+        return self._load("service_image_backup_tick")
+
+    @property
+    def service_image_backup_cleanup(self):
+        return self._load("service_image_backup_cleanup")
 
     @property
     def settings(self):

@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import json
 import re
 import shutil
@@ -85,6 +86,68 @@ def _certificate_id():
     return uuid.uuid4().hex
 
 
+def _key_file_info(path):
+    key_path = Path(str(path or "")).expanduser()
+    if not path or not key_path.is_file():
+        return {
+            "key_exists": False,
+            "key_permission_mode": "",
+            "key_permission_secure": False,
+        }
+    mode = key_path.stat().st_mode & 0o777
+    return {
+        "key_exists": True,
+        "key_permission_mode": oct(mode),
+        "key_permission_secure": (mode & 0o077) == 0,
+    }
+
+
+def _public_key_der_from_cert(path):
+    try:
+        cert = subprocess.run(
+            ["openssl", "x509", "-in", str(path), "-pubkey", "-noout"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        if cert.returncode != 0 or not cert.stdout:
+            return None
+        public_key = subprocess.run(
+            ["openssl", "pkey", "-pubin", "-outform", "DER"],
+            input=cert.stdout,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        return public_key.stdout if public_key.returncode == 0 and public_key.stdout else None
+    except Exception:
+        return None
+
+
+def _public_key_der_from_key(path):
+    try:
+        public_key = subprocess.run(
+            ["openssl", "pkey", "-in", str(path), "-pubout", "-outform", "DER"],
+            input=b"",
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        return public_key.stdout if public_key.returncode == 0 and public_key.stdout else None
+    except Exception:
+        return None
+
+
+def _key_matches_certificate(cert_path, key_path):
+    if not cert_path or not key_path:
+        return False
+    cert_der = _public_key_der_from_cert(cert_path)
+    key_der = _public_key_der_from_key(key_path)
+    if not cert_der or not key_der:
+        return False
+    return hashlib.sha256(cert_der).hexdigest() == hashlib.sha256(key_der).hexdigest()
+
+
 class Webserver:
     def nginx_defaults(self):
         binary = shutil.which("nginx") or DEFAULT_NGINX["binary_path"]
@@ -138,13 +201,18 @@ class Webserver:
             "metadata": dict(item.get("metadata") or {}),
         }
         if entry["enabled"] is not True:
-            return {**entry, "status": "disabled", "dns_names": [], "key_exists": Path(entry["key_path"]).is_file() if entry["key_path"] else False}
+            return {**entry, "status": "disabled", "dns_names": [], **_key_file_info(entry["key_path"])}
         cert_file = Path(entry["cert_path"]).expanduser()
+        key_file = Path(entry["key_path"]).expanduser() if entry["key_path"] else None
+        key_info = _key_file_info(entry["key_path"])
         if entry["cert_path"] == "" or cert_file.is_file() is False:
-            return {**entry, "status": "missing", "message": "인증서 파일을 찾을 수 없습니다.", "dns_names": [], "key_exists": False}
+            return {**entry, "status": "missing", "message": "인증서 파일을 찾을 수 없습니다.", "dns_names": [], **key_info, "key_matches": False}
         result = _run(["openssl", "x509", "-in", str(cert_file), "-noout", "-subject", "-issuer", "-dates", "-serial", "-fingerprint", "-ext", "subjectAltName"], timeout=5)
         if result["ok"] is not True:
-            return {**entry, "status": "error", "message": (result["stderr"] or result["stdout"]).strip() or "인증서를 분석할 수 없습니다.", "dns_names": [], "key_exists": Path(entry["key_path"]).is_file() if entry["key_path"] else False}
+            return {**entry, "status": "error", "message": (result["stderr"] or result["stdout"]).strip() or "인증서를 분석할 수 없습니다.", "dns_names": [], **key_info, "key_matches": False}
+        if key_info["key_exists"] is not True:
+            return {**entry, "status": "missing", "message": "키 파일을 찾을 수 없습니다.", "dns_names": [], **key_info, "key_matches": False}
+        key_matches = _key_matches_certificate(cert_file, key_file)
         lines = [line.strip() for line in (result["stdout"] or "").splitlines() if line.strip()]
         subject = next((line.split("=", 1)[1].strip() for line in lines if line.startswith("subject=")), "")
         issuer = next((line.split("=", 1)[1].strip() for line in lines if line.startswith("issuer=")), "")
@@ -163,9 +231,17 @@ class Webserver:
             status = "expired"
         elif days_remaining is not None and days_remaining <= 30:
             status = "expiring"
+        if key_matches is not True:
+            status = "key_mismatch"
+        elif key_info["key_permission_secure"] is not True:
+            status = "key_insecure"
         return {
             **entry,
             "status": status,
+            "message": {
+                "key_mismatch": "인증서와 private key가 서로 맞지 않습니다.",
+                "key_insecure": "private key 파일 권한이 안전하지 않습니다.",
+            }.get(status, ""),
             "subject": subject,
             "issuer": issuer,
             "serial": serial,
@@ -174,11 +250,12 @@ class Webserver:
             "not_before": not_before,
             "not_after": not_after,
             "days_remaining": days_remaining,
-            "key_exists": Path(entry["key_path"]).expanduser().is_file() if entry["key_path"] else False,
+            **key_info,
+            "key_matches": key_matches,
         }
 
     def _certificate_summary(self, certificates):
-        summary = {"total": len(certificates), "valid": 0, "expiring": 0, "expired": 0, "error": 0, "disabled": 0, "missing": 0}
+        summary = {"total": len(certificates), "valid": 0, "expiring": 0, "expired": 0, "error": 0, "disabled": 0, "missing": 0, "key_insecure": 0, "key_mismatch": 0}
         for item in certificates:
             key = item.get("status") or "error"
             if key in summary:
@@ -215,7 +292,7 @@ class Webserver:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def store_uploaded_certificate(self, zone_id, domain, label, cert_file, key_file, test_run_id=None, env=None):
+    def store_uploaded_certificate(self, zone_id, domain, label, cert_file, key_file, chain_file=None, test_run_id=None, env=None):
         if cert_file is None:
             raise ValueError("인증서 파일을 선택해주세요.")
         if key_file is None:
@@ -223,10 +300,27 @@ class Webserver:
 
         certificate_id = _certificate_id()
         storage_dir = self.certificate_storage_dir(domain, certificate_id, env=env)
-        cert_path = storage_dir / "certificate.pem"
+        leaf_cert_path = storage_dir / "certificate.pem"
+        cert_path = leaf_cert_path
+        chain_path = storage_dir / "chain.pem"
+        fullchain_path = storage_dir / "fullchain.pem"
         key_path = storage_dir / "private.key"
-        cert_file.save(str(cert_path))
+        leaf_cert_path.chmod(0o644) if leaf_cert_path.exists() else None
+        cert_file.save(str(leaf_cert_path))
         key_file.save(str(key_path))
+        leaf_cert_path.chmod(0o644)
+        key_path.chmod(0o600)
+        chain_policy = "single_or_fullchain_cert_file"
+        if chain_file is not None:
+            chain_file.save(str(chain_path))
+            chain_path.chmod(0o644)
+            fullchain_path.write_text(
+                leaf_cert_path.read_text(encoding="utf-8").rstrip() + "\n" + chain_path.read_text(encoding="utf-8").strip() + "\n",
+                encoding="utf-8",
+            )
+            fullchain_path.chmod(0o644)
+            cert_path = fullchain_path
+            chain_policy = "leaf_cert_plus_chain_file"
 
         entry = {
             "id": certificate_id,
@@ -238,13 +332,20 @@ class Webserver:
             "enabled": True,
             "metadata": {
                 "source": "domain_upload",
+                "chain_policy": chain_policy,
+                "leaf_cert_path": str(leaf_cert_path),
+                "chain_path": str(chain_path) if chain_file is not None else "",
                 "uploaded_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
             },
         }
+        analyzed = self._analyze_certificate(entry)
+        if analyzed.get("status") in {"error", "missing", "key_mismatch", "key_insecure"}:
+            shutil.rmtree(storage_dir, ignore_errors=True)
+            raise ValueError(analyzed.get("message") or "인증서와 private key를 확인할 수 없습니다.")
         certificates = self._load_certificates(env=env)
         certificates.append(entry)
         self._save_certificates(certificates, test_run_id=test_run_id, env=env)
-        return self._analyze_certificate(entry)
+        return analyzed
 
     def delete_certificate(self, certificate_id, zone_id=None, test_run_id=None, env=None):
         target_id = str(certificate_id or "").strip()

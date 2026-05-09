@@ -101,6 +101,102 @@ main(class="space-y-5 px-5 py-5")
                         button(type="button", (click)="runBackupAction('stop')", [disabled]="backupBusy() || !backupSystem.installed || backupSystem.status !== 'running'", class="inline-flex h-10 items-center gap-2 rounded-md border border-rose-300 px-3 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                             i(class="fa-solid fa-stop")
                             span 정지
+                        button(type="button", (click)="runBackupAction('disable')", [disabled]="backupBusy() || backupSystem.status === 'disabled'", class="inline-flex h-10 items-center gap-2 rounded-md border border-amber-300 px-3 text-sm font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60 dark:border-amber-900/70 dark:text-amber-300 dark:hover:bg-amber-950/30")
+                            i(class="fa-solid fa-power-off")
+                            span 비활성화
                         button(type="button", (click)="refreshBackupSystem()", [disabled]="backupBusy()", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                             i(class="fa-solid", [ngClass]="backupBusy() ? 'fa-spinner fa-spin' : 'fa-rotate-right'")
                             span 상태 갱신
+                    div(class="rounded-md border border-zinc-200 p-4 dark:border-zinc-800")
+                        div(class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between")
+                            div
+                                h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 서비스 이미지 자동 백업
+                                p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") 기본은 이미지 tag 백업이며, 선택 시 컨테이너 스냅샷도 허용 시간대에 함께 저장합니다.
+                            span(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") 마지막 실행 {{backupPolicyLastRunLabel()}}
+                        div(class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4")
+                            label(class="flex min-h-10 items-center gap-3 rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                input(type="checkbox", [(ngModel)]="backupPolicy.enabled", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
+                                span(class="text-sm font-semibold text-zinc-900 dark:text-zinc-100") 자동 백업 사용
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 실행 주기
+                                div(class="flex h-10 items-center overflow-hidden rounded-md border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950")
+                                    input(type="number", min="1", max="365", [(ngModel)]="backupPolicy.interval_days", class="h-full w-full bg-transparent px-3 text-sm text-zinc-900 focus:outline-none dark:text-zinc-100")
+                                    span(class="border-l border-zinc-200 px-3 text-xs font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 일마다
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 시작 시간
+                                input(type="time", [(ngModel)]="backupPolicy.window_start", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 종료 시간
+                                input(type="time", [(ngModel)]="backupPolicy.window_end", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                            label(class="block md:col-span-2 xl:col-span-1")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 한 번에 처리할 이미지
+                                div(class="flex h-10 items-center overflow-hidden rounded-md border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950")
+                                    input(type="number", min="1", max="50", [(ngModel)]="backupPolicy.max_items_per_run", class="h-full w-full bg-transparent px-3 text-sm text-zinc-900 focus:outline-none dark:text-zinc-100")
+                                    span(class="border-l border-zinc-200 px-3 text-xs font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 개
+                            label(class="flex min-h-10 items-center gap-3 rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                input(type="checkbox", [(ngModel)]="backupPolicy.snapshot_enabled", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
+                                span(class="text-sm font-semibold text-zinc-900 dark:text-zinc-100") 컨테이너 스냅샷 포함
+                            label(class="flex min-h-10 items-center gap-3 rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                input(type="checkbox", [(ngModel)]="backupPolicy.snapshot_pause", [disabled]="!backupPolicy.snapshot_enabled", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 disabled:opacity-60 dark:border-zinc-700")
+                                span(class="text-sm font-semibold text-zinc-900 dark:text-zinc-100") 스냅샷 중 일시 정지
+                            div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800 md:col-span-2")
+                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 최근 결과
+                                p(class="mt-1 text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{backupPolicyResultLabel()}}
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서비스별 보존 개수
+                                div(class="flex h-10 items-center overflow-hidden rounded-md border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950")
+                                    input(type="number", min="1", max="200", [(ngModel)]="backupPolicy.retention_keep_per_service", class="h-full w-full bg-transparent px-3 text-sm text-zinc-900 focus:outline-none dark:text-zinc-100")
+                                    span(class="border-l border-zinc-200 px-3 text-xs font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 개
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 미사용 정리 기준
+                                div(class="flex h-10 items-center overflow-hidden rounded-md border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950")
+                                    input(type="number", min="1", max="3650", [(ngModel)]="backupPolicy.cleanup_unused_days", class="h-full w-full bg-transparent px-3 text-sm text-zinc-900 focus:outline-none dark:text-zinc-100")
+                                    span(class="border-l border-zinc-200 px-3 text-xs font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 일 이상
+                            div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800 md:col-span-2")
+                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 정리 대상
+                                p(class="mt-1 text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{cleanupSummaryLabel()}}
+                        div(class="mt-4 flex flex-wrap items-center gap-2")
+                            button(type="button", (click)="saveBackupPolicy()", [disabled]="savingBackupPolicy()", class="inline-flex h-10 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                                i(class="fa-solid", [ngClass]="savingBackupPolicy() ? 'fa-spinner fa-spin' : 'fa-floppy-disk'")
+                                span 정책 저장
+                            button(type="button", (click)="runBackupPolicyNow()", [disabled]="runningBackupPolicy() || backupSystem.status !== 'running'", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                i(class="fa-solid", [ngClass]="runningBackupPolicy() ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'")
+                                span 지금 백업 실행
+                            button(type="button", (click)="previewBackupCleanup()", [disabled]="cleanupBusy()", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                i(class="fa-solid", [ngClass]="cleanupBusy() ? 'fa-spinner fa-spin' : 'fa-magnifying-glass'")
+                                span 정리 대상 확인
+                            button(type="button", (click)="runBackupCleanup()", [disabled]="cleanupBusy() || backupSystem.status !== 'running'", class="inline-flex h-10 items-center gap-2 rounded-md border border-rose-300 px-3 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                i(class="fa-solid fa-broom")
+                                span 백업 정리 실행
+                    div(class="rounded-md border border-rose-200 bg-rose-50 p-3 dark:border-rose-900/70 dark:bg-rose-950/30")
+                        div(class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between")
+                            div
+                                p(class="text-sm font-semibold text-rose-800 dark:text-rose-200") 백업 시스템 초기화
+                                p(class="mt-1 text-xs leading-5 text-rose-700 dark:text-rose-300") Harbor 설정과 저장 데이터를 지우는 위험 작업입니다. 서비스 배포 자체는 계속 사용할 수 있습니다.
+                            button(type="button", (click)="openBackupResetModal()", [disabled]="backupBusy()", class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-rose-300 bg-white px-3 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300")
+                                i(class="fa-solid fa-triangle-exclamation")
+                                span 초기화
+
+div(*ngIf="resetModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 px-4")
+    div(class="w-full max-w-lg rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
+        div(class="border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            h2(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") 백업 시스템 초기화
+            p(class="mt-1 text-sm text-zinc-500 dark:text-zinc-400") 로컬 Harbor를 정지하고 Docker Infra에 저장된 백업 시스템 설정을 초기 상태로 되돌립니다.
+        div(class="space-y-4 px-5 py-4")
+            div(class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-200")
+                p(class="font-semibold") 되돌릴 수 없는 작업입니다.
+                p 저장 데이터 삭제를 선택하면 백업 이미지와 Harbor 데이터가 함께 삭제됩니다.
+            label(class="flex items-start gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-800")
+                input(type="checkbox", [ngModel]="resetDeleteData()", (ngModelChange)="resetDeleteData.set($event)", class="mt-1 h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
+                span
+                    span(class="block text-sm font-semibold text-zinc-950 dark:text-zinc-50") 저장 데이터도 삭제
+                    span(class="mt-1 block text-xs leading-5 text-zinc-500 dark:text-zinc-400") 체크를 해제하면 Harbor 데이터 디렉토리는 남기고 Docker Infra 설정만 초기화합니다.
+            label(class="block")
+                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 확인 문구
+                input(type="text", [ngModel]="resetConfirmText()", (ngModelChange)="resetConfirmText.set($event)", placeholder="초기화", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 계속하려면 `초기화`를 입력하세요.
+        div(class="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            button(type="button", (click)="closeBackupResetModal()", [disabled]="backupBusy()", class="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800") 취소
+            button(type="button", (click)="resetBackupSystem()", [disabled]="backupBusy() || !canResetBackupSystem()", class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-rose-600 px-3 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60")
+                i(class="fa-solid", [ngClass]="backupBusy() ? 'fa-spinner fa-spin' : 'fa-trash-can'")
+                span 초기화

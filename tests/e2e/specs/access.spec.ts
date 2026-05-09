@@ -9,8 +9,8 @@ test.describe('password-only access', () => {
 
   test('shows the password-only access screen', async ({ page }) => {
     await openAccessPage(page);
-    await expect(page.getByText('Password-only access')).toBeVisible();
-    await expect(page.getByRole('button', { name: /접속|설치 완료/ })).toBeVisible();
+    await expect(page.getByText(/운영자 접속|초기 설정/)).toBeVisible();
+    await expect(page.getByRole('button', { name: /접속|설정 완료/ })).toBeVisible();
   });
 
   test('shows validation when password is empty', async ({ page }) => {

@@ -88,10 +88,10 @@ class OperationRepository:
                         str(target_id) if target_id is not None else None,
                         status,
                         message or "",
-                        Jsonb(requested_payload or {}),
-                        Jsonb(result_payload or {}),
+                        Jsonb(_serialize(requested_payload or {})),
+                        Jsonb(_serialize(result_payload or {})),
                         test_run_id,
-                        Jsonb(metadata or {}),
+                        Jsonb(_serialize(metadata or {})),
                     ),
                 )
                 return _row(cursor.fetchone())
@@ -149,8 +149,8 @@ class OperationRepository:
                     (
                         status,
                         message,
-                        Jsonb(result_payload) if result_payload is not None else None,
-                        Jsonb(metadata) if metadata is not None else None,
+                        Jsonb(_serialize(result_payload)) if result_payload is not None else None,
+                        Jsonb(_serialize(metadata)) if metadata is not None else None,
                         terminal,
                         status,
                         operation_id,
@@ -168,7 +168,7 @@ class OperationRepository:
         entry = {
             "stream": stream,
             "message": text,
-            "metadata": metadata or {},
+            "metadata": _serialize(metadata or {}),
             "created_at": _utc_now(),
         }
         with connect(env=env) as connection:

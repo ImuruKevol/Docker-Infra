@@ -52,6 +52,130 @@ class Domains(cloudflare):
         ssl_info = webserver.certificates_for_domain(zone_row["domain"], zone_id=zone_row["id"], env=env)
         return records, ssl_info
 
+    def _service_links(self, zone_row, env=None):
+        domain = str(zone_row["domain"] or "").strip().lower()
+        if not domain:
+            return []
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        sd.id AS service_domain_id,
+                        sd.domain,
+                        sd.port,
+                        sd.ssl_mode,
+                        sd.metadata,
+                        sd.updated_at,
+                        s.id AS service_id,
+                        s.name AS service_name,
+                        s.namespace,
+                        s.status AS service_status
+                    FROM service_domains sd
+                    JOIN services s ON s.id = sd.service_id
+                    WHERE lower(sd.domain) = lower(%s)
+                       OR lower(sd.domain) LIKE lower(%s)
+                    ORDER BY sd.domain ASC, s.name ASC
+                    """,
+                    (domain, f"%.{domain}"),
+                )
+                rows = []
+                for row in cursor.fetchall():
+                    metadata = dict(row["metadata"] or {})
+                    nginx_ssl_mode = metadata.get("nginx_ssl_mode") or row["ssl_mode"]
+                    rows.append({
+                        "service_domain_id": row["service_domain_id"],
+                        "service_id": row["service_id"],
+                        "service_name": row["service_name"],
+                        "namespace": row["namespace"],
+                        "service_status": row["service_status"],
+                        "domain": row["domain"],
+                        "port": row["port"],
+                        "ssl_mode": row["ssl_mode"],
+                        "nginx_ssl_mode": nginx_ssl_mode,
+                        "nginx_configured": bool(metadata.get("nginx_config_path")),
+                        "certificate_applied": nginx_ssl_mode in {"existing", "certbot", "self_signed"},
+                        "updated_at": row["updated_at"],
+                    })
+                return rows
+
+    def _find_zone_for_domain(self, cursor, domain, zone_config_id=None, env=None):
+        domain = str(domain or "").strip().lower()
+        if zone_config_id:
+            try:
+                return self._fetch_zone(cursor, zone_config_id, env=env)
+            except DomainError:
+                pass
+        cursor.execute(
+            f"{zone_select_sql()} WHERE enabled = true AND usable_for_service = true ORDER BY length(domain) DESC",
+            (secret_key(env),),
+        )
+        for row in cursor.fetchall():
+            zone_domain = str(row["domain"] or "").strip().lower()
+            if domain == zone_domain or domain.endswith(f".{zone_domain}"):
+                return row
+        return None
+
+    def ensure_service_dns_record(self, domain, zone_config_id=None, content=None, proxied=False, env=None):
+        domain = str(domain or "").strip().lower()
+        content = str(content or config.advertise_address(env) or "").strip()
+        if not domain or not content:
+            return {"status": "skipped", "reason": "domain_or_content_missing"}
+        record_type = "AAAA" if ":" in content else "A"
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                zone = self._find_zone_for_domain(cursor, domain, zone_config_id=zone_config_id, env=env)
+        if not zone:
+            return {"status": "skipped", "domain": domain, "reason": "zone_not_configured"}
+        if not zone.get("api_token_value"):
+            return {"status": "skipped", "domain": domain, "zone": zone["domain"], "reason": "zone_token_missing"}
+
+        records = self.cf_request(
+            zone.get("api_token_value"),
+            "GET",
+            f"/zones/{zone['zone_id']}/dns_records",
+            query={"type": record_type, "name": domain},
+        )
+        cf_payload = {
+            "type": record_type,
+            "name": domain,
+            "content": content,
+            "ttl": 1,
+            "proxied": bool(proxied),
+            "comment": "Managed by Docker Infra",
+        }
+        action = "created"
+        record_id = ""
+        if records:
+            current = records[0]
+            record_id = current["id"]
+            action = "unchanged"
+            if current.get("content") != content or bool(current.get("proxied")) != bool(proxied):
+                self.cf_request(zone.get("api_token_value"), "PUT", f"/zones/{zone['zone_id']}/dns_records/{record_id}", payload=cf_payload)
+                action = "updated"
+        else:
+            result = self.cf_request(zone.get("api_token_value"), "POST", f"/zones/{zone['zone_id']}/dns_records", payload=cf_payload)
+            record_id = result.get("id") or ""
+        detail = self.sync_zone(zone["id"], env=env)
+        self._record_domain_operation(
+            "domain.record.ensure_service",
+            zone_id=zone["id"],
+            payload={"domain": domain, "record_type": record_type, "content": content, "proxied": bool(proxied)},
+            result={"action": action, "record_id": record_id, "zone": zone["domain"]},
+            env=env,
+        )
+        zone_payload = dict(detail.get("zone") or {})
+        zone_payload.pop("api_token_value", None)
+        return {
+            "status": "ok",
+            "action": action,
+            "domain": domain,
+            "record_type": record_type,
+            "content": content,
+            "proxied": bool(proxied),
+            "zone": zone_payload,
+        }
+
     def load(self, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -76,6 +200,7 @@ class Domains(cloudflare):
             "records": records,
             "ssl_certificates": ssl_info["certificates"],
             "ssl_summary": ssl_info["summary"],
+            "service_links": self._service_links(zone_row, env=env),
         }
 
     def save_zone(self, payload, test_run_id=None, env=None):
@@ -150,7 +275,7 @@ class Domains(cloudflare):
         )
         return {"deleted": True, "id": zone_id}
 
-    def upload_certificate(self, zone_id, label, cert_file, key_file, test_run_id=None, env=None):
+    def upload_certificate(self, zone_id, label, cert_file, key_file, chain_file=None, test_run_id=None, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 zone_row = self._fetch_zone(cursor, zone_id, env=env)
@@ -160,6 +285,7 @@ class Domains(cloudflare):
             label=label,
             cert_file=cert_file,
             key_file=key_file,
+            chain_file=chain_file,
             test_run_id=test_run_id,
             env=env,
         )

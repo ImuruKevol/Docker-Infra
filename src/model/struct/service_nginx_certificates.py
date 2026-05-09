@@ -1,0 +1,135 @@
+import re
+from pathlib import Path
+
+
+local_executor = wiz.model("struct/local_executor")
+webserver = wiz.model("struct/webserver")
+config = wiz.config("docker_infra")
+USABLE_CERT_STATUSES = {"valid", "expiring"}
+
+
+def _safe_segment(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip()).strip(".-") or "service"
+
+
+class ServiceNginxCertificates:
+    def _usable(self, cert):
+        return (
+            cert
+            and cert.get("status") in USABLE_CERT_STATUSES
+            and cert.get("key_exists") is True
+            and cert.get("key_matches") is not False
+            and cert.get("key_permission_secure") is not False
+        )
+
+    def self_signed_test_enabled(self, env=None):
+        return config.self_signed_cert_test_enabled(env)
+
+    def _letsencrypt_cert(self, domain):
+        live = Path("/etc/letsencrypt/live") / _safe_segment(domain)
+        cert_path = live / "fullchain.pem"
+        key_path = live / "privkey.pem"
+        if not cert_path.is_file() or not key_path.is_file():
+            return None
+        try:
+            return webserver._analyze_certificate({
+                "domain": domain,
+                "label": f"Let's Encrypt {domain}",
+                "cert_path": str(cert_path),
+                "key_path": str(key_path),
+                "enabled": True,
+                "metadata": {"source": "certbot"},
+            })
+        except Exception:
+            return {
+                "domain": domain,
+                "cert_path": str(cert_path),
+                "key_path": str(key_path),
+                "status": "error",
+                "key_exists": key_path.is_file(),
+            }
+
+    def _self_signed_paths(self, domain, env=None):
+        root = Path(config.data_dir(env)) / "test-self-signed-certificates" / _safe_segment(domain)
+        return root, root / "certificate.pem", root / "private.key"
+
+    def _self_signed_cert(self, domain, env=None):
+        _root, cert_path, key_path = self._self_signed_paths(domain, env=env)
+        if not cert_path.is_file() or not key_path.is_file():
+            return None
+        try:
+            return webserver._analyze_certificate({
+                "domain": domain,
+                "label": f"Self-signed test {domain}",
+                "cert_path": str(cert_path),
+                "key_path": str(key_path),
+                "enabled": True,
+                "metadata": {"source": "self_signed_test"},
+            })
+        except Exception:
+            return {
+                "domain": domain,
+                "cert_path": str(cert_path),
+                "key_path": str(key_path),
+                "status": "error",
+                "key_exists": key_path.is_file(),
+                "metadata": {"source": "self_signed_test"},
+            }
+
+    def valid_cert(self, domain, zone_id=None, env=None):
+        certs = webserver.certificates_for_domain(domain, zone_id=zone_id, env=env).get("certificates") or []
+        for item in certs:
+            if self._usable(item):
+                return item
+        candidates = [self._letsencrypt_cert(domain)]
+        if self.self_signed_test_enabled(env=env):
+            candidates.append(self._self_signed_cert(domain, env=env))
+        for item in candidates:
+            if self._usable(item):
+                return item
+        return None
+
+    def certificate_mode(self, cert):
+        source = (cert or {}).get("metadata", {}).get("source")
+        if source == "certbot":
+            return "certbot"
+        if source == "self_signed_test":
+            return "self_signed"
+        return "existing" if cert else "http"
+
+    def issue_certificates(self, targets, commands, env=None):
+        for domain in targets:
+            if config.self_signed_cert_test_enabled(env):
+                root, cert_path, key_path = self._self_signed_paths(domain, env=env)
+                root.mkdir(parents=True, exist_ok=True)
+                result = local_executor.run(
+                    "openssl.self_signed_cert.issue",
+                    params={
+                        "domain": domain,
+                        "cert_path": str(cert_path),
+                        "key_path": str(key_path),
+                        "days": config.self_signed_cert_days(env),
+                    },
+                    timeout_seconds=30,
+                    env=env,
+                )
+                commands.append({"step": f"self-signed cert {domain}", "result": result})
+                if result.get("status") != "ok":
+                    raise RuntimeError(f"{domain} 테스트 인증서를 발급할 수 없습니다.")
+                continue
+            result = local_executor.run(
+                "certbot.nginx.issue",
+                params={
+                    "domain": domain,
+                    "email": config.certbot_email(env),
+                    "staging": config.certbot_staging(env),
+                },
+                timeout_seconds=300,
+                env=env,
+            )
+            commands.append({"step": f"certbot {domain}", "result": result})
+            if result.get("status") != "ok":
+                raise RuntimeError(f"{domain} 무료 인증서를 발급할 수 없습니다.")
+
+
+Model = ServiceNginxCertificates()

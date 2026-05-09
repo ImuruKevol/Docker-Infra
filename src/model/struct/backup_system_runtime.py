@@ -1,9 +1,11 @@
+import shutil
 from pathlib import Path
 
 
 local_executor = wiz.model("struct/local_executor")
 operations = wiz.model("struct/operations")
 resources = wiz.model("struct/backup_system_resources")
+config = wiz.config("docker_infra")
 
 
 class BackupSystemRuntimeMixin:
@@ -82,6 +84,64 @@ class BackupSystemRuntimeMixin:
             return {"backup_system": self._set_state("stopped", None, env=env), "operation": None}
         operation = self._run_operation("backup.harbor.stop", "backup.harbor.down", {"compose_path": status["compose_path"]}, env=env)
         return {"backup_system": self._set_state("stopped", None, env=env), "operation": operation}
+
+    def disable(self, env=None):
+        status = self.status(env=env)
+        operation = None
+        if status["installed"]:
+            operation = self._run_operation("backup.harbor.disable", "backup.harbor.down", {"compose_path": status["compose_path"]}, env=env)
+        backup = self.configure({"enabled": False, "data_path": status["data_path"]}, env=env)
+        return {"backup_system": backup, "operation": operation}
+
+    def _assert_resettable_path(self, data_path, env=None):
+        root = Path(data_path).expanduser().resolve()
+        allowed_root = Path(config.data_dir(env)).expanduser().resolve()
+        if root == allowed_root or allowed_root not in root.parents:
+            raise self.BackupSystemError(
+                400,
+                "백업 시스템 기본 데이터 디렉토리 밖의 경로는 화면에서 초기화할 수 없습니다.",
+                "BACKUP_RESET_PATH_NOT_ALLOWED",
+                data_path=str(root),
+            )
+        return root
+
+    def reset(self, payload=None, env=None):
+        payload = payload or {}
+        confirm = str(payload.get("confirm") or "").strip()
+        if confirm != "초기화":
+            raise self.BackupSystemError(400, "초기화를 진행하려면 확인 문구를 정확히 입력해야 합니다.", "BACKUP_RESET_CONFIRM_REQUIRED")
+
+        status = self.status(env=env)
+        operation = operations.create(
+            "backup.harbor.reset",
+            target_type="backup_system",
+            target_id="default",
+            requested_payload={"delete_data": bool(payload.get("delete_data", True)), "data_path": status["data_path"]},
+            env=env,
+        )
+        try:
+            if status["installed"]:
+                self._run_operation("backup.harbor.reset.stop", "backup.harbor.down", {"compose_path": status["compose_path"]}, env=env)
+            if bool(payload.get("delete_data", True)):
+                root = self._assert_resettable_path(status["data_path"], env=env)
+                if root.exists():
+                    shutil.rmtree(root)
+            with self.connect(env=env) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM backup_system_settings WHERE singleton_key = 'default'")
+            operation = operations.transition(
+                operation["id"],
+                "succeeded",
+                result_payload={"delete_data": bool(payload.get("delete_data", True))},
+                env=env,
+            )
+            return {"backup_system": self.status(env=env), "operation": operation}
+        except self.BackupSystemError as exc:
+            operations.transition(operation["id"], "failed", message=exc.message, result_payload={"error_code": exc.error_code}, env=env)
+            raise
+        except Exception as exc:
+            operations.transition(operation["id"], "failed", message=str(exc), env=env)
+            raise self.BackupSystemError(500, str(exc), "BACKUP_RESET_FAILED")
 
     def restart(self, env=None):
         status = self.status(env=env)

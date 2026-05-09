@@ -10,6 +10,8 @@ postgres = wiz.model("db/postgres")
 config = wiz.config("docker_infra")
 resources = wiz.model("struct/backup_system_resources")
 runtime_mixin = wiz.model("struct/backup_system_runtime")
+policy_mixin = wiz.model("struct/backup_system_policy")
+policy_defaults = wiz.model("struct/backup_system_policy_defaults")
 connect = postgres.connect
 
 
@@ -67,11 +69,16 @@ def _compose_path(data_path):
     return str(resources.paths(data_path)["compose"])
 
 
+def _backup_policy(value=None, base=None):
+    return policy_defaults.normalize(value, base=base)
+
+
 def _row(row, env=None):
     if row is None:
         data_path = _absolute_data_path(env=env)
         storage = _storage(data_path)
         compose_path = _compose_path(data_path)
+        metadata = {"source": "default", "backup_policy": _backup_policy()}
         return {
             "id": None,
             "enabled": False,
@@ -86,11 +93,14 @@ def _row(row, env=None):
             "storage": storage,
             "last_error": None,
             "last_checked_at": None,
-            "metadata": {"source": "default"},
+            "metadata": metadata,
+            "backup_policy": metadata["backup_policy"],
         }
     data_path = row["data_path"]
     storage = _storage(data_path)
     compose_path = _compose_path(data_path)
+    metadata = row["metadata"] or {}
+    policy = _backup_policy(metadata.get("backup_policy"))
     return {
         "id": str(row["id"]),
         "enabled": bool(row["enabled"]),
@@ -105,17 +115,19 @@ def _row(row, env=None):
         "storage": storage,
         "last_error": row["last_error"],
         "last_checked_at": row["last_checked_at"],
-        "metadata": row["metadata"],
+        "metadata": metadata,
+        "backup_policy": policy,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
 
 
-class BackupSystem(runtime_mixin):
+class BackupSystem(runtime_mixin, policy_mixin):
     BackupSystemError = BackupSystemError
     connect = staticmethod(connect)
     _row = staticmethod(_row)
     _storage = staticmethod(_storage)
+    _backup_policy = staticmethod(_backup_policy)
 
     def default_config(self, env=None):
         return _row(None, env=env)
@@ -204,11 +216,19 @@ class BackupSystem(runtime_mixin):
                 Path(data_path).mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 raise BackupSystemError(400, f"백업 저장 경로를 생성할 수 없습니다: {exc}", "BACKUP_DATA_PATH_UNAVAILABLE")
+        current_metadata = {}
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT metadata FROM backup_system_settings WHERE singleton_key = 'default'")
+            current = cursor.fetchone()
+            if current is not None:
+                current_metadata = dict(current["metadata"] or {})
         metadata = {
             "source": "setup_wizard",
             "install_mode": "local_harbor",
             "required_ports": _ports(env),
         }
+        if current_metadata.get("backup_policy"):
+            metadata["backup_policy"] = _backup_policy(current_metadata.get("backup_policy"))
         with connection.cursor() as cursor:
             return self._upsert(cursor, enabled, data_path, test_run_id=test_run_id, metadata=metadata, env=env)
 

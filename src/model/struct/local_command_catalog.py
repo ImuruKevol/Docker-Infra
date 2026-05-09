@@ -3,10 +3,12 @@ import shlex
 import sys
 
 
+scripts = wiz.model("struct/local_command_scripts")
 DEFAULT_TIMEOUT_SECONDS = 10
 MAX_TIMEOUT_SECONDS = 1800
 MAX_CAPTURE_CHARS = 20000
 NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$")
 
 
 class LocalCommandError(Exception):
@@ -30,8 +32,7 @@ def _diagnostic_failure_command(params):
     ]
 
 
-def _diagnostic_timeout_command(params):
-    return [sys.executable, "-c", "import time; time.sleep(2)"]
+def _diagnostic_timeout_command(params): return [sys.executable, "-c", "import time; time.sleep(2)"]
 
 
 def _overlay_network_command(params):
@@ -63,16 +64,10 @@ def _container_ids(params):
     return [str(item).strip() for item in ids if str(item).strip()]
 
 
-def _docker_container_start_command(params):
-    return ["docker", "start", *_container_ids(params)]
-
-
-def _docker_container_stop_command(params):
-    return ["docker", "stop", *_container_ids(params)]
-
-
-def _docker_container_restart_command(params):
-    return ["docker", "restart", *_container_ids(params)]
+def _docker_container_start_command(params): return ["docker", "start", *_container_ids(params)]
+def _docker_container_stop_command(params): return ["docker", "stop", *_container_ids(params)]
+def _docker_container_restart_command(params): return ["docker", "restart", *_container_ids(params)]
+def _docker_container_delete_command(params): return ["docker", "rm", "-f", *_container_ids(params)]
 
 
 def _docker_image_remove_command(params):
@@ -80,6 +75,13 @@ def _docker_image_remove_command(params):
     if not image_ref:
         raise LocalCommandError(400, "image_ref가 필요합니다.", "IMAGE_REF_REQUIRED")
     return ["docker", "image", "rm", image_ref]
+
+
+def _stack_name_param(params):
+    stack_name = str((params or {}).get("stack_name") or "").strip()
+    if NETWORK_NAME_RE.match(stack_name) is None:
+        raise LocalCommandError(400, "stack_name 형식이 올바르지 않습니다.", "INVALID_STACK_NAME")
+    return stack_name
 
 
 def _path_param(params, name):
@@ -124,6 +126,82 @@ def _backup_harbor_ps_command(params):
     return _backup_harbor_compose_command(params, "ps")
 
 
+def _service_stack_deploy_command(params):
+    compose_path = _path_param(params, "compose_path")
+    stack_name = _stack_name_param(params)
+    return ["docker", "stack", "deploy", "--with-registry-auth", "-c", compose_path, stack_name]
+
+
+def _service_stack_remove_command(params):
+    stack_name = _stack_name_param(params)
+    return ["docker", "stack", "rm", stack_name]
+
+
+def _service_stack_services_command(params):
+    stack_name = _stack_name_param(params)
+    return ["docker", "stack", "services", stack_name, "--format", "{{json .}}"]
+
+
+def _service_stack_ps_command(params):
+    stack_name = _stack_name_param(params)
+    return ["docker", "stack", "ps", stack_name, "--no-trunc", "--format", "{{json .}}"]
+
+
+def _certbot_nginx_issue_command(params):
+    domain = str((params or {}).get("domain") or "").strip().lower()
+    email = str((params or {}).get("email") or "").strip()
+    if DOMAIN_RE.match(domain) is None or "*" in domain:
+        raise LocalCommandError(400, "domain 형식이 올바르지 않습니다.", "INVALID_CERTBOT_DOMAIN")
+    command = [
+        "certbot",
+        "certonly",
+        "--nginx",
+        "-d",
+        domain,
+        "--non-interactive",
+        "--agree-tos",
+        "--keep-until-expiring",
+    ]
+    if email:
+        command.extend(["--email", email])
+    else:
+        command.append("--register-unsafely-without-email")
+    if (params or {}).get("staging"):
+        command.append("--staging")
+    return command
+
+
+def _openssl_self_signed_cert_command(params):
+    domain = str((params or {}).get("domain") or "").strip().lower()
+    cert_path = _path_param(params, "cert_path")
+    key_path = _path_param(params, "key_path")
+    try:
+        days = int((params or {}).get("days") or 7)
+    except (TypeError, ValueError):
+        days = 7
+    days = max(1, min(days, 365))
+    if DOMAIN_RE.match(domain) is None or "*" in domain:
+        raise LocalCommandError(400, "domain 형식이 올바르지 않습니다.", "INVALID_SELF_SIGNED_DOMAIN")
+    return [
+        "openssl",
+        "req",
+        "-x509",
+        "-nodes",
+        "-newkey",
+        "rsa:2048",
+        "-days",
+        str(days),
+        "-keyout",
+        key_path,
+        "-out",
+        cert_path,
+        "-subj",
+        f"/CN={domain}",
+        "-addext",
+        f"subjectAltName=DNS:{domain}",
+    ]
+
+
 def _filesystem_target(params, required_type=None):
     target = str((params or {}).get("path") or "/").strip() or "/"
     script = (
@@ -164,32 +242,8 @@ def _filesystem_read_command(params):
     return [sys.executable, "-c", script, target]
 
 
-SYSTEM_METRICS_SCRIPT = r"""
-read cpu user nice system idle iowait irq softirq steal rest < /proc/stat
-total1=$((user + nice + system + idle + iowait + irq + softirq + steal))
-idle1=$((idle + iowait))
-sleep 1
-read cpu user nice system idle iowait irq softirq steal rest < /proc/stat
-total2=$((user + nice + system + idle + iowait + irq + softirq + steal))
-idle2=$((idle + iowait))
-total_delta=$((total2 - total1))
-idle_delta=$((idle2 - idle1))
-cpu_percent=$(awk -v total="$total_delta" -v idle="$idle_delta" 'BEGIN { if (total <= 0) print "0.0"; else printf "%.2f", ((total - idle) * 100 / total) }')
-mem_total=$(awk '/MemTotal:/ {printf "%.0f", $2 * 1024}' /proc/meminfo)
-mem_available=$(awk '/MemAvailable:/ {printf "%.0f", $2 * 1024}' /proc/meminfo)
-mem_used=$((mem_total - mem_available))
-mem_percent=$(awk -v used="$mem_used" -v total="$mem_total" 'BEGIN { if (total <= 0) print "0.0"; else printf "%.2f", (used * 100 / total) }')
-storage_json=$(df -Pk / | awk 'NR==2 { gsub("%", "", $5); printf "\"total\":%d,\"used\":%d,\"available\":%d,\"used_percent\":%.2f", $2 * 1024, $3 * 1024, $4 * 1024, $5 }')
-printf '{"cpu_percent":%s,"memory":{"total":%s,"used":%s,"available":%s,"used_percent":%s},"storage":{%s}}\n' "$cpu_percent" "$mem_total" "$mem_used" "$mem_available" "$mem_percent" "$storage_json"
-"""
-
-DOCKER_IMAGE_USAGE_SCRIPT = r"""
-ids=$(docker container ls -aq --no-trunc)
-if [ -z "$ids" ]; then
-  exit 0
-fi
-docker inspect --format '{{json .}}' $ids
-"""
+SYSTEM_METRICS_SCRIPT = scripts.SYSTEM_METRICS_SCRIPT
+DOCKER_IMAGE_USAGE_SCRIPT = scripts.DOCKER_IMAGE_USAGE_SCRIPT
 
 
 COMMAND_SPECS = {
@@ -201,7 +255,14 @@ COMMAND_SPECS = {
     "docker.container.start": {"category": "docker", "factory": _docker_container_start_command, "destructive": True},
     "docker.container.stop": {"category": "docker", "factory": _docker_container_stop_command, "destructive": True},
     "docker.container.restart": {"category": "docker", "factory": _docker_container_restart_command, "destructive": True},
+    "docker.container.delete": {"category": "docker", "factory": _docker_container_delete_command, "destructive": True},
     "docker.image.remove": {"category": "docker", "factory": _docker_image_remove_command, "destructive": True},
+    "service.stack.deploy": {"category": "service", "factory": _service_stack_deploy_command, "destructive": True, "default_timeout_seconds": 300},
+    "service.stack.remove": {"category": "service", "factory": _service_stack_remove_command, "destructive": True, "default_timeout_seconds": 120},
+    "service.stack.services": {"category": "service", "factory": _service_stack_services_command, "default_timeout_seconds": 20},
+    "service.stack.ps": {"category": "service", "factory": _service_stack_ps_command, "default_timeout_seconds": 20},
+    "certbot.nginx.issue": {"category": "certbot", "factory": _certbot_nginx_issue_command, "destructive": True, "default_timeout_seconds": 300},
+    "openssl.self_signed_cert.issue": {"category": "openssl", "factory": _openssl_self_signed_cert_command, "destructive": True, "default_timeout_seconds": 30},
     "backup.harbor.install": {"category": "backup", "factory": _backup_harbor_install_command, "destructive": True, "default_timeout_seconds": 1800},
     "backup.harbor.up": {"category": "backup", "factory": _backup_harbor_up_command, "destructive": True, "default_timeout_seconds": 300},
     "backup.harbor.down": {"category": "backup", "factory": _backup_harbor_down_command, "destructive": True, "default_timeout_seconds": 300},
@@ -212,6 +273,7 @@ COMMAND_SPECS = {
     "filesystem.read": {"category": "filesystem", "factory": _filesystem_read_command},
     "swarm.info": {"category": "swarm", "argv": ["docker", "info", "--format", "{{json .Swarm}}"]},
     "swarm.nodes": {"category": "swarm", "argv": ["docker", "node", "ls", "--format", "{{json .}}"]},
+    "swarm.nodes.inspect": {"category": "swarm", "argv": ["sh", "-lc", "docker node inspect $(docker node ls -q)"]},
     "swarm.init": {"category": "swarm", "factory": _swarm_init_command, "destructive": True},
     "swarm.join-token.worker": {"category": "swarm", "argv": ["docker", "swarm", "join-token", "-q", "worker"]},
     "swarm.join-token.manager": {"category": "swarm", "argv": ["docker", "swarm", "join-token", "-q", "manager"]},

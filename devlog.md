@@ -64,3 +64,34 @@
 | 2026-05-08 | 062 | 최초 구성 마법사 백업 시스템 토글과 설정 스키마 추가 | [상세](devlog/2026-05-08/062-setup-backup-system-toggle-schema.md) |
 | 2026-05-08 | 063 | WIZ 구조 계약에 맞춘 대형 모델 분리와 api.py 응답 위치 정리 | [상세](devlog/2026-05-08/063-wiz-structure-model-split-cleanup.md) |
 | 2026-05-08 | 064 | 외부 Harbor 설정 제거와 내장 로컬 Harbor 백업 시스템 실행 경로 연결 | [상세](devlog/2026-05-08/064-local-harbor-backup-runtime.md) |
+| 2026-05-08 | 065 | 백업 시스템 비활성화/초기화와 서비스 이미지 이력·백업·복원 흐름 추가 | [상세](devlog/2026-05-08/065-backup-reset-service-image-history.md) |
+| 2026-05-08 | 066 | 서비스 이미지 자동 백업 정책과 수동 실행 흐름 추가 | [상세](devlog/2026-05-08/066-service-image-backup-policy.md) |
+| 2026-05-08 | 067 | docker commit 기반 컨테이너 스냅샷 백업과 정책 옵션 추가 | [상세](devlog/2026-05-08/067-container-snapshot-backup.md) |
+| 2026-05-08 | 068 | 백업 예약 tick/정리 정책과 서비스 생성 wizard 단계형 폼 적용 | [상세](devlog/2026-05-08/068-backup-cleanup-service-wizard.md) |
+| 2026-05-08 | 069 | 서비스 생성 wizard 도메인 선택·Compose 충돌 표시·stack deploy 실행 경로 추가 | [상세](devlog/2026-05-08/069-service-wizard-domain-deploy-conflicts.md) |
+| 2026-05-08 | 070 | 새 서비스 생성을 독립 화면으로 전환하고 운영자 입력 항목을 자동화 | [상세](devlog/2026-05-08/070-service-create-page-operator-flow.md) |
+| 2026-05-09 | 071 | 서비스 생성 단계 단순화와 서비스 목록·상세 UX 재설계 TODO 반영 | [상세](devlog/2026-05-09/071-service-create-flow-and-service-ux-todo.md) |
+| 2026-05-09 | 072 | 서비스 목록과 상세 화면을 운영자용 UX로 재구성 | [상세](devlog/2026-05-09/072-services-operator-list-detail-ux.md) |
+| 2026-05-09 | 073 | 기본 서비스 템플릿을 도메인 연결 가능한 다중 서비스 스택으로 교체 | [상세](devlog/2026-05-09/073-domain-ready-service-templates.md) |
+| 2026-05-09 | 074 | 서비스 생성 저장 전 자동 점검과 도메인 포트 매핑 보강 | [상세](devlog/2026-05-09/074-service-create-preflight-port-mapping.md) |
+| 2026-05-09 | 075 | 서비스 배포 후 nginx server block 자동 적용과 rollback 연결 | [상세](devlog/2026-05-09/075-service-nginx-apply-rollback.md) |
+| 2026-05-09 | 076 | 인증서 없는 서비스 도메인에 certbot 자동 발급 흐름 연결 | [상세](devlog/2026-05-09/076-service-certbot-auto-issue.md) |
+| 2026-05-09 | 077 | 서비스 수정 wizard와 Compose 버전 갱신 흐름 추가 | [상세](devlog/2026-05-09/077-service-edit-wizard.md) |
+| 2026-05-09 | 078 | Compose 버전 되돌리기와 영향 범위 확인 모달 추가 | [상세](devlog/2026-05-09/078-service-compose-rollback.md) |
+| 2026-05-09 | 079 | 서비스 처리 로그 모달과 operation polling 조회 추가 | [상세](devlog/2026-05-09/079-service-operation-output-polling.md) |
+| 2026-05-09 | 080 | 배포 런타임 상태 갱신, OpenSSL 자체 인증서 테스트 경로, local master 공개 서비스 배치 보강 | [상세](devlog/2026-05-09/080-service-runtime-status-self-signed-deploy-test.md) |
+| 2026-05-09 | 081 | 원격 노드 배치 서비스의 서버 IP 기반 nginx upstream 적용 | [상세](devlog/2026-05-09/081-service-remote-node-nginx-upstream.md) |
+| 2026-05-09 | 082 | 서버 Compose 가져오기 wizard 통합과 서비스 상세 운영 요약 보강 | [상세](devlog/2026-05-09/082-service-compose-import-wizard-runtime-ux.md) |
+| 2026-05-09 | 083 | P7 nginx 고급 원문 편집과 도메인 인증서 검증·적용 서비스 표시 완료 | [상세](devlog/2026-05-09/083-p7-nginx-domain-ssl-completion.md) |
+| 2026-05-09 | 084 | 서비스 관리 UX 검수 TODO와 생성/목록 자동화 보강 | [상세](devlog/2026-05-09/084-service-management-audit-automation.md) |
+| 2026-05-09 | 085 | 서비스 preflight 원격 점검과 상세 고급/백업 UX 후속 보강 | [상세](devlog/2026-05-09/085-service-preflight-advanced-backup-ux.md) |
+| 2026-05-09 | 086 | 서비스 삭제 기능 추가와 oo.tmpi.kr 배포 실패 원인 수정 | [상세](devlog/2026-05-09/086-service-delete-and-odoo-deploy-fix.md) |
+| 2026-05-09 | 087 | oo.tmpi.kr 실제 브라우저 접속을 위한 DNS 자동 등록과 인증서 적용 보강 | [상세](devlog/2026-05-09/087-service-domain-real-browser-access.md) |
+| 2026-05-09 | 088 | 서비스 상세 API helper 이름 충돌 수정과 화면 렌더링 복구 | [상세](devlog/2026-05-09/088-service-detail-helper-collision-fix.md) |
+| 2026-05-09 | 089 | 서비스 배포 백그라운드 전환과 Wiki.js nginx 배포 오류 수정 | [상세](devlog/2026-05-09/089-service-background-deploy-wiki-nginx-fix.md) |
+| 2026-05-09 | 090 | 서비스 상세 탭 분리와 Compose/nginx 기반 접속 흐름 표시 추가 | [상세](devlog/2026-05-09/090-service-detail-tabs-and-flow-engine.md) |
+| 2026-05-09 | 091 | 서비스 접속 흐름을 캔버스형 시스템 구성도로 전환 | [상세](devlog/2026-05-09/091-service-flow-canvas-diagram.md) |
+| 2026-05-09 | 092 | 서비스 플로우 구성도 좌표계 통합과 화살표 정렬 수정 | [상세](devlog/2026-05-09/092-service-flow-svg-coordinate-fix.md) |
+| 2026-05-09 | 093 | 서비스 플로우를 nginx 방화벽 중심 트리 구조로 재구성 | [상세](devlog/2026-05-09/093-service-flow-tree-firewall-layout.md) |
+| 2026-05-09 | 094 | 서버 관리 개요 UX와 컨테이너 삭제, 운영형 access 화면 적용 | [상세](devlog/2026-05-09/094-server-overview-access-operator-ux.md) |
+| 2026-05-09 | 095 | 미등록 컨테이너 목록 제거와 서비스 고급 관리 Monaco/컨테이너 액션 적용 | [상세](devlog/2026-05-09/095-service-advanced-monaco-container-actions.md) |

@@ -5,7 +5,7 @@ from pathlib import Path
 config = wiz.config("docker_infra")
 managed_ssh = wiz.model("struct/ssh_managed")
 DEFAULT_TIMEOUT_SECONDS = 15
-MAX_TIMEOUT_SECONDS = 120
+MAX_TIMEOUT_SECONDS = 1800
 MAX_CAPTURE_CHARS = 20000
 def _normalize_timeout(timeout_seconds):
     if timeout_seconds in (None, ""):

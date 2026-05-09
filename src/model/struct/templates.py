@@ -7,10 +7,44 @@ class Templates:
 
     def ensure_defaults(self, env=None):
         store.migrate_storage_root(env=env)
-        existing = store.namespaces(env=env)
+        desired = {item["namespace"]: item for item in seed.default_templates()}
+        managed = set(seed.managed_namespaces())
+        existing_rows = store.overview(env=env).get("templates", [])
+        existing = {item["namespace"]: item for item in existing_rows}
+        for namespace in sorted(managed - set(desired)):
+            store.remove_namespace(namespace, env=env)
+            existing.pop(namespace, None)
         for item in seed.default_templates():
-            if item["namespace"] in existing:
-                continue
+            current = existing.get(item["namespace"])
+            metadata = {**(item.get("metadata") or {})}
+            payload = {
+                "name": item["name"],
+                "namespace": item["namespace"],
+                "description": item["description"],
+                "enabled": True,
+                "metadata": metadata,
+                "compose": item["files"]["docker-compose.yaml"],
+                "values_default": item["files"]["values.default.yaml"],
+                "values_schema": item["files"]["values.schema.json"],
+                "readme": item["files"]["README.md"],
+                "source": "seed",
+            }
+            if current:
+                if (current.get("metadata") or {}).get("seed_version") == metadata.get("seed_version"):
+                    continue
+                payload["id"] = current["id"]
+            store.save(
+                payload,
+                env=env,
+            )
+            if not current:
+                existing[item["namespace"]] = {"namespace": item["namespace"]}
+
+    def reset_defaults(self, env=None):
+        for namespace in sorted(seed.managed_namespaces()):
+            store.remove_namespace(namespace, env=env)
+        store.migrate_storage_root(env=env)
+        for item in seed.default_templates():
             store.save(
                 {
                     "name": item["name"],
@@ -22,11 +56,11 @@ class Templates:
                     "values_default": item["files"]["values.default.yaml"],
                     "values_schema": item["files"]["values.schema.json"],
                     "readme": item["files"]["README.md"],
-                    "source": "seed",
+                    "source": "seed_reset",
                 },
                 env=env,
             )
-            existing.add(item["namespace"])
+        return store.overview(env=env)
 
     def load(self, env=None):
         self.ensure_defaults(env=env)

@@ -63,6 +63,21 @@ def setup():
     wiz.response.status(code, **payload)
 
 
+def disable_backup_system():
+    backup_system = wiz.model("struct").backup_system
+    code = 200
+    payload = {}
+    try:
+        payload = backup_system.disable()
+    except backup_system.BackupSystemError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = _error_payload(exc, "DATABASE_UNAVAILABLE")
+    wiz.response.status(code, **payload)
+
+
 def login():
     auth = wiz.model("struct").auth
     body = wiz.request.query()

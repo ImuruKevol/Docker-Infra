@@ -227,6 +227,7 @@ export class Component implements OnInit {
         fd.append('label', this.certificateForm.label || `${zone.domain} 인증서`);
         fd.append('cert_file', this.certificateForm.cert_file);
         fd.append('key_file', this.certificateForm.key_file);
+        if (this.certificateForm.chain_file) fd.append('chain_file', this.certificateForm.chain_file);
         const response: any = await this.service.file.upload('/api/domain-certificates', fd);
         this.certificateBusy.set(false);
         if (response?.code === 200) {
@@ -329,7 +330,7 @@ export class Component implements OnInit {
             { label: '유효', value: summary.valid || 0, status: 'active' },
             { label: '곧 만료', value: summary.expiring || 0, status: 'pending' },
             { label: '만료', value: summary.expired || 0, status: 'error' },
-            { label: '오류/누락', value: (summary.error || 0) + (summary.missing || 0), status: 'error' }
+            { label: '오류/누락', value: (summary.error || 0) + (summary.missing || 0) + (summary.key_insecure || 0) + (summary.key_mismatch || 0), status: 'error' }
         ].filter((item) => item.value > 0);
     }
 
@@ -347,9 +348,37 @@ export class Component implements OnInit {
             expired: '만료',
             missing: '파일 없음',
             error: '분석 실패',
+            key_insecure: '키 권한 확인 필요',
+            key_mismatch: '키 불일치',
             disabled: '사용 안 함'
         };
         return labels[status] || status || '-';
+    }
+
+    public certificateKeyText(cert: any) {
+        if (!cert?.key_exists) return 'KEY 없음';
+        if (cert.key_matches === false) return 'KEY 불일치';
+        if (cert.key_permission_secure === false) return `권한 확인 필요 (${cert.key_permission_mode || '-'})`;
+        return `KEY 정상 (${cert.key_permission_mode || '0600'})`;
+    }
+
+    public serviceLinks() {
+        return this.detail()?.service_links || [];
+    }
+
+    public certificateAppliedServiceLinks() {
+        return this.serviceLinks().filter((item: any) => item.certificate_applied === true);
+    }
+
+    public serviceCertificateLabel(item: any) {
+        const labels: any = {
+            existing: '업로드 인증서',
+            upload: '업로드 인증서',
+            certbot: '무료 인증서',
+            self_signed: '테스트 인증서',
+            none: 'SSL 없음',
+        };
+        return labels[item?.nginx_ssl_mode] || labels[item?.ssl_mode] || item?.nginx_ssl_mode || item?.ssl_mode || '-';
     }
 
     public formatDate(value: any) {
@@ -396,7 +425,7 @@ export class Component implements OnInit {
     }
 
     private emptyDetail() {
-        return { zone: null, records: [], ssl_certificates: [], ssl_summary: {} };
+        return { zone: null, records: [], ssl_certificates: [], ssl_summary: {}, service_links: [] };
     }
 
     private emptyZoneForm(zone: any = {}) {
@@ -430,8 +459,10 @@ export class Component implements OnInit {
         return {
             label: seed.label || '',
             cert_file: null,
+            chain_file: null,
             key_file: null,
             cert_file_name: '',
+            chain_file_name: '',
             key_file_name: ''
         };
     }

@@ -66,7 +66,7 @@ main(class="space-y-5 px-5 py-5")
                                     button(type="button", (click)="checkSelected()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                         i(class="fa-solid fa-stethoscope")
                                         span 점검
-                                    button(type="button", (click)="joinSelected()", [disabled]="busy() || selected()?.is_local_master", class="inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                                    button(*ngIf="showJoinSwarmButton(selected())", type="button", (click)="joinSelected()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                                         i(class="fa-solid fa-link")
                                         span Swarm 연결
                         div(class="space-y-3 px-4 py-3")
@@ -104,9 +104,9 @@ main(class="space-y-5 px-5 py-5")
                                     div(class="h-full rounded-full bg-amber-500 transition-all duration-500 ease-out dark:bg-amber-400", [style.width.%]="progressPercent(metricValue('storage.used_percent'))")
                                 p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{formatBytes(metricValue('storage.used'))}} / {{formatBytes(metricValue('storage.total'))}}
                             div(class="p-4")
-                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") Containers
-                                p(class="mt-2 text-2xl font-semibold text-zinc-950 dark:text-zinc-50") {{dockerUnavailable() ? '-' : containerSummary().total}}
-                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{dockerUnavailable() ? 'Docker 사용 불가' : ('실행 ' + containerSummary().running + ' · 중지 ' + containerSummary().stopped)}}
+                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서비스
+                                p(class="mt-2 text-2xl font-semibold text-zinc-950 dark:text-zinc-50") {{dockerUnavailable() ? '-' : serviceGroups().length}}
+                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{dockerUnavailable() ? 'Docker 사용 불가' : (serviceGroups().length + '개 서비스 관리 중')}}
 
                     div(class="grid grid-cols-1 gap-4 lg:grid-cols-5")
                         div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
@@ -151,112 +151,48 @@ main(class="space-y-5 px-5 py-5")
                                     div
                                         h2(class="text-sm font-semibold text-amber-900 dark:text-amber-100") Docker를 사용할 수 없는 서버
                                         p(class="mt-1 text-sm text-amber-800 dark:text-amber-200") {{dockerUnavailableReason()}}
-                                        p(class="mt-2 text-xs text-amber-700 dark:text-amber-300") 이 서버에서는 등록된 서비스 컨테이너와 미등록 컨테이너 목록을 표시하지 않습니다. Docker 설치 또는 daemon 상태를 먼저 확인해주세요.
+                                        p(class="mt-2 text-xs text-amber-700 dark:text-amber-300") 이 서버에서는 등록된 서비스 목록을 표시하지 않습니다. Docker 설치 또는 daemon 상태를 먼저 확인해주세요.
 
                         section(*ngIf="showRuntimePanels()", class="space-y-4", data-testid="servers-containers-table")
                             div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
                                 div(class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                                    h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 등록된 서비스 컨테이너
+                                    h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 등록된 서비스
                                     span(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{serviceGroups().length}}
-                                div(*ngIf="serviceGroups().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 이 서버에서 등록 서비스와 연결된 컨테이너가 없습니다.
-                                div(*ngFor="let group of serviceGroups()", class="border-t border-zinc-100 px-4 py-4 first:border-t-0 dark:border-zinc-800")
-                                    div(class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between")
-                                        div(class="min-w-0")
-                                            div(class="flex flex-wrap items-center gap-2")
-                                                h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{group.service?.name}}
-                                                span(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{group.service?.namespace}}
-                                                span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="statusClass(group.service?.status)") {{statusLabel(group.service?.status)}}
-                                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 컨테이너 {{group.summary?.total}}개 · 실행 {{group.summary?.running}}개 · 중지 {{group.summary?.stopped}}개
-                                        div(class="flex flex-wrap items-center gap-2")
-                                            button(type="button", [attr.title]="serviceActionTitle(group, 'start')", (click)="runServiceAction(group, 'start')", [disabled]="busy() || !canRunServiceAction(group, 'start')", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                                i(class="fa-solid fa-play")
-                                                span 일괄 실행
-                                            button(type="button", [attr.title]="serviceActionTitle(group, 'restart')", (click)="runServiceAction(group, 'restart')", [disabled]="busy() || !canRunServiceAction(group, 'restart')", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                                i(class="fa-solid fa-rotate-right")
-                                                span 일괄 재시작
-                                            button(type="button", [attr.title]="serviceActionTitle(group, 'stop')", (click)="runServiceAction(group, 'stop')", [disabled]="busy() || !canRunServiceAction(group, 'stop')", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                                                i(class="fa-solid fa-stop")
-                                                span 일괄 중지
-                                    div(class="mt-4 overflow-x-auto")
-                                        table(class="min-w-full divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
-                                            thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
-                                                tr
-                                                    th(class="px-4 py-2 text-left font-semibold") 컨테이너
-                                                    th(class="px-4 py-2 text-left font-semibold") 이미지
-                                                    th(class="px-4 py-2 text-left font-semibold") 상태
-                                                    th(class="px-4 py-2 text-left font-semibold") 포트
-                                                    th(class="px-4 py-2 text-right font-semibold") 동작
-                                            tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                                                tr(*ngFor="let container of group.containers")
-                                                    td(class="px-4 py-3")
-                                                        p(class="font-semibold text-zinc-950 dark:text-zinc-50") {{container.name || container.id}}
-                                                        p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") {{container.runtime_service_name || '-'}}
-                                                    td(class="px-4 py-3 text-zinc-600 dark:text-zinc-300") {{container.image || '-'}}
-                                                    td(class="px-4 py-3")
-                                                        span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="containerStatusClass(container)") {{containerStatusLabel(container)}}
-                                                    td(class="px-4 py-3")
-                                                        div(class="flex flex-wrap gap-1")
-                                                            span(*ngFor="let binding of mappedBindings(container)", class="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300")
-                                                                span 호스트 {{portSourceLabel(binding)}}
-                                                                span(class="mx-1 text-sky-400") →
-                                                                span 컨테이너 {{portTargetLabel(binding)}}
-                                                            span(*ngFor="let binding of internalBindings(container)", class="inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300")
-                                                                span 내부 전용 {{portTargetLabel(binding)}}
-                                                        span(*ngIf="mappedBindings(container).length === 0 && internalBindings(container).length === 0", class="text-xs text-zinc-500 dark:text-zinc-400") 포트 정보 없음
-                                                    td(class="px-4 py-3")
-                                                        div(class="flex justify-end gap-1")
-                                                            button(type="button", [attr.title]="containerActionTitle(container, 'start')", (click)="runContainerAction(container, 'start')", [disabled]="busy() || !canRunContainerAction(container, 'start')", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                                                i(class="fa-solid fa-play")
-                                                            button(type="button", [attr.title]="containerActionTitle(container, 'restart')", (click)="runContainerAction(container, 'restart')", [disabled]="busy() || !canRunContainerAction(container, 'restart')", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                                                i(class="fa-solid fa-rotate-right")
-                                                            button(type="button", [attr.title]="containerActionTitle(container, 'stop')", (click)="runContainerAction(container, 'stop')", [disabled]="busy() || !canRunContainerAction(container, 'stop')", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                                                                i(class="fa-solid fa-stop")
-
-                            div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-                                div(class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                                    div
-                                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 미등록 컨테이너
-                                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") Compose 파일을 찾아 서비스로 등록하면 이후에는 서비스 단위로 관리할 수 있습니다.
-                                    div(class="flex items-center gap-2")
-                                        span(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{unmanagedContainers().length}}
-                                        button(type="button", (click)="openImportCompose()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                            i(class="fa-solid fa-folder-tree")
-                                            span Compose 등록
-                                div(*ngIf="unmanagedContainers().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 미등록 컨테이너가 없습니다.
-                                div(*ngIf="unmanagedContainers().length > 0", class="overflow-x-auto")
+                                div(*ngIf="serviceGroups().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 이 서버에서 실행 중인 등록 서비스가 없습니다.
+                                div(*ngIf="serviceGroups().length > 0", class="overflow-x-auto")
                                     table(class="min-w-full divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
                                         thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
                                             tr
-                                                th(class="px-4 py-2 text-left font-semibold") 컨테이너
-                                                th(class="px-4 py-2 text-left font-semibold") 이미지
+                                                th(class="px-4 py-2 text-left font-semibold") 서비스
                                                 th(class="px-4 py-2 text-left font-semibold") 상태
-                                                th(class="px-4 py-2 text-left font-semibold") 포트
-                                                th(class="px-4 py-2 text-right font-semibold") 동작
+                                                th(class="px-4 py-2 text-left font-semibold") 사용 중인 포트
+                                                th(class="px-4 py-2 text-left font-semibold") 일괄 액션
+                                                th(class="px-4 py-2 text-right font-semibold") 상세
                                         tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                                            tr(*ngFor="let container of unmanagedContainers()")
+                                            tr(*ngFor="let group of serviceGroups()")
                                                 td(class="px-4 py-3")
-                                                    p(class="font-semibold text-zinc-950 dark:text-zinc-50") {{container.name || container.id}}
-                                                    p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") {{container.service_namespace || '서비스 미연결'}}
-                                                td(class="px-4 py-3 text-zinc-600 dark:text-zinc-300") {{container.image || '-'}}
+                                                    p(class="font-semibold text-zinc-950 dark:text-zinc-50") {{serviceDisplayName(group)}}
                                                 td(class="px-4 py-3")
-                                                    span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="containerStatusClass(container)") {{containerStatusLabel(container)}}
+                                                    span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="serviceRuntimeClass(group)") {{serviceRuntimeLabel(group)}}
                                                 td(class="px-4 py-3")
                                                     div(class="flex flex-wrap gap-1")
-                                                        span(*ngFor="let binding of mappedBindings(container)", class="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300")
-                                                            span 호스트 {{portSourceLabel(binding)}}
-                                                            span(class="mx-1 text-sky-400") →
-                                                            span 컨테이너 {{portTargetLabel(binding)}}
-                                                        span(*ngFor="let binding of internalBindings(container)", class="inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300")
-                                                            span 내부 전용 {{portTargetLabel(binding)}}
-                                                    span(*ngIf="mappedBindings(container).length === 0 && internalBindings(container).length === 0", class="text-xs text-zinc-500 dark:text-zinc-400") 포트 정보 없음
+                                                        span(*ngFor="let badge of servicePortBadges(group)", class="inline-flex items-center rounded-md border px-2 py-1 text-[11px] font-semibold", [ngClass]="servicePortBadgeClass(badge)") {{badge.label}}
+                                                    span(*ngIf="servicePortBadges(group).length === 0", class="text-xs text-zinc-500 dark:text-zinc-400") 연결된 포트 없음
                                                 td(class="px-4 py-3")
-                                                    div(class="flex justify-end gap-1")
-                                                        button(type="button", [attr.title]="containerActionTitle(container, 'start')", (click)="runContainerAction(container, 'start')", [disabled]="busy() || !canRunContainerAction(container, 'start')", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                                    div(class="flex flex-wrap gap-1.5")
+                                                        button(type="button", [attr.title]="serviceActionTitle(group, 'start')", (click)="runServiceAction(group, 'start')", [disabled]="busy() || !canRunServiceAction(group, 'start')", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                                             i(class="fa-solid fa-play")
-                                                        button(type="button", [attr.title]="containerActionTitle(container, 'restart')", (click)="runContainerAction(container, 'restart')", [disabled]="busy() || !canRunContainerAction(container, 'restart')", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                                            span 실행
+                                                        button(type="button", [attr.title]="serviceActionTitle(group, 'restart')", (click)="runServiceAction(group, 'restart')", [disabled]="busy() || !canRunServiceAction(group, 'restart')", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                                             i(class="fa-solid fa-rotate-right")
-                                                        button(type="button", [attr.title]="containerActionTitle(container, 'stop')", (click)="runContainerAction(container, 'stop')", [disabled]="busy() || !canRunContainerAction(container, 'stop')", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                                            span 재시작
+                                                        button(type="button", [attr.title]="serviceActionTitle(group, 'stop')", (click)="runServiceAction(group, 'stop')", [disabled]="busy() || !canRunServiceAction(group, 'stop')", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                                                             i(class="fa-solid fa-stop")
+                                                            span 중지
+                                                td(class="px-4 py-3 text-right")
+                                                    a([routerLink]="['/services']", [queryParams]="serviceDetailQueryParams(group)", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                                        i(class="fa-solid fa-arrow-up-right-from-square")
+                                                        span 서비스 상세
 
                     section(*ngIf="isDetailTab('macros')", class="space-y-4 p-4")
                         div(class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.6fr)_360px]")
@@ -376,14 +312,14 @@ div(*ngIf="fileBrowserOpen()", class="fixed inset-0 z-40 flex items-center justi
         div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
             div
                 h2(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") Compose 파일 선택
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{importCandidate()?.name || importCandidate()?.id || '선택한 서버'}}에 연결할 docker-compose.yaml 또는 docker-compose.yml 파일을 선택합니다.
+                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{importCandidate()?.name || importCandidate()?.id || '선택한 서버'}}의 docker-compose.yaml 또는 docker-compose.yml 파일을 서비스 생성 화면으로 가져옵니다.
             button(type="button", (click)="closeFileBrowser()", [disabled]="fileBrowserBusy()", class="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
                 i(class="fa-solid fa-xmark")
         div(class="space-y-4 px-5 py-4")
             label(class="block")
                 span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서비스 이름
                 input(data-testid="servers-compose-service-name", type="text", [ngModel]="composeImportName()", (ngModelChange)="composeImportName.set($event)", placeholder="예: 사내 게시판", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 등록될 서비스 표시 이름입니다. 내부 식별자는 이 이름을 기준으로 자동 정리됩니다.
+                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 서비스 생성 화면에서 이름, 도메인, 배포 전 점검을 이어서 확인합니다.
             div(class="grid grid-cols-1 gap-2 lg:grid-cols-[1fr_auto_auto_auto]")
                 label(class="block")
                     span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 경로
@@ -422,7 +358,7 @@ div(*ngIf="fileBrowserOpen()", class="fixed inset-0 z-40 flex items-center justi
                         span(*ngIf="item.type === 'file' && !canImportFile(item)", class="text-xs text-zinc-500 dark:text-zinc-400") 등록 불가
                         button(*ngIf="canImportFile(item)", type="button", (click)="importComposeFile(item)", [disabled]="fileBrowserBusy() || !composeImportNameValue()", class="inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                             i(class="fa-solid fa-plus")
-                            span 서비스 등록
+                            span 생성 화면으로 이동
 
 div(*ngIf="macroModalOpen()", class="fixed inset-0 z-40 flex items-center justify-center px-4 py-6")
     div(class="absolute inset-0 bg-zinc-950/50", (click)="closeMacroModal()")

@@ -1,8 +1,13 @@
 from pathlib import Path
 
+from psycopg.types.json import Jsonb
+
 
 connect = wiz.model("db/postgres").connect
+local_executor = wiz.model("struct/local_executor")
+webserver = wiz.model("struct/webserver")
 shared = wiz.model("struct/services_shared")
+image_backups = wiz.model("struct/service_image_backups")
 ServiceError = shared.ServiceError
 _row = shared.row
 
@@ -27,6 +32,48 @@ class ServiceRuntimeMixin:
         if target != root and not target.is_relative_to(root):
             raise ServiceError(400, "서비스 디렉토리 밖의 경로에는 접근할 수 없습니다.", "SERVICE_FILE_PATH_INVALID")
         return root, target
+
+    def _managed_nginx_path(self, path):
+        target = Path(str(path or "")).expanduser()
+        if not target.name.startswith("docker-infra-") or target.suffix != ".conf":
+            return None
+        available = Path(webserver.nginx_defaults().get("available_site_path") or "/etc/nginx/sites-available").expanduser()
+        try:
+            resolved = target.resolve()
+            available_resolved = available.resolve()
+            if resolved != available_resolved and not resolved.is_relative_to(available_resolved):
+                return None
+        except Exception:
+            return None
+        return target
+
+    def _nginx_configs(self, service_id, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                self._service_row(cursor, service_id)
+                cursor.execute("SELECT * FROM service_domains WHERE service_id = %s ORDER BY domain ASC", (service_id,))
+                rows = [_row(row) for row in cursor.fetchall()]
+        configs = []
+        for row in rows:
+            metadata = dict(row.get("metadata") or {})
+            config_path = metadata.get("nginx_config_path")
+            target = self._managed_nginx_path(config_path)
+            content = ""
+            readable = False
+            if target and target.is_file():
+                content = target.read_text(encoding="utf-8")
+                readable = True
+            configs.append({
+                "domain_id": row["id"],
+                "domain": row["domain"],
+                "path": str(target or config_path or ""),
+                "enabled_path": metadata.get("nginx_enabled_path") or "",
+                "content": content,
+                "readable": readable,
+                "editable": bool(target),
+                "managed": True,
+            })
+        return configs
 
     def detail(self, service_id, env=None):
         with connect(env=env) as connection:
@@ -66,10 +113,52 @@ class ServiceRuntimeMixin:
             "service": service,
             "domains": domains,
             "versions": versions,
+            "image_backups": image_backups.list_for_service(service_id, env=env),
             "operations": operations,
             "compose_content": compose_content,
             "file_root": str(root),
+            "runtime_status": (service.get("metadata") or {}).get("runtime_status") or {},
+            "nginx_configs": self._nginx_configs(service_id, env=env),
         }
+
+    def update_nginx_config(self, payload, env=None):
+        body = payload or {}
+        service_id = body.get("service_id")
+        domain_id = body.get("domain_id")
+        content = str(body.get("content") or "")
+        if not service_id:
+            raise ServiceError(400, "service_id는 필수입니다.", "SERVICE_ID_REQUIRED")
+        if not domain_id:
+            raise ServiceError(400, "domain_id는 필수입니다.", "SERVICE_DOMAIN_ID_REQUIRED")
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                self._service_row(cursor, service_id)
+                cursor.execute("SELECT * FROM service_domains WHERE id = %s AND service_id = %s", (domain_id, service_id))
+                domain = cursor.fetchone()
+                if domain is None:
+                    raise ServiceError(404, "서비스 도메인 설정을 찾을 수 없습니다.", "SERVICE_DOMAIN_NOT_FOUND")
+                domain = _row(domain)
+        metadata = dict(domain.get("metadata") or {})
+        target = self._managed_nginx_path(metadata.get("nginx_config_path"))
+        if target is None:
+            raise ServiceError(400, "Docker Infra가 관리하는 nginx 설정만 수정할 수 있습니다.", "NGINX_CONFIG_NOT_MANAGED")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        previous = target.read_text(encoding="utf-8") if target.is_file() else ""
+        target.write_text(content, encoding="utf-8")
+        configtest = local_executor.run("proxy.nginx.configtest", timeout_seconds=20, env=env)
+        if configtest.get("status") != "ok":
+            target.write_text(previous, encoding="utf-8")
+            raise ServiceError(400, "nginx 설정 검사를 통과하지 못해 이전 내용으로 되돌렸습니다.", "NGINX_CONFIGTEST_FAILED", check=configtest)
+        reload_result = local_executor.run("proxy.nginx.reload", timeout_seconds=20, env=env)
+        if reload_result.get("status") != "ok":
+            target.write_text(previous, encoding="utf-8")
+            local_executor.run("proxy.nginx.configtest", timeout_seconds=20, env=env)
+            raise ServiceError(400, "nginx reload에 실패해 이전 내용으로 되돌렸습니다.", "NGINX_RELOAD_FAILED", check=reload_result)
+        metadata.update({"manual_nginx_config_edited": True, "manual_nginx_config_path": str(target)})
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE service_domains SET metadata = %s, updated_at = now() WHERE id = %s", (Jsonb(metadata), domain_id))
+        return {"nginx_configs": self._nginx_configs(service_id, env=env), "configtest": configtest, "reload": reload_result}
 
     def browse_files(self, service_id, relative_path="", env=None):
         with connect(env=env) as connection:
@@ -108,6 +197,63 @@ class ServiceRuntimeMixin:
         if not target.exists() or not target.is_file():
             raise ServiceError(404, "선택한 파일을 찾을 수 없습니다.", "SERVICE_FILE_NOT_FOUND")
         return {"path": relative_path, "content": target.read_text(encoding="utf-8")}
+
+    def refresh_image_records(self, payload, env=None):
+        payload = payload or {}
+        service_id = payload.get("service_id")
+        if not service_id:
+            raise ServiceError(400, "service_id는 필수입니다.", "SERVICE_ID_REQUIRED")
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                service = self._service_row(cursor, service_id)
+                cursor.execute("SELECT * FROM compose_versions WHERE service_id = %s ORDER BY version DESC LIMIT 1", (service_id,))
+                version = cursor.fetchone()
+        compose_path = Path(service["compose_path"]).expanduser()
+        if not compose_path.is_file():
+            raise ServiceError(404, "서비스 Compose 파일을 찾을 수 없습니다.", "SERVICE_COMPOSE_NOT_FOUND")
+        image_backups.record(
+            service,
+            compose_path.read_text(encoding="utf-8"),
+            compose_version_id=str(version["id"]) if version else None,
+            source="manual_refresh",
+            test_run_id=service.get("test_run_id"),
+            metadata={"namespace": service.get("namespace")},
+            env=env,
+        )
+        return self.detail(service_id, env=env)
+
+    def restore_image_backup(self, payload, env=None):
+        payload = payload or {}
+        service_id = payload.get("service_id")
+        backup_id = payload.get("backup_id")
+        if not service_id:
+            raise ServiceError(400, "service_id는 필수입니다.", "SERVICE_ID_REQUIRED")
+        if not backup_id:
+            raise ServiceError(400, "backup_id는 필수입니다.", "SERVICE_IMAGE_BACKUP_ID_REQUIRED")
+        image_backups.restore(service_id, backup_id, env=env)
+        return self.detail(service_id, env=env)
+
+    def backup_service_image(self, payload, env=None):
+        payload = payload or {}
+        service_id = payload.get("service_id")
+        backup_id = payload.get("backup_id")
+        if not service_id:
+            raise ServiceError(400, "service_id는 필수입니다.", "SERVICE_ID_REQUIRED")
+        if not backup_id:
+            raise ServiceError(400, "backup_id는 필수입니다.", "SERVICE_IMAGE_BACKUP_ID_REQUIRED")
+        image_backups.backup_to_harbor(service_id, backup_id, env=env)
+        return self.detail(service_id, env=env)
+
+    def snapshot_service_image(self, payload, env=None):
+        payload = payload or {}
+        service_id = payload.get("service_id")
+        backup_id = payload.get("backup_id")
+        if not service_id:
+            raise ServiceError(400, "service_id는 필수입니다.", "SERVICE_ID_REQUIRED")
+        if not backup_id:
+            raise ServiceError(400, "backup_id는 필수입니다.", "SERVICE_IMAGE_BACKUP_ID_REQUIRED")
+        image_backups.snapshot_to_harbor(service_id, backup_id, pause=payload.get("pause", True), env=env)
+        return self.detail(service_id, env=env)
 
 
 Model = ServiceRuntimeMixin

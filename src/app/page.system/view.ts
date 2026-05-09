@@ -8,11 +8,20 @@ export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
     public error = signal<string>('');
     public savingGeneral = signal<boolean>(false);
+    public savingBackupPolicy = signal<boolean>(false);
+    public runningBackupPolicy = signal<boolean>(false);
+    public cleanupBusy = signal<boolean>(false);
     public backupBusy = signal<boolean>(false);
     public general: any = { browser_title: 'Docker Infra', favicon_url: AppearanceRuntime.assetRoute('favicon'), logo_url: AppearanceRuntime.assetRoute('logo') };
     public backupSystem: any = {};
+    public backupPolicy: any = this.defaultBackupPolicy();
+    public backupPolicyResult: any = null;
+    public cleanupPlan: any = null;
     public uploading: any = { favicon: false, logo: false };
     public assetVersion: number = Date.now();
+    public resetModalOpen = signal<boolean>(false);
+    public resetConfirmText = signal<string>('');
+    public resetDeleteData = signal<boolean>(true);
     public pendingAssets: any = {
         favicon: this.emptyAssetSelection(),
         logo: this.emptyAssetSelection()
@@ -40,6 +49,17 @@ export class Component implements OnInit, OnDestroy {
         });
     }
 
+    public async confirm(message: string, action: string = '확인', status: string = 'warning') {
+        return await this.service.modal.show({
+            title: '',
+            message,
+            cancel: '취소',
+            action,
+            actionBtn: status,
+            status
+        });
+    }
+
     public async load() {
         this.loading.set(true);
         this.error.set('');
@@ -47,6 +67,7 @@ export class Component implements OnInit, OnDestroy {
         if (code === 200) {
             this.general = data.general || this.general;
             this.backupSystem = data.backup_system || {};
+            this.syncBackupPolicy();
         } else {
             this.error.set(data?.message || '시스템 설정을 불러올 수 없습니다.');
         }
@@ -106,6 +127,7 @@ export class Component implements OnInit, OnDestroy {
         this.backupBusy.set(false);
         if (code === 200) {
             this.backupSystem = data.backup_system || this.backupSystem;
+            this.syncBackupPolicy();
             await this.service.render();
             return;
         }
@@ -113,19 +135,136 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
-    public async runBackupAction(action: 'start' | 'stop' | 'restart') {
+    public async runBackupAction(action: 'start' | 'stop' | 'restart' | 'disable') {
         if (this.backupBusy()) return;
-        const labels: any = { start: '시작', stop: '정지', restart: '재시작' };
+        const labels: any = { start: '시작', stop: '정지', restart: '재시작', disable: '비활성화' };
+        if (action === 'disable') {
+            const ok = await this.confirm('서비스 백업 시스템을 사용 안 함으로 바꿉니다. 저장된 백업 데이터는 삭제하지 않습니다.', '비활성화', 'warning');
+            if (!ok) return;
+        }
         this.backupBusy.set(true);
         const { code, data } = await wiz.call(`${action}_backup_system`, {});
         this.backupBusy.set(false);
         if (code === 200) {
             this.backupSystem = data.backup_system || this.backupSystem;
+            this.syncBackupPolicy();
             await this.alert(`백업 시스템 ${labels[action]} 요청을 완료했습니다.`, 'success');
             await this.service.render();
             return;
         }
         await this.alert(data?.message || `백업 시스템을 ${labels[action]}할 수 없습니다.`);
+        await this.service.render();
+    }
+
+    public openBackupResetModal() {
+        this.resetConfirmText.set('');
+        this.resetDeleteData.set(true);
+        this.resetModalOpen.set(true);
+    }
+
+    public closeBackupResetModal() {
+        if (this.backupBusy()) return;
+        this.resetModalOpen.set(false);
+    }
+
+    public canResetBackupSystem() {
+        return this.resetConfirmText().trim() === '초기화';
+    }
+
+    public async resetBackupSystem() {
+        if (this.backupBusy() || !this.canResetBackupSystem()) return;
+        this.backupBusy.set(true);
+        const { code, data } = await wiz.call('reset_backup_system', {
+            confirm: this.resetConfirmText(),
+            delete_data: this.resetDeleteData()
+        });
+        this.backupBusy.set(false);
+        if (code === 200) {
+            this.backupSystem = data.backup_system || this.backupSystem;
+            this.syncBackupPolicy();
+            this.resetModalOpen.set(false);
+            await this.alert('백업 시스템을 초기화했습니다.', 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || '백업 시스템을 초기화할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async saveBackupPolicy() {
+        if (this.savingBackupPolicy()) return;
+        this.savingBackupPolicy.set(true);
+        const { code, data } = await wiz.call('save_backup_policy', this.backupPolicy);
+        this.savingBackupPolicy.set(false);
+        if (code === 200) {
+            this.backupSystem = data.backup_system || this.backupSystem;
+            this.syncBackupPolicy();
+            await this.alert('자동 백업 정책을 저장했습니다.', 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || '자동 백업 정책을 저장할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async runBackupPolicyNow() {
+        if (this.runningBackupPolicy()) return;
+        const ok = await this.confirm('지금 백업 가능한 서비스 이미지를 내부 백업 시스템에 저장합니다. 진행할까요?', '지금 백업', 'warning');
+        if (!ok) return;
+        this.runningBackupPolicy.set(true);
+        const { code, data } = await wiz.call('run_backup_policy_now', {});
+        this.runningBackupPolicy.set(false);
+        if (code === 200) {
+            this.backupPolicyResult = data.result || null;
+            this.backupSystem = this.backupPolicyResult?.backup_system || this.backupSystem;
+            this.syncBackupPolicy();
+            await this.alert(this.backupPolicyResultLabel(), 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || '서비스 이미지 백업을 실행할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async previewBackupCleanup() {
+        if (this.cleanupBusy()) return;
+        this.cleanupBusy.set(true);
+        const { code, data } = await wiz.call('backup_cleanup_plan', {
+            retention_keep_per_service: this.backupPolicy.retention_keep_per_service,
+            cleanup_unused_days: this.backupPolicy.cleanup_unused_days
+        });
+        this.cleanupBusy.set(false);
+        if (code === 200) {
+            this.cleanupPlan = data.cleanup || null;
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || '백업 정리 대상을 확인할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async runBackupCleanup() {
+        if (this.cleanupBusy()) return;
+        const count = Number(this.cleanupPlan?.summary?.count || 0);
+        if (count <= 0) {
+            await this.previewBackupCleanup();
+            if (Number(this.cleanupPlan?.summary?.count || 0) <= 0) return;
+        }
+        const ok = await this.confirm(`내부 백업 시스템에서 오래되었거나 미사용인 백업 이미지 ${this.cleanupPlan.summary.count}개를 삭제합니다.`, '백업 정리', 'warning');
+        if (!ok) return;
+        this.cleanupBusy.set(true);
+        const { code, data } = await wiz.call('run_backup_cleanup', {
+            retention_keep_per_service: this.backupPolicy.retention_keep_per_service,
+            cleanup_unused_days: this.backupPolicy.cleanup_unused_days
+        });
+        this.cleanupBusy.set(false);
+        if (code === 200) {
+            this.cleanupPlan = data.cleanup || null;
+            await this.alert(this.cleanupSummaryLabel(), 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || '백업 이미지를 정리할 수 없습니다.');
         await this.service.render();
     }
 
@@ -148,6 +287,34 @@ export class Component implements OnInit, OnDestroy {
         const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
         const amount = bytes / Math.pow(1024, index);
         return `${amount.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+    }
+
+    public backupPolicyLastRunLabel() {
+        const value = this.backupPolicy?.last_run_at;
+        if (!value) return '없음';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '없음';
+        return date.toLocaleString();
+    }
+
+    public backupPolicyResultLabel() {
+        if (!this.backupPolicyResult && !this.backupPolicy?.last_result) return '아직 실행 결과가 없습니다.';
+        const result = this.backupPolicyResult || this.backupPolicy?.last_result || {};
+        const processed = Number(result.processed || 0);
+        const succeeded = Number(result.succeeded || 0);
+        const failed = Number(result.failed || 0);
+        const snapshots = Number(result.snapshots || 0);
+        if (processed === 0) return '백업할 서비스 이미지가 없습니다.';
+        return `서비스 이미지 백업 ${processed}건 중 ${succeeded}건 완료, ${failed}건 실패 · 스냅샷 ${snapshots}건`;
+    }
+
+    public cleanupSummaryLabel() {
+        const summary = this.cleanupPlan?.summary || {};
+        const count = Number(summary.count ?? summary.deleted_count ?? 0);
+        const deleted = Number(summary.deleted_count || 0);
+        const failed = Number(summary.failed_count || 0);
+        if (deleted > 0 || failed > 0) return `백업 이미지 ${deleted}개 삭제, ${failed}개 실패`;
+        return count > 0 ? `정리 대상 ${count}개` : '정리할 백업 이미지가 없습니다.';
     }
 
     public openAssetPicker(elementId: string) {
@@ -202,6 +369,28 @@ export class Component implements OnInit, OnDestroy {
 
     private bumpAssetVersion() {
         this.assetVersion = Date.now();
+    }
+
+    private defaultBackupPolicy() {
+        return {
+            enabled: false,
+            mode: 'manual',
+            interval_days: 7,
+            window_start: '02:00',
+            window_end: '05:00',
+            max_items_per_run: 3,
+            retention_keep_per_service: 10,
+            cleanup_unused_days: 30,
+            method: 'image_ref',
+            snapshot_enabled: false,
+            snapshot_pause: true,
+            last_run_at: null,
+            last_result: null
+        };
+    }
+
+    private syncBackupPolicy() {
+        this.backupPolicy = { ...this.defaultBackupPolicy(), ...(this.backupSystem?.backup_policy || {}) };
     }
 
     private emptyAssetSelection() {

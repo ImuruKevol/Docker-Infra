@@ -165,11 +165,17 @@ class NodeRuntimeMixin(files_mixin):
 
     def _run_container_action(self, node, action, ids, env=None):
         command_id = f"docker.container.{action}"
+        remote_actions = {
+            "start": ["docker", "start", *ids],
+            "stop": ["docker", "stop", *ids],
+            "restart": ["docker", "restart", *ids],
+            "delete": ["docker", "rm", "-f", *ids],
+        }
         return self._run_node_command(
             node,
             local_command_id=command_id,
             local_params={"ids": ids},
-            remote_command=["docker", action, *ids],
+            remote_command=remote_actions.get(action, ["docker", action, *ids]),
             timeout_seconds=20,
             env=env,
         )
@@ -205,7 +211,7 @@ class NodeRuntimeMixin(files_mixin):
         payload = payload or {}
         action = str(payload.get("action") or "").strip().lower()
         container_id = str(payload.get("container_id") or "").strip()
-        if action not in {"start", "stop", "restart"}:
+        if action not in {"start", "stop", "restart", "delete"}:
             raise NodeError(400, "지원하지 않는 컨테이너 동작입니다.", "INVALID_CONTAINER_ACTION")
         if not container_id:
             raise NodeError(400, "container_id는 필수입니다.", "CONTAINER_ID_REQUIRED")
@@ -251,7 +257,7 @@ class NodeRuntimeMixin(files_mixin):
             env=env,
         )
         if result["status"] != "ok":
-            raise NodeError(409, f"서비스 컨테이너 동작에 실패했습니다. {self._command_failure(result, 'service container action failed')}", "SERVICE_CONTAINER_ACTION_FAILED", check=result)
+            raise NodeError(409, f"서비스 동작에 실패했습니다. {self._command_failure(result, 'service action failed')}", "SERVICE_CONTAINER_ACTION_FAILED", check=result)
         refreshed = self.refresh_containers_panel(node_id, env=env)
         refreshed["result"] = {"action": action, "scope": "service", "service_namespace": namespace, "container_ids": ids, "check": result, "operation": operation}
         return refreshed

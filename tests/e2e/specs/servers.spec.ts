@@ -18,8 +18,8 @@ test.describe('server detail', () => {
     await expect(page.getByTestId('servers-containers-table')).toBeVisible();
     await expect(page.getByText('자동 갱신').first()).toBeVisible();
     await expect(page.getByText('상태 수집 준비')).toHaveCount(0);
-    await expect(page.getByText('등록된 서비스 컨테이너').first()).toBeVisible();
-    await expect(page.getByText('미등록 컨테이너').first()).toBeVisible();
+    await expect(page.getByText('등록된 서비스').first()).toBeVisible();
+    await expect(page.getByText('미등록 컨테이너')).toHaveCount(0);
     await expect(page.getByText('매크로').first()).toBeVisible();
   });
 
@@ -69,27 +69,14 @@ test.describe('server detail', () => {
     await expect(page.getByTestId('servers-node-list')).toBeVisible();
   });
 
-  test('opens compose browser in the server home directory and supports direct path jump', async ({ page }) => {
+  test('hides unmanaged container registration controls', async ({ page }) => {
     await loginOrSkipIfAuthPending(page);
     await page.goto(`${e2eEnv.baseURL}/servers`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForLoadState('networkidle').catch(() => undefined);
 
-    await page.getByRole('button', { name: 'Compose 등록' }).click();
-
-    const browser = page.getByTestId('servers-compose-browser');
-    const pathInput = browser.getByTestId('servers-compose-path');
-    const nameInput = browser.getByTestId('servers-compose-service-name');
-
-    await expect(browser).toBeVisible();
-    await expect(nameInput).toBeVisible();
-    await nameInput.fill('테스트 서비스');
-    await expect(nameInput).toHaveValue('테스트 서비스');
-    await expect.poll(async () => (await pathInput.inputValue()).trim()).toMatch(/^\/.+/);
-
-    await pathInput.fill('/tmp');
-    await browser.getByRole('button', { name: '이동' }).click();
-    await expect.poll(async () => (await pathInput.inputValue()).trim()).toBe('/tmp');
+    await expect(page.getByText('미등록 컨테이너')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Compose 등록' })).toHaveCount(0);
   });
 
   test('keeps the selected server stable when an older detail response arrives late', async ({ page }) => {

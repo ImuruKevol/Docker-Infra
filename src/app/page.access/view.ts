@@ -98,9 +98,9 @@ export class Component implements OnInit {
         const swarm = docker.swarm || {};
         const proxy = checks.proxy || {};
         return [
-            { label: 'Docker', value: docker.daemon || 'unknown', ok: docker.daemon === 'ok' },
-            { label: 'Swarm', value: swarm.manager ? 'manager' : (swarm.state || 'unknown'), ok: !!swarm.manager },
-            { label: 'nginx', value: proxy.nginx?.status || 'unknown', ok: proxy.nginx?.status === 'ok' },
+            { label: '서버', value: docker.daemon === 'ok' ? '정상' : '확인 필요', ok: docker.daemon === 'ok' },
+            { label: '클러스터', value: swarm.manager ? '준비됨' : '확인 필요', ok: !!swarm.manager },
+            { label: '웹 연결', value: proxy.nginx?.status === 'ok' ? '정상' : '확인 필요', ok: proxy.nginx?.status === 'ok' },
         ];
     }
 
@@ -152,7 +152,15 @@ export class Component implements OnInit {
         const { code, data } = await wiz.call("setup", this.data.setup);
         if (code === 200) {
             if (data?.backup_error) {
-                await this.alert(`서비스 백업 시스템은 나중에 시스템 설정에서 다시 시작할 수 있습니다.\n${data.backup_error.message || ''}`, 'warning');
+                const disable = await this.service.modal.show({
+                    title: '서비스 백업 시스템 설치 실패',
+                    message: `서비스 백업 시스템은 건너뛰고 나중에 시스템 설정에서 다시 시작할 수 있습니다.\n${data.backup_error.message || ''}`,
+                    cancel: '대시보드로 이동',
+                    action: '사용 안 함으로 저장',
+                    actionBtn: 'warning',
+                    status: 'warning'
+                });
+                if (disable) await wiz.call('disable_backup_system', {});
             }
             location.href = "/dashboard";
             return;

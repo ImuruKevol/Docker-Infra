@@ -126,10 +126,16 @@ class InfraCatalog:
                     SELECT
                         s.*,
                         COALESCE(d.domain_count, 0) AS domain_count,
+                        d.primary_domain,
+                        d.primary_port,
                         COALESCE(v.version_count, 0) AS compose_version_count
                     FROM services s
                     LEFT JOIN (
-                        SELECT service_id, count(*) AS domain_count
+                        SELECT
+                            service_id,
+                            count(*) AS domain_count,
+                            min(domain) AS primary_domain,
+                            min(port) AS primary_port
                         FROM service_domains
                         GROUP BY service_id
                     ) d ON d.service_id = s.id

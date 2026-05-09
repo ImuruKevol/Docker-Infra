@@ -15,6 +15,7 @@ else:
             label=request.form.get("label"),
             cert_file=request.files.get("cert_file"),
             key_file=request.files.get("key_file"),
+            chain_file=request.files.get("chain_file"),
             test_run_id=request.form.get("test_run_id"),
         )
     except domains.DomainError as exc:
