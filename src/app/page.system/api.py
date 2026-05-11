@@ -214,6 +214,21 @@ def save_ai_settings():
     wiz.response.status(code, **payload)
 
 
+def save_ai_section():
+    ai_settings = wiz.model("struct/ai_settings")
+    code = 200
+    payload = {}
+    try:
+        payload = {"ai_settings": ai_settings.save_section(wiz.request.query())}
+    except ai_settings.AISettingsError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
 def ai_models():
     ai_settings = wiz.model("struct/ai_settings")
     code = 200

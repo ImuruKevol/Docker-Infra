@@ -10,6 +10,7 @@ export class Component implements OnInit, OnDestroy {
     public activeTab = signal<string>('general');
     public savingGeneral = signal<boolean>(false);
     public savingAi = signal<boolean>(false);
+    public savingAiSection = signal<string>('');
     public savingBackupPolicy = signal<boolean>(false);
     public runningBackupPolicy = signal<boolean>(false);
     public cleanupBusy = signal<boolean>(false);
@@ -113,6 +114,55 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
+    public aiSectionBusy(section: string) {
+        return this.savingAiSection() === section;
+    }
+
+    public async saveAiProvider(provider: string) {
+        if (this.savingAiSection()) return;
+        if (!['openai', 'gemini', 'ollama'].includes(provider)) return;
+        this.savingAiSection.set(provider);
+        await this.service.render();
+        const payload: any = {
+            section: provider,
+            [provider]: { ...(this.aiSettings?.[provider] || {}) },
+        };
+        if (provider === 'openai') payload.openai_api_token = this.aiSecrets.openai_api_token;
+        if (provider === 'gemini') payload.gemini_api_token = this.aiSecrets.gemini_api_token;
+        const { code, data } = await wiz.call('save_ai_section', payload);
+        this.savingAiSection.set('');
+        if (code === 200) {
+            if (provider === 'openai') this.aiSecrets.openai_api_token = '';
+            if (provider === 'gemini') this.aiSecrets.gemini_api_token = '';
+            this.syncAiPayload(data.ai_settings || {});
+            await this.alert(`${this.aiProviderLabel(provider)} 설정을 저장했습니다.`, 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || `${this.aiProviderLabel(provider)} 설정을 저장할 수 없습니다.`);
+        await this.service.render();
+    }
+
+    public async saveAiRuntime() {
+        if (this.savingAiSection()) return;
+        this.savingAiSection.set('runtime');
+        await this.service.render();
+        const runtime = {
+            ...(this.aiSettings.runtime || {}),
+            mode: this.aiSettings.runtime?.enabled ? 'registered_node' : 'cloud_api',
+        };
+        const { code, data } = await wiz.call('save_ai_section', { section: 'runtime', runtime });
+        this.savingAiSection.set('');
+        if (code === 200) {
+            this.syncAiPayload(data.ai_settings || {});
+            await this.alert('등록 노드 AI 실행 설정을 저장했습니다.', 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || '등록 노드 AI 실행 설정을 저장할 수 없습니다.');
+        await this.service.render();
+    }
+
     public async refreshAiModels(provider: string) {
         if (this.refreshingAiProvider()) return;
         this.refreshingAiProvider.set(provider);
@@ -135,7 +185,7 @@ export class Component implements OnInit, OnDestroy {
         if (this.refreshingAiResources()) return;
         this.refreshingAiResources.set(true);
         await this.service.render();
-        const { code, data } = await wiz.call('ai_resources', {});
+        const { code, data } = await wiz.call('ai_resources', { port: this.aiSettings.runtime?.node_ollama_port || 11434 });
         this.refreshingAiResources.set(false);
         if (code === 200) {
             this.aiResources = data.resources || this.aiResources;
@@ -453,6 +503,11 @@ export class Component implements OnInit, OnDestroy {
         return this.refreshingAiProvider() === provider;
     }
 
+    public aiProviderLabel(provider: string) {
+        const labels: any = { openai: 'OpenAI', gemini: 'Gemini', ollama: 'Ollama' };
+        return labels[provider] || provider;
+    }
+
     public aiProviderStatus(provider: string) {
         const error = this.aiProviderErrors[provider];
         if (error) return { level: 'error', message: error };
@@ -478,6 +533,89 @@ export class Component implements OnInit, OnDestroy {
     public aiNodeOptions() {
         const nodes = this.aiResources?.nodes || [];
         return nodes.map((item: any) => item.node).filter((node: any) => node?.id);
+    }
+
+    public runtimeNodeItems() {
+        return this.aiResources?.nodes || [];
+    }
+
+    public selectedRuntimeNodeItem() {
+        const nodeId = String(this.aiSettings.runtime?.target_node_id || '');
+        if (!nodeId) return null;
+        return this.runtimeNodeItems().find((item: any) => String(item.node?.id || '') === nodeId) || null;
+    }
+
+    public setRuntimeEnabled(value: boolean) {
+        this.aiSettings.runtime.enabled = Boolean(value);
+        this.aiSettings.runtime.mode = this.aiSettings.runtime.enabled ? 'registered_node' : 'cloud_api';
+    }
+
+    public selectRuntimeNodeById(nodeId: string) {
+        const item = this.runtimeNodeItems().find((row: any) => String(row.node?.id || '') === String(nodeId || ''));
+        if (!item) {
+            this.aiSettings.runtime.target_node_id = '';
+            this.aiSettings.runtime.selected_model = '';
+            return;
+        }
+        this.selectRuntimeNode(item);
+    }
+
+    public selectRuntimeNode(item: any) {
+        this.setRuntimeEnabled(true);
+        this.aiSettings.runtime.target_node_id = item?.node?.id || '';
+        this.aiSettings.runtime.node_ollama_port = item?.ollama?.port || this.aiSettings.runtime.node_ollama_port || 11434;
+        const models = item?.ollama?.models || [];
+        const current = this.aiSettings.runtime.selected_model;
+        if (!models.find((model: any) => model?.id === current)) {
+            this.aiSettings.runtime.selected_model = models[0]?.id || '';
+        }
+    }
+
+    public selectRuntimeModel(value: string) {
+        this.aiSettings.runtime.selected_model = value || '';
+        if (value) this.setRuntimeEnabled(true);
+    }
+
+    public runtimeModelSelectorItems() {
+        const empty = {
+            value: '',
+            label: '모델 선택 안 함',
+            description: '선택한 노드의 Ollama 모델을 고정하지 않습니다.',
+            badge: '',
+            badgeClass: ''
+        };
+        const item = this.selectedRuntimeNodeItem();
+        const models = item?.ollama?.models || [];
+        return [empty, ...models.map((model: any) => ({
+            value: model.id,
+            label: this.modelLabel(model),
+            description: this.modelDescription(model),
+            badge: this.modelBadge(model),
+            badgeClass: this.modelBadgeClass(model),
+        }))];
+    }
+
+    public runtimeNodeStatusLabel(item: any) {
+        const status = item?.ollama?.status;
+        if (status === 'ok') return 'Ollama 실행 중';
+        if (status === 'warning') return 'API 미응답';
+        if (status === 'missing') return 'Ollama 없음';
+        if (status === 'error') return '스캔 오류';
+        return '미스캔';
+    }
+
+    public runtimeNodeStatusClass(item: any) {
+        const status = item?.ollama?.status;
+        if (status === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
+        if (status === 'warning') return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+        if (status === 'missing' || status === 'error') return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300';
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
+    public runtimeNodeModelSummary(item: any) {
+        const count = Number(item?.ollama?.model_count || (item?.ollama?.models || []).length || 0);
+        if (count <= 0) return '모델 없음';
+        return `${count.toLocaleString()}개 모델`;
     }
 
     public resourcePayload(item: any) {
@@ -630,7 +768,7 @@ export class Component implements OnInit, OnDestroy {
             openai: { enabled: false, base_url: 'https://api.openai.com/v1', selected_model: '' },
             gemini: { enabled: false, api_version: 'v1beta', selected_model: '' },
             ollama: { enabled: false, scheme: 'http', host: '127.0.0.1', port: 11434, selected_model: '' },
-            runtime: { mode: 'cloud_api', target_node_id: '', node_ollama_port: 11434, prefer_gpu: true, selected_model: '' },
+            runtime: { enabled: false, mode: 'cloud_api', target_node_id: '', node_ollama_port: 11434, prefer_gpu: true, selected_model: '' },
         };
     }
 

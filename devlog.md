@@ -121,3 +121,4 @@
 | 2026-05-10 | 119 | AI 템플릿 수정안 YAML 보정 재요청 진단 강화 | [상세](devlog/2026-05-10/119-ai-template-yaml-repair-diagnostics.md) |
 | 2026-05-10 | 120 | AI output 포맷 계약과 values 기본값 객체 반환 규칙 추가 | [상세](devlog/2026-05-10/120-ai-output-format-contract.md) |
 | 2026-05-10 | 121 | AI 재시도 20회 확대와 Gemini 템플릿 수정 실검증 | [상세](devlog/2026-05-10/121-ai-retry-20-gemini-template-verification.md) |
+| 2026-05-11 | 122 | AI 설정 카드별 저장과 등록 노드 Ollama 스캔 UI 추가 | [상세](devlog/2026-05-11/122-ai-settings-card-save-node-ollama-scan.md) |

@@ -92,6 +92,7 @@ DEFAULT_CONFIG = {
         "selected_model": "",
     },
     "runtime": {
+        "enabled": False,
         "mode": "cloud_api",
         "target_node_id": "",
         "node_ollama_port": 11434,
@@ -342,6 +343,7 @@ class AISettings:
         if mode not in {"cloud_api", "external_ollama", "local_server", "registered_node"}:
             mode = "cloud_api"
         config["runtime"] = {
+            "enabled": _as_bool(config["runtime"].get("enabled")),
             "mode": mode,
             "target_node_id": _str(config["runtime"].get("target_node_id")),
             "node_ollama_port": _as_port(config["runtime"].get("node_ollama_port"), DEFAULT_CONFIG["runtime"]["node_ollama_port"]),
@@ -413,35 +415,7 @@ class AISettings:
             "sources": SOURCES,
         }
 
-    def save(self, payload=None, env=None):
-        body = dict(payload or {})
-        config = self._normalize_config(body)
-        if body.get("clear_openai_api_token"):
-            settings.delete(OPENAI_TOKEN_KEY, env=env)
-        elif _str(body.get("openai_api_token")) and _str(body.get("openai_api_token")) != MASKED_SECRET:
-            settings.upsert(
-                OPENAI_TOKEN_KEY,
-                value=_str(body.get("openai_api_token")),
-                value_type="string",
-                is_secret=True,
-                description="OpenAI API token",
-                metadata={"group": "ai", "provider": "openai"},
-                env=env,
-            )
-
-        if body.get("clear_gemini_api_token"):
-            settings.delete(GEMINI_TOKEN_KEY, env=env)
-        elif _str(body.get("gemini_api_token")) and _str(body.get("gemini_api_token")) != MASKED_SECRET:
-            settings.upsert(
-                GEMINI_TOKEN_KEY,
-                value=_str(body.get("gemini_api_token")),
-                value_type="string",
-                is_secret=True,
-                description="Gemini API token",
-                metadata={"group": "ai", "provider": "gemini"},
-                env=env,
-            )
-
+    def _persist_config(self, config, env=None):
         settings.upsert(
             AI_CONFIG_KEY,
             value=config,
@@ -450,6 +424,62 @@ class AISettings:
             metadata={"group": "ai", "kind": "config"},
             env=env,
         )
+
+    def _save_provider_secret(self, provider, body, env=None):
+        if provider == "openai":
+            token_key = OPENAI_TOKEN_KEY
+            token_field = "openai_api_token"
+            clear_field = "clear_openai_api_token"
+            description = "OpenAI API token"
+        elif provider == "gemini":
+            token_key = GEMINI_TOKEN_KEY
+            token_field = "gemini_api_token"
+            clear_field = "clear_gemini_api_token"
+            description = "Gemini API token"
+        else:
+            return
+
+        if body.get(clear_field):
+            settings.delete(token_key, env=env)
+        elif _str(body.get(token_field)) and _str(body.get(token_field)) != MASKED_SECRET:
+            settings.upsert(
+                token_key,
+                value=_str(body.get(token_field)),
+                value_type="string",
+                is_secret=True,
+                description=description,
+                metadata={"group": "ai", "provider": provider},
+                env=env,
+            )
+
+    def save(self, payload=None, env=None):
+        body = dict(payload or {})
+        current = self._normalize_config(self._saved_config(env=env))
+        config = self._normalize_config(_deep_merge(current, body))
+        self._save_provider_secret("openai", body, env=env)
+        self._save_provider_secret("gemini", body, env=env)
+
+        self._persist_config(config, env=env)
+        return self.public_payload(env=env)
+
+    def save_section(self, payload=None, env=None):
+        body = dict(payload or {})
+        section = _str(body.get("section")).lower()
+        if section not in {"openai", "gemini", "ollama", "runtime"}:
+            raise AISettingsError(400, "지원하지 않는 AI 설정 섹션입니다.", "AI_SETTING_SECTION_NOT_SUPPORTED")
+
+        current = self._normalize_config(self._saved_config(env=env))
+        section_payload = body.get(section) if isinstance(body.get(section), dict) else body
+        next_config = dict(current)
+        next_config[section] = _deep_merge(current.get(section) or {}, section_payload)
+        if section == "runtime" and _as_bool(next_config["runtime"].get("enabled")):
+            next_config["runtime"]["mode"] = "registered_node"
+
+        config = self._normalize_config(next_config)
+        if section in {"openai", "gemini"}:
+            self._save_provider_secret(section, body, env=env)
+
+        self._persist_config(config, env=env)
         return self.public_payload(env=env)
 
     def _http_json(self, url, headers=None, timeout=15):
@@ -600,41 +630,49 @@ class AISettings:
         models.sort(key=lambda item: item["id"].lower())
         return models
 
+    def _ollama_model_payload(self, item):
+        model_id = _str(item.get("model") or item.get("name"))
+        if not model_id:
+            return None
+        details = item.get("details") or {}
+        label_bits = [model_id]
+        if details.get("parameter_size"):
+            label_bits.append(details["parameter_size"])
+        if details.get("quantization_level"):
+            label_bits.append(details["quantization_level"])
+        return {
+            "id": model_id,
+            "label": " · ".join(label_bits),
+            "name": item.get("name"),
+            "modified_at": item.get("modified_at"),
+            "size": item.get("size"),
+            "digest": item.get("digest"),
+            "details": details,
+            "capabilities": _ollama_capabilities(model_id, details),
+            "token_profile": _token_profile("ollama", details=details),
+            "efficiency": _efficiency_profile(model_id),
+            "pricing": _pricing_profile("ollama", model_id),
+            "state": {"level": "ok", "message": "Ollama에 설치된 모델입니다."},
+        }
+
+    def _ollama_models_from_tags(self, models):
+        items = []
+        for item in models or []:
+            if not isinstance(item, dict):
+                continue
+            model = self._ollama_model_payload(item)
+            if model:
+                items.append(model)
+        items.sort(key=lambda item: item["id"].lower())
+        return items
+
     def _fetch_ollama_models(self, payload):
         scheme = "https" if _str(payload.get("scheme"), "http") == "https" else "http"
         scheme, host = _normalize_host(scheme, payload.get("host") or DEFAULT_CONFIG["ollama"]["host"])
         port = _as_port(payload.get("port"), DEFAULT_CONFIG["ollama"]["port"])
         url = f"{scheme}://{host}:{port}/api/tags"
         data = self._http_json(url, timeout=8)
-        models = []
-        for item in data.get("models") or []:
-            model_id = _str(item.get("model") or item.get("name"))
-            if not model_id:
-                continue
-            details = item.get("details") or {}
-            label_bits = [model_id]
-            if details.get("parameter_size"):
-                label_bits.append(details["parameter_size"])
-            if details.get("quantization_level"):
-                label_bits.append(details["quantization_level"])
-            models.append(
-                {
-                    "id": model_id,
-                    "label": " · ".join(label_bits),
-                    "name": item.get("name"),
-                    "modified_at": item.get("modified_at"),
-                    "size": item.get("size"),
-                    "digest": item.get("digest"),
-                    "details": details,
-                    "capabilities": _ollama_capabilities(model_id, details),
-                    "token_profile": _token_profile("ollama", details=details),
-                    "efficiency": _efficiency_profile(model_id),
-                    "pricing": _pricing_profile("ollama", model_id),
-                    "state": {"level": "ok", "message": "Ollama에 설치된 모델입니다."},
-                }
-            )
-        models.sort(key=lambda item: item["id"].lower())
-        return models
+        return self._ollama_models_from_tags(data.get("models") or [])
 
     def list_models(self, payload=None, env=None):
         body = dict(payload or {})
@@ -675,6 +713,11 @@ class AISettings:
         resource = metadata.get("ai_resource") or {}
         return resource if isinstance(resource, dict) else {}
 
+    def _cached_ollama(self, node):
+        metadata = node.get("metadata") or {}
+        ollama = metadata.get("ai_ollama") or {}
+        return ollama if isinstance(ollama, dict) else {}
+
     def _node_ref(self, node):
         return {
             "id": node.get("id"),
@@ -704,22 +747,73 @@ class AISettings:
             },
         }
 
-    def _remember_node_resource(self, node_id, resource, env=None):
+    def _probe_node_ollama(self, node, port, env=None):
+        port = _as_port(port, DEFAULT_CONFIG["runtime"]["node_ollama_port"])
+        if node.get("is_local_master") or node.get("role") == "local_master" or node.get("name") == "local-master":
+            result = nodes.local_executor.run("ai.ollama_scan", params={"port": port}, timeout_seconds=12, env=env)
+        else:
+            command = "export OLLAMA_PORT=%s\n%s" % (port, scripts.AI_OLLAMA_SCAN_SCRIPT)
+            result = nodes._run_ssh_command(node, ["sh", "-lc", command], timeout_seconds=15, env=env)
+        payload = _json_from_stdout(result)
+        payload = payload if isinstance(payload, dict) else {}
+        installed = _as_bool(payload.get("installed"))
+        api_reachable = _as_bool(payload.get("api_reachable"))
+        running = _as_bool(payload.get("running"))
+        if result.get("status") != "ok" or not payload:
+            status = "error"
+            message = "Ollama 상태를 확인할 수 없습니다."
+        elif api_reachable:
+            status = "ok"
+            message = "Ollama API가 응답했습니다."
+        elif installed or running:
+            status = "warning"
+            message = "Ollama는 확인되었지만 API가 응답하지 않습니다."
+        else:
+            status = "missing"
+            message = "Ollama가 설치되어 있지 않거나 확인되지 않았습니다."
+        models = self._ollama_models_from_tags(payload.get("models") or [])
+        return {
+            "status": status,
+            "checked_at": utcnow(),
+            "port": port,
+            "installed": installed,
+            "running": running,
+            "api_reachable": api_reachable,
+            "model_count": len(models),
+            "models": models,
+            "message": message if not payload.get("api_error") else f"{message} ({payload.get('api_error')})",
+            "payload": payload,
+            "check": {
+                "status": result.get("status"),
+                "exit_code": result.get("exit_code"),
+                "stderr": result.get("stderr"),
+                "stdout": "" if payload else result.get("stdout"),
+            },
+        }
+
+    def _remember_node_metadata(self, node_id, key, value, env=None):
         try:
             with connect(env=env) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT metadata FROM nodes WHERE id = %s", (node_id,))
                     row = cursor.fetchone()
                     metadata = dict((row or {}).get("metadata") or {})
-                    metadata["ai_resource"] = resource
+                    metadata[key] = value
                     cursor.execute("UPDATE nodes SET metadata = %s, updated_at = now() WHERE id = %s", (Jsonb(metadata), node_id))
         except Exception:
             pass
+
+    def _remember_node_resource(self, node_id, resource, env=None):
+        self._remember_node_metadata(node_id, "ai_resource", resource, env=env)
+
+    def _remember_node_ollama(self, node_id, ollama, env=None):
+        self._remember_node_metadata(node_id, "ai_ollama", ollama, env=env)
 
     def resources(self, payload=None, env=None):
         body = dict(payload or {})
         probe = _as_bool(body.get("probe"), default=False)
         target_node_id = _str(body.get("node_id"))
+        port = _as_port(body.get("port") or body.get("node_ollama_port"), DEFAULT_CONFIG["runtime"]["node_ollama_port"])
         rows = nodes.list(env=env)
         if target_node_id:
             rows = [row for row in rows if row.get("id") == target_node_id]
@@ -729,10 +823,12 @@ class AISettings:
         for row in rows:
             node = nodes.detail(row["id"], env=env) if probe else row
             resource = self._probe_node_resource(node, env=env) if probe else self._cached_resource(node)
+            ollama = self._probe_node_ollama(node, port, env=env) if probe else self._cached_ollama(node)
             if probe:
                 self._remember_node_resource(node["id"], resource, env=env)
-            items.append({"node": self._node_ref(node), "resource": resource})
-        return {"nodes": items, "checked_at": utcnow() if probe else None, "probe": probe}
+                self._remember_node_ollama(node["id"], ollama, env=env)
+            items.append({"node": self._node_ref(node), "resource": resource, "ollama": ollama})
+        return {"nodes": items, "checked_at": utcnow() if probe else None, "probe": probe, "port": port}
 
 
 Model = AISettings()

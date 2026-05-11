@@ -131,11 +131,12 @@ class AIAssistant:
         ollama = config.get("ollama") or {}
         runtime = config.get("runtime") or {}
         runtime_mode = runtime.get("mode") or "cloud_api"
-        if runtime_mode in {"external_ollama", "local_server", "registered_node"} and runtime.get("selected_model"):
+        runtime_enabled = bool(runtime.get("enabled"))
+        if runtime_enabled and runtime_mode in {"external_ollama", "local_server", "registered_node"} and runtime.get("selected_model"):
             add("ollama", runtime.get("selected_model"))
         if ollama.get("enabled") and ollama.get("selected_model"):
             add("ollama", ollama.get("selected_model"))
-        if runtime_mode in {"external_ollama", "local_server", "registered_node"} and not runtime.get("selected_model"):
+        if runtime_enabled and runtime_mode in {"external_ollama", "local_server", "registered_node"} and not runtime.get("selected_model"):
             add("ollama", ollama.get("selected_model"))
         return result
 
@@ -175,7 +176,7 @@ class AIAssistant:
             runtime_mode = runtime.get("mode") or "cloud_api"
             if ollama.get("enabled"):
                 result.add(self._normalize_model_for_provider(provider, ollama.get("selected_model")))
-            if runtime_mode in {"external_ollama", "local_server", "registered_node"}:
+            if runtime.get("enabled") and runtime_mode in {"external_ollama", "local_server", "registered_node"}:
                 result.add(self._normalize_model_for_provider(provider, runtime.get("selected_model")))
                 result.add(self._normalize_model_for_provider(provider, ollama.get("selected_model")))
         return {item for item in result if item}
@@ -888,6 +889,7 @@ class AIAssistant:
         config = (ai_settings.public_payload(env=env).get("config") or {})
         runtime = config.get("runtime") or {}
         runtime_mode = runtime.get("mode") or "cloud_api"
+        runtime_enabled = bool(runtime.get("enabled"))
         selected = self._model_selection(selection or {})
         if selected:
             provider = self._provider_from_selection(config, runtime, selected, env=env)
@@ -917,12 +919,12 @@ class AIAssistant:
                     "token": gemini_token,
                 }
 
-        if runtime_mode == "registered_node":
+        if runtime_enabled and runtime_mode == "registered_node":
             provider = self._registered_node_provider(config, runtime, env=env)
             if provider:
                 return provider
 
-        if runtime_mode == "local_server":
+        if runtime_enabled and runtime_mode == "local_server":
             model = runtime.get("selected_model") or (config.get("ollama") or {}).get("selected_model")
             port = self._safe_int(runtime.get("node_ollama_port"), 11434)
             if model:
@@ -934,7 +936,7 @@ class AIAssistant:
                 }
 
         ollama = config.get("ollama") or {}
-        model = runtime.get("selected_model") or ollama.get("selected_model")
+        model = ollama.get("selected_model")
         if ollama.get("enabled") and model:
             scheme = ollama.get("scheme") or "http"
             host = ollama.get("host") or "127.0.0.1"
@@ -999,11 +1001,12 @@ class AIAssistant:
             }
         if provider == "ollama":
             runtime_mode = runtime.get("mode") or "cloud_api"
-            if runtime_mode == "registered_node":
+            runtime_enabled = bool(runtime.get("enabled"))
+            if runtime_enabled and runtime_mode == "registered_node":
                 node_runtime = dict(runtime)
                 node_runtime["selected_model"] = model
                 return self._registered_node_provider(config, node_runtime, env=env)
-            if runtime_mode == "local_server":
+            if runtime_enabled and runtime_mode == "local_server":
                 port = self._safe_int(runtime.get("node_ollama_port"), 11434)
                 return {
                     "type": "ollama",
@@ -1757,7 +1760,7 @@ class AIAssistant:
         runtime = config.get("runtime") or {}
         runtime_model = self._clean_text(runtime.get("selected_model"))
         mode = runtime.get("mode") or "cloud_api"
-        if mode in {"external_ollama", "local_server", "registered_node"}:
+        if runtime.get("enabled") and mode in {"external_ollama", "local_server", "registered_node"}:
             model = runtime_model or self._clean_text((config.get("ollama") or {}).get("selected_model"))
             return "ollama::%s" % model if model else "auto"
         openai = config.get("openai") or {}

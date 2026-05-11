@@ -187,11 +187,88 @@ print(json.dumps(payload, ensure_ascii=False))
 PY
 """
 
+AI_OLLAMA_SCAN_SCRIPT = r"""
+python3 - <<'PY'
+import json
+import os
+import shutil
+import subprocess
+import urllib.error
+import urllib.request
+
+
+def run(argv, timeout=4):
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        return {
+            "ok": completed.returncode == 0,
+            "exit_code": completed.returncode,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+    except Exception as exc:
+        return {"ok": False, "exit_code": None, "stdout": "", "stderr": str(exc)}
+
+
+def safe_port(value):
+    try:
+        port = int(value)
+    except Exception:
+        port = 11434
+    return max(1, min(port, 65535))
+
+
+port = safe_port(os.environ.get("OLLAMA_PORT") or 11434)
+path = shutil.which("ollama") or ""
+version = ""
+if path:
+    version_result = run(["ollama", "--version"], timeout=3)
+    version = version_result["stdout"] or version_result["stderr"]
+
+process_result = run(["pgrep", "-x", "ollama"], timeout=2) if shutil.which("pgrep") else {"ok": False, "stdout": "", "stderr": ""}
+systemd_active = ""
+if shutil.which("systemctl"):
+    systemd_result = run(["systemctl", "is-active", "ollama"], timeout=3)
+    systemd_active = systemd_result["stdout"] or systemd_result["stderr"]
+
+api_reachable = False
+api_error = ""
+models = []
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/tags", timeout=5) as response:
+        data = json.loads(response.read().decode("utf-8"))
+        models = data.get("models") if isinstance(data, dict) else []
+        if not isinstance(models, list):
+            models = []
+        api_reachable = True
+except urllib.error.HTTPError as exc:
+    api_error = f"HTTP {exc.code}"
+except Exception as exc:
+    api_error = str(exc)
+
+payload = {
+    "port": port,
+    "installed": bool(path),
+    "path": path,
+    "version": version,
+    "process_running": bool(process_result.get("ok")),
+    "systemd_active": systemd_active,
+    "api_reachable": api_reachable,
+    "running": bool(api_reachable or process_result.get("ok") or systemd_active == "active"),
+    "models": models,
+    "model_count": len(models),
+    "api_error": api_error,
+}
+print(json.dumps(payload, ensure_ascii=False))
+PY
+"""
+
 
 class LocalCommandScripts:
     SYSTEM_METRICS_SCRIPT = SYSTEM_METRICS_SCRIPT
     DOCKER_IMAGE_USAGE_SCRIPT = DOCKER_IMAGE_USAGE_SCRIPT
     AI_RESOURCE_SCRIPT = AI_RESOURCE_SCRIPT
+    AI_OLLAMA_SCAN_SCRIPT = AI_OLLAMA_SCAN_SCRIPT
 
 
 Model = LocalCommandScripts()
