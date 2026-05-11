@@ -129,3 +129,9 @@
 | 2026-05-11 | 127 | 서비스 생성 AI 초안 후 2단계 진행 차단 수정 | [상세](devlog/2026-05-11/127-service-create-step2-validation-fix.md) |
 | 2026-05-11 | 128 | 대시보드 서버별 자원 차트와 1분 중복 샘플 방어 | [상세](devlog/2026-05-11/128-dashboard-node-resource-charts-dedupe.md) |
 | 2026-05-11 | 129 | 자원 수집 web 의존 제거와 collector timer 복구 | [상세](devlog/2026-05-11/129-monitoring-web-independent-collector-repair.md) |
+| 2026-05-11 | 130 | AI 서비스 초안 이미지 이름과 버전 검증 보강 | [상세](devlog/2026-05-11/130-ai-service-draft-image-version-validation.md) |
+| 2026-05-11 | 131 | 로컬 AI 서비스 생성 스트림 장시간 대기 보강 | [상세](devlog/2026-05-11/131-local-ai-service-stream-timeout.md) |
+| 2026-05-11 | 132 | AI SSE chunked 응답 중단 방어 | [상세](devlog/2026-05-11/132-ai-sse-incomplete-chunked-guard.md) |
+| 2026-05-12 | 133 | AI 서비스 생성 스트림 heartbeat 전달 누락 수정 | [상세](devlog/2026-05-12/133-ai-service-stream-heartbeat-forwarding.md) |
+| 2026-05-12 | 134 | AI 이미지 태그 자동 보정과 서비스 생성 preflight 중복 호출 방지 | [상세](devlog/2026-05-12/134-ai-image-resolution-preflight-cache.md) |
+| 2026-05-12 | 135 | 서비스 수정 모달 섹션형 레이아웃으로 재구성 | [상세](devlog/2026-05-12/135-service-edit-modal-section-layout.md) |

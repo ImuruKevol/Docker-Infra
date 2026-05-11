@@ -40,6 +40,9 @@ export class Component implements OnInit {
     public aiDefaultModelRef = signal<string>('auto');
     public aiStreamEvents = signal<any[]>([]);
     public aiOutputTokenCount = signal<number>(0);
+    public preflightSignature = '';
+    public preflightReady = false;
+    public preflightOk = false;
 
     constructor(public service: Service) { }
 
@@ -87,7 +90,7 @@ export class Component implements OnInit {
             this.form.description = data?.draft?.form?.description || data?.description || this.form.description;
         }
         this.imageChecks = {};
-        this.preflight.set(null);
+        this.invalidatePreflight();
         this.ensureDomainTarget();
         this.syncDomain();
     }
@@ -433,7 +436,14 @@ export class Component implements OnInit {
         this.draftMetadata = this.composeDraftMetadata(data, 'ai_draft');
         this.ensureDomainTarget();
         this.syncDomain();
+        this.invalidatePreflight();
+    }
+
+    private invalidatePreflight() {
         this.preflight.set(null);
+        this.preflightSignature = '';
+        this.preflightReady = false;
+        this.preflightOk = false;
     }
 
     public async generateServiceWithAi() {
@@ -776,19 +786,40 @@ export class Component implements OnInit {
         return this.formatComposeError(data, data?.message || '자동 점검을 통과하지 못했습니다.');
     }
 
-    public async runPreflight(showMessage: boolean = false) {
+    private currentPreflightPayload() {
+        const payload = this.payload();
+        return { payload, signature: JSON.stringify(payload) };
+    }
+
+    public async runPreflight(showMessage: boolean = false, force: boolean = false) {
+        const { payload, signature } = this.currentPreflightPayload();
+        if (!force && this.preflightReady && this.preflightSignature === signature) {
+            if (!this.preflightOk && showMessage) {
+                await this.alert(this.formatPreflightError({ preflight: this.preflight() }));
+            }
+            return this.preflightOk;
+        }
         this.preflightLoading.set(true);
         this.preflight.set(null);
-        const { code, data } = await wiz.call('preflight', this.payload());
+        this.preflightReady = false;
+        this.preflightOk = false;
+        const { code, data } = await wiz.call('preflight', payload);
         this.preflightLoading.set(false);
         if (code === 200) {
-            this.preflight.set(data.preflight || null);
+            const preflight = data.preflight || null;
+            this.preflight.set(preflight);
+            this.preflightSignature = signature;
+            this.preflightReady = true;
+            this.preflightOk = !!preflight?.ok;
             await this.service.render();
-            if (!data.preflight?.ok && showMessage) {
+            if (!preflight?.ok && showMessage) {
                 await this.alert(this.formatPreflightError(data));
             }
-            return !!data.preflight?.ok;
+            return !!preflight?.ok;
         }
+        this.preflightSignature = signature;
+        this.preflightReady = true;
+        this.preflightOk = false;
         if (showMessage) await this.alert(this.formatPreflightError(data));
         await this.service.render();
         return false;

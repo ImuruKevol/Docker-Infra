@@ -1,6 +1,8 @@
 import { OnDestroy, OnInit, signal } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
 
+type EditSection = 'basic' | 'components' | 'domain' | 'advanced' | 'ai';
+
 export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
     public busy = signal<boolean>(false);
@@ -44,6 +46,7 @@ export class Component implements OnInit, OnDestroy {
     public filePreviewTitle = signal<string>('');
     public filePreviewContent = signal<string>('');
     public editModalOpen = signal<boolean>(false);
+    public editSection = signal<EditSection>('basic');
     public editBusy = signal<boolean>(false);
     public editAiBusy = signal<boolean>(false);
     public editAdvancedSettings = signal<boolean>(false);
@@ -927,6 +930,46 @@ export class Component implements OnInit, OnDestroy {
         return JSON.parse(JSON.stringify(value || null));
     }
 
+    public editSections() {
+        const domainBadge = this.editForm.domain_mode === 'registered' ? '연결' : '없음';
+        const advancedCount = this.editAdvancedCount();
+        return [
+            { id: 'basic' as EditSection, icon: 'fa-pen-to-square', title: '기본 정보', description: '이름과 설명', badge: '' },
+            { id: 'components' as EditSection, icon: 'fa-cubes', title: '구성', description: '이미지와 포트', badge: this.editComponents.length ? `${this.editComponents.length}개` : '' },
+            { id: 'domain' as EditSection, icon: 'fa-globe', title: '도메인', description: '공개 주소와 대상', badge: domainBadge },
+            { id: 'advanced' as EditSection, icon: 'fa-sliders', title: '고급', description: '환경변수와 볼륨', badge: advancedCount ? `${advancedCount}개` : '' },
+            { id: 'ai' as EditSection, icon: 'fa-wand-magic-sparkles', title: 'AI 수정안', description: '요청으로 초안 반영', badge: this.editAiBusy() ? '생성 중' : (this.editAiResult ? '적용됨' : '') },
+        ];
+    }
+
+    public setEditSection(section: EditSection) {
+        this.editSection.set(section);
+    }
+
+    public editSectionTitle() {
+        return this.editSections().find((item: any) => item.id === this.editSection())?.title || '서비스 수정';
+    }
+
+    public editSectionDescription() {
+        return this.editSections().find((item: any) => item.id === this.editSection())?.description || '';
+    }
+
+    public editPortCount() {
+        return this.editComponents.reduce((count: number, item: any) => count + this.editPorts(item).length, 0);
+    }
+
+    public editEnvVarCount() {
+        return this.editComponents.reduce((count: number, item: any) => count + (item?.env_vars || []).length, 0);
+    }
+
+    public editVolumeCount() {
+        return this.editComponents.reduce((count: number, item: any) => count + (item?.volumes || []).length, 0);
+    }
+
+    public editAdvancedCount() {
+        return this.editEnvVarCount() + this.editVolumeCount();
+    }
+
     public openEditModal() {
         this.openEditModalAsync();
     }
@@ -956,6 +999,7 @@ export class Component implements OnInit, OnDestroy {
         this.editAiModelRef.set(this.aiDefaultModelRef() || 'auto');
         this.resetEditAiStream();
         this.editAiResult = null;
+        this.editSection.set('basic');
         this.editModalOpen.set(true);
     }
 

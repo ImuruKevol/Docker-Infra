@@ -566,161 +566,206 @@ main(class="space-y-5 px-5 py-5")
                     i(class="fa-solid", [ngClass]="busy() ? 'fa-spinner fa-spin' : 'fa-rocket'")
                     span {{busy() ? '배포 중' : '저장 후 배포'}}
 
-div(*ngIf="editModalOpen()", class="fixed inset-0 z-40 flex items-center justify-center px-4 py-6")
-    div(class="absolute inset-0 bg-zinc-950/50", (click)="closeEditModal()")
-    section(class="relative flex max-h-[90vh] w-full max-w-5xl flex-col rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
-        div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            div
-                h2(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") 서비스 수정
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 자주 쓰는 항목만 수정하고, 서버 반영은 적용 버튼으로 진행합니다.
-            button(type="button", (click)="closeEditModal()", [disabled]="editBusy()", class="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
-                i(class="fa-solid fa-xmark")
-        div(class="min-h-0 flex-1 space-y-5 overflow-auto px-5 py-4")
-            div(class="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]")
-                div(class="space-y-3")
-                    label(class="block")
-                        span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서비스 이름
-                        input(type="text", [(ngModel)]="editForm.name", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                    label(class="block")
-                        span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 설명
-                        textarea([(ngModel)]="editForm.description", rows="3", class="w-full resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                div(class="space-y-3")
-                    div(class="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 dark:border-sky-900/70 dark:bg-sky-950/30")
-                        div(class="flex items-center justify-between gap-3")
-                            p(class="text-sm font-semibold text-sky-950 dark:text-sky-100") AI 수정안
-                            button(type="button", (click)="generateEditServiceWithAi()", [disabled]="editAiBusy() || editBusy()", class="inline-flex h-8 items-center gap-2 rounded-md bg-sky-600 px-2.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-60")
-                                i(class="fa-solid", [ngClass]="editAiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
-                                span {{editAiBusy() ? '생성 중' : '적용'}}
-                        label(class="mt-3 block")
-                            span(class="mb-1 block text-xs font-semibold text-sky-700 dark:text-sky-300") 사용할 모델
-                            wiz-component-search-select([items]="aiModelOptions()", [value]="editAiModelRef()", (valueChange)="editAiModelRef.set($event)", [placeholder]="'AI 모델 선택'", [searchPlaceholder]="'모델 검색'", [emptyText]="'시스템 설정에서 모델 목록을 불러오세요.'")
-                        textarea([ngModel]="editAiIntent()", (ngModelChange)="editAiIntent.set($event)", rows="4", placeholder="예: 현재 서비스를 외부 공개용으로 바꾸고, 이미지 태그를 2.1로 올린 뒤 Redis 비밀번호 환경변수를 secret으로 처리.", class="mt-3 w-full resize-none rounded-md border border-sky-200 bg-white px-3 py-2 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-sky-900/70 dark:bg-zinc-950 dark:text-zinc-100")
-                        div(*ngIf="editAiBusy() || editAiStreamRows().length", class="mt-3 rounded-md border border-sky-200 bg-white/70 px-3 py-2 dark:border-sky-900/70 dark:bg-zinc-950")
-                            div(class="flex items-center justify-between gap-2")
-                                p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") AI 진행 상태
-                                span(class="text-[11px] font-semibold text-sky-500 dark:text-sky-400") {{editAiOutputTokenCount()}} chars
-                            div(class="mt-2 max-h-28 space-y-1 overflow-auto")
-                                p(*ngFor="let event of editAiStreamRows()", class="text-xs leading-5", [ngClass]="event.type === 'error' ? 'text-rose-600 dark:text-rose-300' : 'text-sky-900 dark:text-sky-100'")
-                                    i(*ngIf="event.type === 'progress'", class="fa-solid fa-spinner fa-spin mr-1")
-                                    span(class="font-semibold") {{event.label || (event.type === 'provider' ? 'model' : event.type)}}
-                                    span  · {{event.message || event.text || event.provider?.label + ' / ' + event.provider?.model}}
-                        div(class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2")
-                            div
-                                p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") Input
-                                div(class="mt-1 space-y-1")
-                                    p(*ngFor="let row of editAiInputRows()", class="text-xs text-sky-900 dark:text-sky-100")
-                                        span(class="font-semibold") {{row.key}}
-                                        span(class="text-sky-700 dark:text-sky-300")  · {{row.value}}
-                            div
-                                p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") Output
-                                div(class="mt-1 space-y-1")
-                                    p(*ngFor="let row of editAiOutputRows()", class="text-xs text-sky-900 dark:text-sky-100")
-                                        span(class="font-semibold") {{row.key}}
-                                        span(class="text-sky-700 dark:text-sky-300")  · {{row.value}}
-                        div(*ngIf="editAiResult?.warnings?.length", class="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
-                            p(*ngFor="let warning of editAiResult.warnings") {{warning}}
-                    div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
-                        p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 자동 처리
-                        div(class="mt-3 space-y-2 text-xs text-zinc-600 dark:text-zinc-300")
-                            p Compose 버전 이력이 새로 저장됩니다.
-                            p 이미지, 포트, 볼륨, 도메인 중복은 저장 전에 다시 점검합니다.
-                            p 수정 후 상태는 준비 중으로 바뀌며, 적용해야 서버에 반영됩니다.
+div(*ngIf="editModalOpen()", class="fixed inset-0 z-40 flex items-center justify-center px-3 py-4")
+    div(class="absolute inset-0 bg-zinc-950/60 backdrop-blur-[2px]", (click)="closeEditModal()")
+    section(class="relative flex h-[calc(100vh-2rem)] max-h-[860px] w-full max-w-[1180px] flex-col overflow-hidden rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900")
+        div(class="flex flex-col gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800 lg:flex-row lg:items-center lg:justify-between")
+            div(class="min-w-0")
+                div(class="flex flex-wrap items-center gap-2")
+                    h2(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") 서비스 수정
+                    span(class="inline-flex max-w-full rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{editComponents.length}} 구성
+                    span(class="inline-flex max-w-full rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{editForm.domain_mode === 'registered' ? (editForm.domain || '도메인 선택 필요') : '도메인 없음'}}
+                p(class="mt-1 truncate text-sm text-zinc-500 dark:text-zinc-400") {{editForm.name || '선택한 서비스'}}
+            div(class="flex shrink-0 items-center justify-end gap-2")
+                button(type="button", (click)="setEditSection('ai')", class="inline-flex h-9 items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200 dark:hover:bg-sky-950")
+                    i(class="fa-solid fa-wand-magic-sparkles")
+                    span AI 수정안
+                button(type="button", (click)="closeEditModal()", [disabled]="editBusy()", class="inline-flex h-9 w-9 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                    i(class="fa-solid fa-xmark")
 
-            div(class="space-y-3")
-                div(*ngFor="let item of editComponents; let i = index", class="rounded-md border border-zinc-200 px-4 py-4 dark:border-zinc-800")
-                    div(class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between")
-                        div
-                            h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{item.label || item.key || ('구성 ' + (i + 1))}}
-                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 이미지 버전과 연결 포트가 꼭 필요한 경우에만 조정합니다.
-                        span(class="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{editImageRef(item)}}
-                    div(class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_180px]")
-                        label(class="block")
-                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 이미지
-                            input(type="text", [(ngModel)]="item.image_name", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                        label(class="block")
-                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 버전
-                            input(type="text", [(ngModel)]="item.image_tag", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                    div(class="mt-4")
-                        div(class="flex items-center justify-between gap-3")
-                            p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 연결 포트
-                            button(type="button", (click)="addEditPort(item)", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                i(class="fa-solid fa-plus")
-                                span 추가
-                        div(class="mt-2 flex flex-wrap gap-2")
-                            p(*ngIf="editPorts(item).length === 0", class="text-xs text-zinc-500 dark:text-zinc-400") 외부 연결이 필요 없는 내부 구성입니다.
-                            div(*ngFor="let port of item.ports; let pi = index", class="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950")
-                                input(type="number", [(ngModel)]="port.target", (blur)="ensureEditDomainTarget()", class="h-8 w-24 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100")
-                                span(class="text-xs text-zinc-500 dark:text-zinc-400") /{{port.protocol || 'tcp'}}
-                                button(type="button", (click)="removeEditPort(item, pi)", class="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-800")
-                                    i(class="fa-solid fa-xmark")
+        div(class="min-h-0 flex-1 lg:flex")
+            aside(class="border-b border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/40 lg:w-72 lg:flex-none lg:border-b-0 lg:border-r")
+                nav(class="flex gap-2 overflow-x-auto lg:block lg:space-y-2 lg:overflow-visible")
+                    button(*ngFor="let item of editSections()", type="button", (click)="setEditSection(item.id)", class="flex min-w-[180px] items-start gap-3 rounded-md border px-3 py-3 text-left transition-colors lg:w-full lg:min-w-0", [ngClass]="editSection() === item.id ? 'border-zinc-950 bg-zinc-950 text-white shadow-sm dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-transparent bg-white text-zinc-700 hover:border-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-800 dark:hover:bg-zinc-800'")
+                        span(class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md", [ngClass]="editSection() === item.id ? 'bg-white/15 text-white dark:bg-zinc-950/10 dark:text-zinc-950' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300'")
+                            i(class="fa-solid", [ngClass]="item.icon")
+                        span(class="min-w-0 flex-1")
+                            span(class="flex items-center justify-between gap-2")
+                                span(class="truncate text-sm font-semibold") {{item.title}}
+                                span(*ngIf="item.badge", class="shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold", [ngClass]="editSection() === item.id ? 'border-white/30 text-white dark:border-zinc-950/30 dark:text-zinc-950' : 'border-zinc-200 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400'") {{item.badge}}
+                            span(class="mt-1 block truncate text-xs", [ngClass]="editSection() === item.id ? 'text-zinc-200 dark:text-zinc-600' : 'text-zinc-500 dark:text-zinc-400'") {{item.description}}
 
-            div(class="rounded-md border border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                div(class="flex items-center justify-between gap-3")
-                    div
-                        p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 고급 설정
-                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 환경변수와 데이터 보관 경로가 필요한 경우에만 수정합니다.
-                    button(type="button", (click)="editAdvancedSettings.set(!editAdvancedSettings())", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                        i(class="fa-solid", [ngClass]="editAdvancedSettings() ? 'fa-chevron-up' : 'fa-sliders'")
-                        span {{editAdvancedSettings() ? '닫기' : '열기'}}
-                div(*ngIf="editAdvancedSettings()", class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2")
-                    div(*ngFor="let item of editComponents", class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
-                        h3(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{item.label || item.key}}
-                        div(class="mt-3")
-                            div(class="flex items-center justify-between gap-2")
-                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 환경변수
-                                button(type="button", (click)="addEditEnv(item)", class="inline-flex h-7 items-center rounded-md border border-zinc-300 px-2 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-200") 추가
-                            div(*ngFor="let env of item.env_vars; let ei = index", class="mt-2 grid grid-cols-[1fr_1fr_auto] gap-2")
-                                input(type="text", [(ngModel)]="env.key", placeholder="KEY", class="h-9 rounded-md border border-zinc-300 bg-white px-2 text-xs dark:border-zinc-700 dark:bg-zinc-950")
-                                input(type="text", [(ngModel)]="env.value", placeholder="VALUE", class="h-9 rounded-md border border-zinc-300 bg-white px-2 text-xs dark:border-zinc-700 dark:bg-zinc-950")
-                                button(type="button", (click)="removeEditEnv(item, ei)", class="h-9 w-9 rounded-md text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800")
-                                    i(class="fa-solid fa-xmark")
-                        div(class="mt-4")
-                            div(class="flex items-center justify-between gap-2")
-                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 데이터 보관
-                                button(type="button", (click)="addEditVolume(item)", class="inline-flex h-7 items-center rounded-md border border-zinc-300 px-2 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-200") 추가
-                            div(*ngFor="let volume of item.volumes; let vi = index", class="mt-2 grid grid-cols-[1fr_1fr_auto] gap-2")
-                                input(type="text", [(ngModel)]="volume.source", placeholder="볼륨 이름", class="h-9 rounded-md border border-zinc-300 bg-white px-2 text-xs dark:border-zinc-700 dark:bg-zinc-950")
-                                input(type="text", [(ngModel)]="volume.target", placeholder="/data", class="h-9 rounded-md border border-zinc-300 bg-white px-2 text-xs dark:border-zinc-700 dark:bg-zinc-950")
-                                button(type="button", (click)="removeEditVolume(item, vi)", class="h-9 w-9 rounded-md text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800")
-                                    i(class="fa-solid fa-xmark")
+            div(class="min-h-0 flex-1 overflow-y-auto bg-white dark:bg-zinc-900")
+                div(class="sticky top-0 z-10 border-b border-zinc-200 bg-white/95 px-5 py-4 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95")
+                    h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{editSectionTitle()}}
+                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{editSectionDescription()}}
 
-            div(class="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]")
-                div(class="space-y-3")
-                    button(type="button", (click)="setEditDomainMode('none')", class="flex w-full items-start justify-between rounded-md border px-4 py-3 text-left", [ngClass]="editForm.domain_mode === 'none' ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200' : 'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100'")
-                        div
-                            p(class="text-sm font-semibold") 도메인 사용 안 함
-                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 나중에 다시 연결할 수 있습니다.
-                    button(type="button", (click)="setEditDomainMode('registered')", [disabled]="zones().length === 0", class="flex w-full items-start justify-between rounded-md border px-4 py-3 text-left disabled:opacity-50", [ngClass]="editForm.domain_mode === 'registered' ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200' : 'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100'")
-                        div
-                            p(class="text-sm font-semibold") 등록된 도메인 사용
-                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 인증서 상태에 따라 SSL은 자동 처리됩니다.
-                    div(*ngIf="editForm.domain_mode === 'registered'", class="grid grid-cols-1 gap-3 md:grid-cols-[180px_1fr]")
-                        label(class="block")
-                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 앞 주소
-                            input(type="text", [(ngModel)]="editForm.domain_prefix", (blur)="syncEditDomain()", placeholder="예: app", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                        label(class="block")
-                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 도메인
-                            wiz-component-search-select([items]="zoneSelectorItems()", [value]="editForm.zone_id", (valueChange)="selectEditZone($event)", [placeholder]="'도메인 선택'", [searchPlaceholder]="'도메인 검색'", [emptyText]="'등록된 도메인이 없습니다.'")
-                    div(*ngIf="editForm.domain_mode === 'registered'", class="space-y-2")
-                        p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 연결 포트
-                        div(class="flex flex-wrap gap-2")
-                            button(*ngFor="let option of editDomainTargetOptions()", type="button", (click)="selectEditDomainTarget(option.key)", class="rounded-md border px-3 py-2 text-left transition-colors", [ngClass]="editForm.domain_target_key === option.key ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200' : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'")
-                                span(class="flex items-center gap-2 text-sm font-semibold")
-                                    span {{option.port}}/{{option.protocol || 'tcp'}}
-                                    span(*ngIf="option.recommended", class="rounded border border-sky-300 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:border-sky-700 dark:text-sky-300") 추천
-                                span(class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400") {{option.service_label}}
-                div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
-                    p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 연결 미리보기
-                    p(class="mt-2 break-all text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{editDomainPreview()}}
-                    p(class="mt-2 text-xs leading-5 text-zinc-600 dark:text-zinc-300") 저장 후 서비스 적용을 실행하면 nginx와 SSL 설정이 함께 반영됩니다.
-        div(class="flex flex-col gap-3 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                div(class="space-y-5 px-5 py-5")
+                    div(*ngIf="editSection() === 'basic'", class="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_320px]")
+                        div(class="space-y-4")
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서비스 이름
+                                input(type="text", [(ngModel)]="editForm.name", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                            label(class="block")
+                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 설명
+                                textarea([(ngModel)]="editForm.description", rows="7", class="w-full resize-y rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm leading-6 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        div(class="space-y-3")
+                            div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
+                                p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 저장 영향
+                                div(class="mt-3 space-y-2")
+                                    div(class="flex items-center justify-between gap-3 text-xs")
+                                        span(class="text-zinc-500 dark:text-zinc-400") 구성
+                                        span(class="font-semibold text-zinc-900 dark:text-zinc-100") {{editComponents.length}}개
+                                    div(class="flex items-center justify-between gap-3 text-xs")
+                                        span(class="text-zinc-500 dark:text-zinc-400") 연결 포트
+                                        span(class="font-semibold text-zinc-900 dark:text-zinc-100") {{editPortCount()}}개
+                                    div(class="flex items-center justify-between gap-3 text-xs")
+                                        span(class="text-zinc-500 dark:text-zinc-400") 환경변수 / 볼륨
+                                        span(class="font-semibold text-zinc-900 dark:text-zinc-100") {{editEnvVarCount()}} / {{editVolumeCount()}}
+                            div(class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
+                                p(class="font-semibold") 저장하면 Compose 버전 이력이 추가됩니다.
+                                p(class="mt-1") 서버 반영은 저장 후 적용에서 진행됩니다.
+
+                    div(*ngIf="editSection() === 'components'", class="space-y-4")
+                        div(*ngIf="editComponents.length === 0", class="rounded-md border border-zinc-200 px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 수정할 구성이 없습니다.
+                        div(class="grid grid-cols-1 gap-4 2xl:grid-cols-2")
+                            div(*ngFor="let item of editComponents; let i = index", class="rounded-md border border-zinc-200 px-4 py-4 dark:border-zinc-800")
+                                div(class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between")
+                                    div(class="min-w-0")
+                                        h3(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{item.label || item.key || ('구성 ' + (i + 1))}}
+                                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 이미지와 연결 포트를 조정합니다.
+                                    span(class="max-w-full break-all rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{editImageRef(item)}}
+                                div(class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_180px]")
+                                    label(class="block")
+                                        span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 이미지
+                                        input(type="text", [(ngModel)]="item.image_name", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                    label(class="block")
+                                        span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 버전
+                                        input(type="text", [(ngModel)]="item.image_tag", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                div(class="mt-4")
+                                    div(class="flex items-center justify-between gap-3")
+                                        p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 연결 포트
+                                        button(type="button", (click)="addEditPort(item)", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                            i(class="fa-solid fa-plus")
+                                            span 추가
+                                    div(class="mt-2 flex flex-wrap gap-2")
+                                        p(*ngIf="editPorts(item).length === 0", class="text-xs text-zinc-500 dark:text-zinc-400") 외부 연결이 필요 없는 내부 구성입니다.
+                                        div(*ngFor="let port of item.ports; let pi = index", class="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950")
+                                            input(type="number", [(ngModel)]="port.target", (blur)="ensureEditDomainTarget()", class="h-8 w-24 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100")
+                                            span(class="text-xs text-zinc-500 dark:text-zinc-400") /{{port.protocol || 'tcp'}}
+                                            button(type="button", (click)="removeEditPort(item, pi)", class="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                                                i(class="fa-solid fa-xmark")
+
+                    div(*ngIf="editSection() === 'domain'", class="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_320px]")
+                        div(class="space-y-4")
+                            div(class="grid grid-cols-1 gap-3 md:grid-cols-2")
+                                button(type="button", (click)="setEditDomainMode('none')", class="flex w-full items-start justify-between rounded-md border px-4 py-3 text-left", [ngClass]="editForm.domain_mode === 'none' ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200' : 'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100'")
+                                    div
+                                        p(class="text-sm font-semibold") 도메인 사용 안 함
+                                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 나중에 다시 연결할 수 있습니다.
+                                button(type="button", (click)="setEditDomainMode('registered')", [disabled]="zones().length === 0", class="flex w-full items-start justify-between rounded-md border px-4 py-3 text-left disabled:opacity-50", [ngClass]="editForm.domain_mode === 'registered' ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200' : 'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100'")
+                                    div
+                                        p(class="text-sm font-semibold") 등록된 도메인 사용
+                                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") SSL 설정을 함께 관리합니다.
+                            div(*ngIf="editForm.domain_mode === 'registered'", class="grid grid-cols-1 gap-3 md:grid-cols-[180px_1fr]")
+                                label(class="block")
+                                    span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 앞 주소
+                                    input(type="text", [(ngModel)]="editForm.domain_prefix", (blur)="syncEditDomain()", placeholder="예: app", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                label(class="block")
+                                    span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 도메인
+                                    wiz-component-search-select([items]="zoneSelectorItems()", [value]="editForm.zone_id", (valueChange)="selectEditZone($event)", [placeholder]="'도메인 선택'", [searchPlaceholder]="'도메인 검색'", [emptyText]="'등록된 도메인이 없습니다.'")
+                            div(*ngIf="editForm.domain_mode === 'registered'", class="space-y-2")
+                                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 연결 포트
+                                div(class="flex flex-wrap gap-2")
+                                    button(*ngFor="let option of editDomainTargetOptions()", type="button", (click)="selectEditDomainTarget(option.key)", class="rounded-md border px-3 py-2 text-left transition-colors", [ngClass]="editForm.domain_target_key === option.key ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200' : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'")
+                                        span(class="flex items-center gap-2 text-sm font-semibold")
+                                            span {{option.port}}/{{option.protocol || 'tcp'}}
+                                            span(*ngIf="option.recommended", class="rounded border border-sky-300 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:border-sky-700 dark:text-sky-300") 추천
+                                        span(class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400") {{option.service_label}}
+                        div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
+                            p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 연결 미리보기
+                            p(class="mt-2 break-all text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{editDomainPreview()}}
+                            p(class="mt-2 text-xs leading-5 text-zinc-600 dark:text-zinc-300") 저장 후 적용하면 nginx와 SSL 설정이 서버에 반영됩니다.
+
+                    div(*ngIf="editSection() === 'advanced'", class="space-y-4")
+                        div(class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
+                            p(class="font-semibold") 환경변수와 데이터 보관 경로만 이 화면에서 수정합니다.
+                            p(class="mt-1") Compose 원문 편집은 상세 화면의 고급 탭을 사용합니다.
+                        div(class="grid grid-cols-1 gap-4 xl:grid-cols-2")
+                            div(*ngFor="let item of editComponents", class="rounded-md border border-zinc-200 px-4 py-4 dark:border-zinc-800")
+                                h3(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{item.label || item.key}}
+                                div(class="mt-4")
+                                    div(class="flex items-center justify-between gap-2")
+                                        p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 환경변수
+                                        button(type="button", (click)="addEditEnv(item)", class="inline-flex h-7 items-center gap-1 rounded-md border border-zinc-300 px-2 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-200")
+                                            i(class="fa-solid fa-plus")
+                                            span 추가
+                                    p(*ngIf="!item.env_vars?.length", class="mt-2 text-xs text-zinc-500 dark:text-zinc-400") 환경변수가 없습니다.
+                                    div(*ngFor="let env of item.env_vars; let ei = index", class="mt-2 grid grid-cols-[1fr_1fr_auto] gap-2")
+                                        input(type="text", [(ngModel)]="env.key", placeholder="KEY", class="h-9 min-w-0 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                        input(type="text", [(ngModel)]="env.value", placeholder="VALUE", class="h-9 min-w-0 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                        button(type="button", (click)="removeEditEnv(item, ei)", class="h-9 w-9 rounded-md text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800")
+                                            i(class="fa-solid fa-xmark")
+                                div(class="mt-5")
+                                    div(class="flex items-center justify-between gap-2")
+                                        p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 데이터 보관
+                                        button(type="button", (click)="addEditVolume(item)", class="inline-flex h-7 items-center gap-1 rounded-md border border-zinc-300 px-2 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-200")
+                                            i(class="fa-solid fa-plus")
+                                            span 추가
+                                    p(*ngIf="!item.volumes?.length", class="mt-2 text-xs text-zinc-500 dark:text-zinc-400") 데이터 보관 경로가 없습니다.
+                                    div(*ngFor="let volume of item.volumes; let vi = index", class="mt-2 grid grid-cols-[1fr_1fr_auto] gap-2")
+                                        input(type="text", [(ngModel)]="volume.source", placeholder="볼륨 이름", class="h-9 min-w-0 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                        input(type="text", [(ngModel)]="volume.target", placeholder="/data", class="h-9 min-w-0 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                        button(type="button", (click)="removeEditVolume(item, vi)", class="h-9 w-9 rounded-md text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800")
+                                            i(class="fa-solid fa-xmark")
+
+                    div(*ngIf="editSection() === 'ai'", class="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_320px]")
+                        div(class="rounded-md border border-sky-200 bg-sky-50 px-4 py-4 dark:border-sky-900/70 dark:bg-sky-950/30")
+                            div(class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between")
+                                div
+                                    p(class="text-sm font-semibold text-sky-950 dark:text-sky-100") 수정 요청
+                                    p(class="mt-1 text-xs leading-5 text-sky-800 dark:text-sky-200") 바꾸려는 내용을 입력하면 현재 서비스 설정에 맞춰 초안을 반영합니다.
+                                button(type="button", (click)="generateEditServiceWithAi()", [disabled]="editAiBusy() || editBusy()", class="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md bg-sky-600 px-3 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60")
+                                    i(class="fa-solid", [ngClass]="editAiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
+                                    span {{editAiBusy() ? '생성 중' : 'AI로 반영'}}
+                            div(class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_260px]")
+                                textarea([ngModel]="editAiIntent()", (ngModelChange)="editAiIntent.set($event)", rows="7", placeholder="예: 현재 서비스를 외부 공개용으로 바꾸고, 이미지 태그를 2.1로 올린 뒤 Redis 비밀번호 환경변수를 secret으로 처리.", class="w-full resize-y rounded-md border border-sky-200 bg-white px-3 py-3 text-sm leading-6 text-zinc-900 placeholder:text-zinc-400 dark:border-sky-900/70 dark:bg-zinc-950 dark:text-zinc-100")
+                                label(class="block")
+                                    span(class="mb-1 block text-xs font-semibold text-sky-700 dark:text-sky-300") 사용할 모델
+                                    wiz-component-search-select([items]="aiModelOptions()", [value]="editAiModelRef()", (valueChange)="editAiModelRef.set($event)", [placeholder]="'AI 모델 선택'", [searchPlaceholder]="'모델 검색'", [emptyText]="'시스템 설정에서 모델 목록을 불러오세요.'")
+                            div(*ngIf="editAiBusy() || editAiStreamRows().length", class="mt-4 rounded-md border border-sky-200 bg-white/70 px-3 py-2 dark:border-sky-900/70 dark:bg-zinc-950")
+                                div(class="flex items-center justify-between gap-2")
+                                    p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") AI 진행 상태
+                                    span(class="text-[11px] font-semibold text-sky-500 dark:text-sky-400") {{editAiOutputTokenCount()}}자
+                                div(class="mt-2 max-h-36 space-y-1 overflow-auto")
+                                    p(*ngFor="let event of editAiStreamRows()", class="text-xs leading-5", [ngClass]="event.type === 'error' ? 'text-rose-600 dark:text-rose-300' : 'text-sky-900 dark:text-sky-100'")
+                                        i(*ngIf="event.type === 'progress'", class="fa-solid fa-spinner fa-spin mr-1")
+                                        span(class="font-semibold") {{event.label || (event.type === 'provider' ? 'model' : event.type)}}
+                                        span  · {{event.message || event.text || event.provider?.label + ' / ' + event.provider?.model}}
+                            div(*ngIf="editAiResult?.warnings?.length", class="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
+                                p(*ngFor="let warning of editAiResult.warnings") {{warning}}
+                        div(class="space-y-3")
+                            div(class="rounded-md border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
+                                p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") AI 참고 범위
+                                div(class="mt-3 space-y-2")
+                                    p(*ngFor="let row of editAiInputRows()", class="text-xs text-zinc-600 dark:text-zinc-300")
+                                        span(class="font-semibold text-zinc-900 dark:text-zinc-100") {{row.key}}
+                                        span  · {{row.value}}
+                            div(class="rounded-md border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
+                                p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 반영 대상
+                                div(class="mt-3 space-y-2")
+                                    p(*ngFor="let row of editAiOutputRows()", class="text-xs text-zinc-600 dark:text-zinc-300")
+                                        span(class="font-semibold text-zinc-900 dark:text-zinc-100") {{row.key}}
+                                        span  · {{row.value}}
+
+        div(class="flex flex-col gap-3 border-t border-zinc-200 bg-white px-5 py-4 dark:border-zinc-800 dark:bg-zinc-900 md:flex-row md:items-center md:justify-between")
             p(class="text-xs text-zinc-500 dark:text-zinc-400") 저장하면 새 Compose 버전이 생기고 서비스는 준비 중 상태가 됩니다.
-            div(class="flex items-center justify-end gap-2")
-                button(type="button", (click)="closeEditModal()", [disabled]="editBusy()", class="inline-flex h-9 items-center rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800") 취소
-                button(type="button", (click)="saveEditService(false)", [disabled]="editBusy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+            div(class="flex flex-wrap items-center justify-end gap-2")
+                button(type="button", (click)="closeEditModal()", [disabled]="editBusy()", class="inline-flex h-9 min-w-[76px] items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800") 취소
+                button(type="button", (click)="saveEditService(false)", [disabled]="editBusy()", class="inline-flex h-9 min-w-[86px] items-center justify-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                     i(class="fa-solid", [ngClass]="editBusy() ? 'fa-spinner fa-spin' : 'fa-floppy-disk'")
                     span 저장
-                button(type="button", (click)="saveEditService(true)", [disabled]="editBusy()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                button(type="button", (click)="saveEditService(true)", [disabled]="editBusy()", class="inline-flex h-9 min-w-[126px] items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                     i(class="fa-solid", [ngClass]="editBusy() ? 'fa-spinner fa-spin' : 'fa-rocket'")
                     span 저장 후 적용
 

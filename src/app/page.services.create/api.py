@@ -12,9 +12,32 @@ def _request_payload():
 def _stream_events(events):
     flask = wiz.response._flask
 
+    def encode(event):
+        try:
+            return json.dumps(event, ensure_ascii=False)
+        except Exception as exc:
+            return json.dumps({
+                "type": "error",
+                "message": "AI 스트림 이벤트를 직렬화할 수 없습니다: %s" % exc,
+                "error_code": "AI_STREAM_EVENT_SERIALIZE_FAILED",
+            }, ensure_ascii=False)
+
     def generate():
-        for event in events:
-            yield "data: %s\n\n" % json.dumps(event, ensure_ascii=False)
+        yield ": stream-start\n\n"
+        try:
+            for event in events:
+                yield "data: %s\n\n" % encode(event)
+            yield ": stream-end\n\n"
+        except GeneratorExit:
+            return
+        except (BrokenPipeError, ConnectionError):
+            return
+        except Exception as exc:
+            yield "data: %s\n\n" % json.dumps({
+                "type": "error",
+                "message": getattr(exc, "message", str(exc)),
+                "error_code": getattr(exc, "code", "AI_STREAM_INTERRUPTED"),
+            }, ensure_ascii=False)
 
     resp = flask.Response(generate(), mimetype="text/event-stream")
     resp.headers["Cache-Control"] = "no-cache"

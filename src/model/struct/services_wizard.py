@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import urllib.parse
 import urllib.request
 import uuid
 import hashlib
@@ -14,6 +15,11 @@ services = wiz.model("struct/services")
 webserver = wiz.model("struct/webserver")
 validator = wiz.model("struct/compose_validator")
 preflight_model = wiz.model("struct/services_preflight")
+
+DOCKER_SEARCH_TIMEOUT_SECONDS = 8
+DOCKER_HUB_TIMEOUT_SECONDS = 8
+DOCKER_SEARCH_LIMIT = 5
+IMAGE_TAG_FALLBACKS = ["latest", "stable", "alpine", "slim", "bookworm", "bullseye", "lts"]
 
 
 def _normalize(value):
@@ -35,6 +41,21 @@ def _split_image(ref):
 def _image_ref(component):
     name = str(component.get("image_name") or component.get("image") or "nginx").strip()
     tag = str(component.get("image_tag") or "latest").strip()
+    return f"{name}@{tag}" if tag.startswith("sha256:") else f"{name}:{tag}"
+
+
+def _docker_hub_repository(name):
+    name = str(name or "").strip()
+    if not name:
+        return None
+    first = name.split("/", 1)[0]
+    if "/" in name and ("." in first or ":" in first or first == "localhost"):
+        return None
+    return f"library/{name}" if "/" not in name else name
+
+
+def _image_ref_from_name_tag(name, tag):
+    tag = str(tag or "latest").strip() or "latest"
     return f"{name}@{tag}" if tag.startswith("sha256:") else f"{name}:{tag}"
 
 
@@ -472,6 +493,151 @@ class ServicesWizard:
             return {"exists": True, "source": "docker_hub", "message": "Docker Hub에서 이미지를 확인했습니다."}
         except Exception:
             return {"exists": False, "source": "docker_hub", "message": "로컬 저장소와 Docker Hub에서 이미지를 찾지 못했습니다."}
+
+    def search_image_candidates(self, query, limit=DOCKER_SEARCH_LIMIT):
+        query = str(query or "").strip()
+        if not query:
+            return []
+        try:
+            completed = subprocess.run(
+                [
+                    "docker",
+                    "search",
+                    "--no-trunc",
+                    "--limit",
+                    str(max(1, min(int(limit or DOCKER_SEARCH_LIMIT), 25))),
+                    "--format",
+                    "{{json .}}",
+                    query,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=DOCKER_SEARCH_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except Exception as exc:
+            return [{"query": query, "error": str(exc), "source": "docker_search"}]
+        if completed.returncode != 0:
+            message = (completed.stderr or completed.stdout or "docker search failed").strip()
+            return [{"query": query, "error": message[:500], "source": "docker_search"}]
+        rows = []
+        for line in (completed.stdout or "").splitlines():
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            name = str(item.get("Name") or item.get("name") or "").strip()
+            if not name:
+                continue
+            rows.append(
+                {
+                    "name": name,
+                    "description": str(item.get("Description") or item.get("description") or "").strip(),
+                    "stars": str(item.get("StarCount") or item.get("stars") or "").strip(),
+                    "official": str(item.get("IsOfficial") or item.get("official") or "").strip(),
+                    "automated": str(item.get("IsAutomated") or item.get("automated") or "").strip(),
+                    "source": "docker_search",
+                }
+            )
+        return rows
+
+    def _docker_hub_tags(self, repository, limit=50):
+        repository = str(repository or "").strip()
+        if not repository:
+            return []
+        query = urllib.parse.urlencode({"page_size": max(1, min(int(limit or 50), 100)), "ordering": "last_updated"})
+        url = "https://hub.docker.com/v2/repositories/%s/tags?%s" % (urllib.parse.quote(repository, safe="/"), query)
+        try:
+            payload = json.loads(urllib.request.urlopen(url, timeout=DOCKER_HUB_TIMEOUT_SECONDS).read().decode("utf-8"))
+        except Exception:
+            return []
+        result = []
+        for item in payload.get("results") or []:
+            tag = str(item.get("name") or "").strip()
+            if tag:
+                result.append(tag)
+        return result
+
+    def _candidate_image_tags(self, repository, requested_tag):
+        seen = set()
+        result = []
+
+        def add(tag):
+            tag = str(tag or "").strip()
+            if not tag or tag in seen:
+                return
+            seen.add(tag)
+            result.append(tag)
+
+        add(requested_tag)
+        for tag in IMAGE_TAG_FALLBACKS:
+            add(tag)
+        for tag in self._docker_hub_tags(repository):
+            add(tag)
+        return result[:20]
+
+    def resolve_image_ref(self, image_ref, search_query=None):
+        ref = str(image_ref or "").strip()
+        status = self.check_image(ref)
+        if not ref:
+            return {"resolved": False, "image_ref": ref, "image_name": "", "image_tag": "", "status": status, "candidates": []}
+        if status.get("exists") is not False:
+            name, tag = _split_image(ref)
+            return {"resolved": False, "image_ref": ref, "image_name": name, "image_tag": tag, "status": status, "candidates": []}
+
+        name, tag = _split_image(ref)
+        if tag.startswith("sha256:"):
+            return {"resolved": False, "image_ref": ref, "image_name": name, "image_tag": tag, "status": status, "candidates": []}
+
+        query = str(search_query or name.rsplit("/", 1)[-1] or name).strip()
+        search_rows = self.search_image_candidates(query)
+        candidate_names = []
+        for candidate in [name, *[item.get("name") for item in search_rows if isinstance(item, dict)]]:
+            candidate = str(candidate or "").strip()
+            if candidate and candidate not in candidate_names:
+                candidate_names.append(candidate)
+
+        candidates = []
+        for candidate_name in candidate_names[:DOCKER_SEARCH_LIMIT + 1]:
+            repository = _docker_hub_repository(candidate_name)
+            if not repository:
+                continue
+            tags = self._candidate_image_tags(repository, tag)
+            for candidate_tag in tags:
+                candidate_ref = _image_ref_from_name_tag(candidate_name, candidate_tag)
+                candidate_status = self.check_image(candidate_ref)
+                row = {
+                    "image_ref": candidate_ref,
+                    "image_name": candidate_name,
+                    "image_tag": candidate_tag,
+                    "status": candidate_status,
+                    "source": "docker_search",
+                }
+                candidates.append(row)
+                if candidate_status.get("exists") is True:
+                    return {
+                        "resolved": True,
+                        "original": ref,
+                        "image_ref": candidate_ref,
+                        "image_name": candidate_name,
+                        "image_tag": candidate_tag,
+                        "status": candidate_status,
+                        "source": "docker_search",
+                        "query": query,
+                        "search": search_rows,
+                        "candidates": candidates[:10],
+                    }
+        return {
+            "resolved": False,
+            "original": ref,
+            "image_ref": ref,
+            "image_name": name,
+            "image_tag": tag,
+            "status": status,
+            "query": query,
+            "search": search_rows,
+            "candidates": candidates[:10],
+        }
 
 
 Model = ServicesWizard()

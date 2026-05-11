@@ -1,5 +1,7 @@
 import json
+import queue
 import re
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,6 +20,9 @@ compose_validator = wiz.model("struct/compose_validator")
 OPENAI_TOKEN_KEY = "ai.openai.api_token"
 GEMINI_TOKEN_KEY = "ai.gemini.api_token"
 MAX_AI_REPAIR_ATTEMPTS = 20
+AI_STREAM_HEARTBEAT_SECONDS = 15
+AI_STREAM_PROVIDER_TIMEOUT_SECONDS = 900
+AI_OLLAMA_REQUEST_TIMEOUT_SECONDS = 900
 
 
 class AIAssistantError(Exception):
@@ -437,6 +442,8 @@ class AIAssistant:
     def _validate_service_draft(self, draft, context, env=None):
         content = draft.get("base_content") or context.get("base_content") or ""
         try:
+            self._resolve_component_images(draft)
+            self._assert_component_images(draft)
             if content and draft.get("components"):
                 rendered = services_wizard.render(
                     {
@@ -449,16 +456,119 @@ class AIAssistant:
             if not str(rendered or "").strip():
                 raise AIAssistantError(422, "AI 응답에 Compose 초안이 없습니다.", "AI_OUTPUT_MISSING_FIELD")
             namespace = self._namespace((draft.get("form") or {}).get("name") or (context.get("form") or {}).get("name") or "ai_service")
-            compose_validator.validate(
+            validation = compose_validator.validate(
                 {
                     "namespace": namespace,
                     "filename": "docker-compose.yaml",
                     "content": rendered,
                 }
             )
+            self._assert_service_images(validation)
             return rendered
         except Exception as exc:
             raise self._as_output_validation_error(exc, "service")
+
+    def _assert_component_images(self, draft):
+        errors = []
+        for index, component in enumerate(draft.get("components") or []):
+            if not isinstance(component, dict):
+                continue
+            image_name = self._clean_text(component.get("image_name") or component.get("image"))
+            image_tag = self._clean_text(component.get("image_tag") or component.get("tag") or "latest")
+            if not image_name:
+                errors.append(
+                    {
+                        "path": "components[%s].image_name" % index,
+                        "error_code": "IMAGE_NAME_REQUIRED",
+                        "message": "서비스 구성의 이미지 이름이 비어 있습니다.",
+                        "component": self._clean_text(component.get("key") or component.get("label")),
+                    }
+                )
+            if not image_tag:
+                errors.append(
+                    {
+                        "path": "components[%s].image_tag" % index,
+                        "error_code": "IMAGE_TAG_REQUIRED",
+                        "message": "서비스 구성의 이미지 버전이 비어 있습니다.",
+                        "component": self._clean_text(component.get("key") or component.get("label")),
+                    }
+                )
+        if errors:
+            raise AIAssistantError(
+                422,
+                "AI가 생성한 서비스 구성의 이미지 이름 또는 버전이 비어 있습니다.",
+                "AI_OUTPUT_IMAGE_VALIDATION_FAILED",
+                {"details": errors},
+            )
+
+    def _assert_service_images(self, validation):
+        errors = []
+        checked = {}
+        services = ((validation.get("normalized") or {}).get("services") or {})
+        for service_name, service in services.items():
+            ref = self._clean_text((service or {}).get("image"))
+            path = "services.%s.image" % service_name
+            if not ref:
+                errors.append(
+                    {
+                        "path": path,
+                        "error_code": "IMAGE_REF_REQUIRED",
+                        "message": "Compose 서비스에 image가 없습니다.",
+                        "service": service_name,
+                    }
+                )
+                continue
+            if ref not in checked:
+                checked[ref] = services_wizard.check_image(ref)
+            status = checked[ref]
+            if status.get("exists") is False:
+                errors.append(
+                    {
+                        "path": path,
+                        "error_code": "IMAGE_VERSION_NOT_FOUND",
+                        "message": "이미지 이름과 버전을 확인할 수 없습니다.",
+                        "service": service_name,
+                        "image": ref,
+                        "check": status,
+                    }
+                )
+        if errors:
+            raise AIAssistantError(
+                422,
+                "AI가 생성한 서비스 초안의 이미지 이름 또는 버전을 확인할 수 없습니다.",
+                "AI_OUTPUT_IMAGE_VALIDATION_FAILED",
+                {"details": errors},
+            )
+
+    def _resolve_component_images(self, draft):
+        resolutions = []
+        for component in draft.get("components") or []:
+            if not isinstance(component, dict):
+                continue
+            image_name = self._clean_text(component.get("image_name") or component.get("image"))
+            raw_image_tag = self._clean_text(component.get("image_tag") or component.get("tag"))
+            image_tag = raw_image_tag or "latest"
+            if not image_name or image_tag.startswith("sha256:"):
+                continue
+            ref = "%s:%s" % (image_name, image_tag)
+            query = image_name.rsplit("/", 1)[-1]
+            resolution = services_wizard.resolve_image_ref(ref, search_query=query)
+            if not raw_image_tag and resolution.get("status", {}).get("exists") is not False:
+                component["image_tag"] = image_tag
+            if not resolution.get("resolved"):
+                continue
+            component["image_name"] = resolution.get("image_name") or image_name
+            component["image_tag"] = resolution.get("image_tag") or image_tag
+            resolutions.append(
+                {
+                    "component": self._clean_text(component.get("key") or component.get("label")),
+                    "original": resolution.get("original") or ref,
+                    "image_ref": resolution.get("image_ref"),
+                    "source": resolution.get("source") or "docker_search",
+                }
+            )
+        if resolutions:
+            draft["image_resolution"] = resolutions
 
     def _repair_context(self, target, context, data, exc, attempt):
         return {
@@ -484,6 +594,7 @@ class AIAssistant:
             self._system_prompt(target),
             "You are repairing a previous AI output that failed validation.",
             "Use output_format, validation_error, repair_diagnostics, and previous_output to return a complete corrected JSON object only.",
+            "When repair_diagnostics contains docker_search image candidates, choose one of those exact image_name and image_tag values.",
             "If the error is INVALID_YAML or a YAML parser error, rebuild the failed YAML file as an object field when output_format allows it; otherwise rebuild the full YAML text instead of patching only the reported line.",
             "Do not include markdown, explanations, or partial patches.",
         ]
@@ -498,7 +609,45 @@ class AIAssistant:
             return diagnostics
         diagnostics["service_components"] = data.get("components") or []
         diagnostics["service_form"] = data.get("form") or {}
+        diagnostics["docker_search"] = self._image_search_diagnostics(data)
         return diagnostics
+
+    def _image_search_diagnostics(self, data):
+        rows = []
+        seen = set()
+        components = data.get("components") if isinstance(data.get("components"), list) else []
+        for component in components[:5]:
+            if not isinstance(component, dict):
+                continue
+            image_name = self._clean_text(component.get("image_name") or component.get("image"))
+            image_tag = self._clean_text(component.get("image_tag") or component.get("tag") or "latest") or "latest"
+            if not image_name:
+                continue
+            ref = "%s:%s" % (image_name, image_tag)
+            if ref in seen:
+                continue
+            seen.add(ref)
+            resolution = services_wizard.resolve_image_ref(ref, search_query=image_name.rsplit("/", 1)[-1])
+            if resolution.get("resolved") or resolution.get("candidates"):
+                rows.append(
+                    {
+                        "component": self._clean_text(component.get("key") or component.get("label")),
+                        "original": ref,
+                        "resolved": resolution.get("resolved"),
+                        "image_ref": resolution.get("image_ref"),
+                        "image_name": resolution.get("image_name"),
+                        "image_tag": resolution.get("image_tag"),
+                        "candidates": [
+                            {
+                                "image_ref": item.get("image_ref"),
+                                "image_name": item.get("image_name"),
+                                "image_tag": item.get("image_tag"),
+                            }
+                            for item in (resolution.get("candidates") or [])[:5]
+                        ],
+                    }
+                )
+        return rows
 
     def _exception_payload(self, exc):
         details = getattr(exc, "details", None) or getattr(exc, "extra", None) or {}
@@ -540,6 +689,7 @@ class AIAssistant:
             "Use ASCII for generated ids, keys, and namespaces.",
             "If a requested image, feature, or option is risky or unsupported, include a warning.",
             "Do not invent exact current image versions. If the user asks for the latest version and no exact current version is provided in context, use the image's official latest tag only for that explicitly requested image and add a Korean warning that floating tags should be pinned after verification.",
+            "Every generated Compose service must include an image reference whose image name and tag or digest can pass the application's image validation.",
             "Include a short thinking_summary field that summarizes the decision path without exposing raw chain-of-thought.",
             "Use the compose_validation object in the user context as a hard contract. Fix violations before returning JSON.",
             "Use the output_format object in the user context as the exact output contract.",
@@ -859,7 +1009,11 @@ class AIAssistant:
             ],
             "options": {"temperature": 0.2},
         }
-        data = self._post_json("%s/api/chat" % provider["base_url"].rstrip("/"), body)
+        data = self._post_json(
+            "%s/api/chat" % provider["base_url"].rstrip("/"),
+            body,
+            timeout=AI_OLLAMA_REQUEST_TIMEOUT_SECONDS,
+        )
         message = data.get("message") or {}
         return self._clean_text(message.get("content") or data.get("response"))
 
@@ -886,7 +1040,10 @@ class AIAssistant:
         else:
             raise AIAssistantError(400, "사용 가능한 AI 공급자가 없습니다.", "AI_PROVIDER_NOT_CONFIGURED")
         yield {"type": "status", "message": "AI 응답 JSON을 생성하는 중입니다."}
-        for event in stream:
+        for event in self._iter_with_heartbeat(stream):
+            if event.get("type") == "heartbeat":
+                yield event
+                continue
             if event.get("type") == "delta":
                 chunks.append(event.get("text") or "")
                 yield event
@@ -1004,14 +1161,45 @@ class AIAssistant:
             ],
             "options": {"temperature": 0.2},
         }
-        for data in self._iter_ndjson("%s/api/chat" % provider["base_url"].rstrip("/"), body):
+        for data in self._iter_ndjson(
+            "%s/api/chat" % provider["base_url"].rstrip("/"),
+            body,
+            timeout=AI_OLLAMA_REQUEST_TIMEOUT_SECONDS,
+        ):
             message = data.get("message") or {}
             content = message.get("content") or data.get("response")
             if content:
                 yield {"type": "delta", "text": content}
 
-    def _iter_sse_json(self, url, body, headers=None):
-        for payload in self._iter_sse_data(url, body, headers=headers):
+    def _iter_with_heartbeat(self, iterator, interval=AI_STREAM_HEARTBEAT_SECONDS):
+        events = queue.Queue()
+        done = object()
+
+        def consume():
+            try:
+                for event in iterator:
+                    events.put(("event", event))
+            except Exception as exc:
+                events.put(("error", exc))
+            finally:
+                events.put(("done", done))
+
+        threading.Thread(target=consume, daemon=True).start()
+        while True:
+            try:
+                kind, payload = events.get(timeout=interval)
+            except queue.Empty:
+                yield {"type": "heartbeat"}
+                continue
+            if kind == "event":
+                yield payload
+                continue
+            if kind == "error":
+                raise payload
+            return
+
+    def _iter_sse_json(self, url, body, headers=None, timeout=AI_STREAM_PROVIDER_TIMEOUT_SECONDS):
+        for payload in self._iter_sse_data(url, body, headers=headers, timeout=timeout):
             if payload == "[DONE]":
                 break
             try:
@@ -1019,8 +1207,8 @@ class AIAssistant:
             except Exception:
                 continue
 
-    def _iter_sse_data(self, url, body, headers=None):
-        with self._open_stream(url, body, headers=headers) as response:
+    def _iter_sse_data(self, url, body, headers=None, timeout=AI_STREAM_PROVIDER_TIMEOUT_SECONDS):
+        with self._open_stream(url, body, headers=headers, timeout=timeout) as response:
             event_lines = []
             for raw in response:
                 line = raw.decode("utf-8", "replace").rstrip("\r\n")
@@ -1034,8 +1222,8 @@ class AIAssistant:
             if event_lines:
                 yield "\n".join(event_lines)
 
-    def _iter_ndjson(self, url, body, headers=None):
-        with self._open_stream(url, body, headers=headers) as response:
+    def _iter_ndjson(self, url, body, headers=None, timeout=AI_STREAM_PROVIDER_TIMEOUT_SECONDS):
+        with self._open_stream(url, body, headers=headers, timeout=timeout) as response:
             for raw in response:
                 line = raw.decode("utf-8", "replace").strip()
                 if not line:
@@ -1045,13 +1233,13 @@ class AIAssistant:
                 except Exception:
                     continue
 
-    def _open_stream(self, url, body, headers=None):
+    def _open_stream(self, url, body, headers=None, timeout=AI_STREAM_PROVIDER_TIMEOUT_SECONDS):
         request_headers = {"Content-Type": "application/json"}
         request_headers.update(headers or {})
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=request_headers)
         try:
-            return urllib.request.urlopen(req, timeout=120)
+            return urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode("utf-8", "replace")
             message = self._extract_error_message(raw) or str(exc)
@@ -1064,13 +1252,13 @@ class AIAssistant:
                 {"url": url},
             )
 
-    def _post_json(self, url, body, headers=None):
+    def _post_json(self, url, body, headers=None, timeout=45):
         request_headers = {"Content-Type": "application/json"}
         request_headers.update(headers or {})
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=request_headers)
         try:
-            with urllib.request.urlopen(req, timeout=45) as response:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
                 raw = response.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode("utf-8", "replace")
@@ -1140,6 +1328,7 @@ class AIAssistant:
             "managed_elements": [
                 "service metadata",
                 "Docker Compose services",
+                "image name and image tag validation",
                 "domain zone and prefix",
                 "nginx upstream target",
                 "SSL mode",
@@ -1156,6 +1345,7 @@ class AIAssistant:
             "output_contract": payload.get("docker_infra_outputs") or self.service_contract().get("output"),
             "expectations": [
                 "Return a complete service draft that can pass compose validation without manual YAML editing.",
+                "Every service must include an image reference with a tag or digest that can be validated after generation.",
                 "Choose one public component and port when the user asks for browser or domain access.",
                 "Prefer named volumes over host paths for beginner-created persistent data.",
                 "Mark sensitive values as secret and list generated_secret_keys instead of returning real production secrets.",
