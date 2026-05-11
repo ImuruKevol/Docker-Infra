@@ -39,6 +39,8 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "backup.harbor.restart",
     "monitoring.node_exporter.ensure",
     "monitoring.node_exporter.status",
+    "monitoring.metrics_collector.ensure",
+    "monitoring.metrics_collector.status",
 ]
 
 
@@ -191,6 +193,11 @@ def node_metric_collection_interval_seconds(env=None):
     except (TypeError, ValueError):
         seconds = int(DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS)
     return max(600, min(seconds, 3600))
+
+
+def reporter_base_url(env=None):
+    values = runtime_env(env)
+    return (values.get("DOCKER_INFRA_REPORTER_BASE_URL") or values.get("DOCKER_INFRA_BASE_URL") or "").rstrip("/")
 
 
 def backup_harbor_installer_url(env=None):

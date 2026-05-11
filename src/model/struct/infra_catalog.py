@@ -43,7 +43,6 @@ class InfraCatalog:
                     "nodes": _count(cursor, "nodes"),
                     "services": _count(cursor, "services"),
                     "service_domains": _count(cursor, "service_domains"),
-                    "templates": _count(cursor, "templates"),
                     "images": _count(cursor, "images"),
                     "operations": _count(cursor, "operation_logs"),
                     "cloudflare_zones": _count(cursor, "cloudflare_zones"),
@@ -170,29 +169,6 @@ class InfraCatalog:
             with connection.cursor() as cursor:
                 images = _rows(cursor, "SELECT * FROM images ORDER BY created_at DESC LIMIT 80")
         return {"images": images, "integrations": self.integrations(), "counts": self.counts()}
-
-    def templates(self):
-        with connect() as connection:
-            with connection.cursor() as cursor:
-                templates = _rows(
-                    cursor,
-                    """
-                    SELECT
-                        t.*,
-                        COALESCE(v.version_count, 0) AS version_count,
-                        v.latest_version
-                    FROM templates t
-                    LEFT JOIN (
-                        SELECT template_id, count(*) AS version_count, max(version) AS latest_version
-                        FROM template_versions
-                        GROUP BY template_id
-                    ) v ON v.template_id = t.id
-                    ORDER BY t.created_at DESC
-                    LIMIT 80
-                    """,
-                )
-                versions = _rows(cursor, "SELECT * FROM template_versions ORDER BY created_at DESC LIMIT 80")
-        return {"templates": templates, "versions": versions, "setup": setup.status(include_checks=False)}
 
     def domains(self):
         with connect() as connection:

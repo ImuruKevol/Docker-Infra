@@ -6,7 +6,13 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
     public loading = signal<boolean>(true);
     public data = signal<any>({});
     public error = signal<string>('');
+    public resourceChartBusy = signal<boolean>(false);
+    public resourceChartError = signal<string>('');
+    public resourceStartDate = signal<string>(this.dateInputOffset(-1));
+    public resourceEndDate = signal<string>(this.dateInputOffset(0));
+    public nodeChartsOpen = signal<boolean>(false);
     private resourceChartInstance: any = null;
+    private nodeChartInstances: any[] = [];
     private resourceChartRenderTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(public service: Service) { }
@@ -23,23 +29,63 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
     public ngOnDestroy() {
         this.cancelResourceChartRender();
         this.destroyResourceChart();
+        this.destroyNodeCharts();
     }
 
-    public async load() {
-        this.loading.set(true);
-        this.error.set('');
+    private dateInputOffset(offsetDays: number) {
+        const date = new Date();
+        date.setDate(date.getDate() + offsetDays);
+        date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+        return date.toISOString().slice(0, 10);
+    }
+
+    private dateStartIso(value: string) {
+        if (!value) return '';
+        const date = new Date(`${value}T00:00:00.000`);
+        return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+    }
+
+    private dateEndIso(value: string) {
+        if (!value) return '';
+        const date = new Date(`${value}T23:59:59.999`);
+        return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+    }
+
+    private resourceRangePayload() {
+        const startDate = this.resourceStartDate() || this.dateInputOffset(-1);
+        const endDate = this.resourceEndDate() || startDate;
+        return {
+            start_date: startDate,
+            end_date: endDate,
+            start_at: this.dateStartIso(startDate),
+            end_at: this.dateEndIso(endDate),
+        };
+    }
+
+    public async load(showPageLoading: boolean = true) {
+        if (showPageLoading) this.loading.set(true);
+        this.resourceChartBusy.set(!showPageLoading);
+        if (showPageLoading) this.error.set('');
+        this.resourceChartError.set('');
         await this.service.render();
 
-        const { code, data } = await wiz.call("overview", {});
+        const { code, data } = await wiz.call("overview", this.resourceRangePayload());
         if (code === 200) {
             this.data.set(data || {});
         } else {
-            this.error.set(data?.message || 'Dashboard를 불러올 수 없습니다.');
+            const message = data?.message || 'Dashboard를 불러올 수 없습니다.';
+            if (showPageLoading) this.error.set(message);
+            else this.resourceChartError.set(message);
         }
 
-        this.loading.set(false);
+        if (showPageLoading) this.loading.set(false);
+        this.resourceChartBusy.set(false);
         await this.service.render();
         this.scheduleResourceChartRender();
+    }
+
+    public async applyResourceRange() {
+        await this.load(false);
     }
 
     public counts() {
@@ -87,6 +133,49 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
 
     public resourceRows() {
         return this.resourceChart()?.rows || [];
+    }
+
+    public nodeResourceCharts() {
+        return this.data()?.node_resource_charts || [];
+    }
+
+    public nodeChartRows(chart: any) {
+        return chart?.rows || [];
+    }
+
+    public nodeChartNode(chart: any) {
+        if (chart?.node) return chart.node;
+        const nodeId = String(chart?.node_id || '');
+        return this.nodes().find((node: any) => String(node?.id || '') === nodeId) || {};
+    }
+
+    public nodeChartTitle(chart: any) {
+        const node = this.nodeChartNode(chart);
+        return node?.name || chart?.node_id || 'Server';
+    }
+
+    public nodeChartSubtitle(chart: any) {
+        const node = this.nodeChartNode(chart);
+        const count = chart?.source_count ?? chart?.count ?? this.nodeChartRows(chart).length;
+        const host = node?.host || chart?.node_id || '-';
+        return `${host} · ${count || 0}개 샘플`;
+    }
+
+    public resourceRangeText() {
+        const chart = this.resourceChart();
+        const count = chart?.source_count ?? chart?.count ?? this.resourceRows().length;
+        return `${this.resourceStartDate()} ~ ${this.resourceEndDate()} · ${count || 0}개 샘플`;
+    }
+
+    public async openNodeCharts() {
+        this.nodeChartsOpen.set(true);
+        await this.service.render();
+        this.scheduleResourceChartRender();
+    }
+
+    public closeNodeCharts() {
+        this.nodeChartsOpen.set(false);
+        this.destroyNodeCharts();
     }
 
     public nodeMetric(node: any) {
@@ -254,6 +343,11 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
         this.resourceChartInstance = null;
     }
 
+    private destroyNodeCharts() {
+        this.nodeChartInstances.forEach((chart: any) => chart.destroy());
+        this.nodeChartInstances = [];
+    }
+
     private cancelResourceChartRender() {
         if (!this.resourceChartRenderTimer) return;
         clearTimeout(this.resourceChartRenderTimer);
@@ -272,12 +366,36 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
         return document.querySelector('[data-resource-chart-canvas="dashboard"]') as HTMLCanvasElement | null;
     }
 
+    private nodeChartCanvasElements() {
+        return Array.from(document.querySelectorAll('[data-node-resource-chart-canvas]')) as HTMLCanvasElement[];
+    }
+
     private renderResourceChart() {
         const canvas = this.resourceChartCanvasElement();
         const rows = this.resourceRows();
         this.destroyResourceChart();
-        if (!canvas || !rows.length) return;
-        this.resourceChartInstance = new Chart(canvas, this.chartConfig(rows) as any);
+        if (canvas && rows.length) {
+            this.resourceChartInstance = new Chart(canvas, this.chartConfig(rows) as any);
+        }
+        if (this.nodeChartsOpen()) {
+            this.renderNodeCharts();
+        } else {
+            this.destroyNodeCharts();
+        }
+    }
+
+    private renderNodeCharts() {
+        this.destroyNodeCharts();
+        const charts = this.nodeResourceCharts();
+        if (!charts.length) return;
+        const chartByNodeId = new Map(charts.map((chart: any) => [String(chart?.node_id || ''), chart]));
+        this.nodeChartCanvasElements().forEach((canvas: HTMLCanvasElement) => {
+            const nodeId = String(canvas.getAttribute('data-node-resource-chart-canvas') || '');
+            const chart = chartByNodeId.get(nodeId);
+            const rows = chart?.rows || [];
+            if (!rows.length) return;
+            this.nodeChartInstances.push(new Chart(canvas, this.chartConfig(rows) as any));
+        });
     }
 
     public metricHistoryText() {

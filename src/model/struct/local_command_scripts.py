@@ -38,6 +38,172 @@ storage_json=$(df -Pk / | awk 'NR==2 { gsub("%", "", $5); printf "\"total\":%d,\
 printf '{"cpu_percent":%s,"memory":{"total":%s,"used":%s,"available":%s,"used_percent":%s},"storage":{%s}}\n' "$cpu_percent" "$mem_total" "$mem_used" "$mem_available" "$mem_percent" "$storage_json"
 """
 
+NODE_METRICS_AGENT_SCRIPT = r"""#!/usr/bin/env python3
+import datetime
+import json
+import os
+import subprocess
+import urllib.error
+import urllib.request
+
+
+def utcnow():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def run(argv, timeout=8):
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        return {
+            "ok": completed.returncode == 0,
+            "exit_code": completed.returncode,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+    except Exception as exc:
+        return {"ok": False, "exit_code": None, "stdout": "", "stderr": str(exc)}
+
+
+def read_cpu_totals():
+    with open("/proc/stat", "r", encoding="utf-8") as handle:
+        parts = handle.readline().split()
+    values = [int(value) for value in parts[1:8]]
+    idle = values[3] + values[4]
+    return sum(values), idle
+
+
+def cpu_percent():
+    state_file = os.environ.get("DOCKER_INFRA_METRICS_STATE_FILE", "/var/lib/docker-infra/node-metrics.prev")
+    total, idle = read_cpu_totals()
+    previous = None
+    try:
+        with open(state_file, "r", encoding="utf-8") as handle:
+            raw_total, raw_idle = handle.read().split()[:2]
+            previous = (int(raw_total), int(raw_idle))
+    except Exception:
+        previous = None
+    try:
+        os.makedirs(os.path.dirname(state_file), mode=0o700, exist_ok=True)
+        with open(state_file, "w", encoding="utf-8") as handle:
+            handle.write(f"{total} {idle}\n")
+    except Exception:
+        pass
+    if not previous or total <= previous[0]:
+        return 0.0
+    total_delta = total - previous[0]
+    idle_delta = max(0, idle - previous[1])
+    used = max(0, total_delta - idle_delta)
+    return round(min(100.0, used * 100.0 / max(1, total_delta)), 2)
+
+
+def memory():
+    values = {}
+    with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+        for line in handle:
+            parts = line.split()
+            if len(parts) >= 2:
+                values[parts[0].rstrip(":")] = int(parts[1]) * 1024
+    total = values.get("MemTotal", 0)
+    available = values.get("MemAvailable", 0)
+    used = max(0, total - available)
+    return {
+        "total": total,
+        "used": used,
+        "available": available,
+        "used_percent": round(used * 100.0 / total, 2) if total else 0.0,
+    }
+
+
+def storage():
+    result = run(["df", "-Pk", "/"], timeout=4)
+    if not result["ok"]:
+        return {"total": 0, "used": 0, "available": 0, "used_percent": 0.0}
+    lines = [line for line in result["stdout"].splitlines() if line.strip()]
+    if len(lines) < 2:
+        return {"total": 0, "used": 0, "available": 0, "used_percent": 0.0}
+    parts = lines[1].split()
+    total = int(parts[1]) * 1024
+    used = int(parts[2]) * 1024
+    available = int(parts[3]) * 1024
+    percent = float(parts[4].rstrip("%"))
+    return {"total": total, "used": used, "available": available, "used_percent": percent}
+
+
+def container_items():
+    result = run(["docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}"], timeout=10)
+    if not result["ok"]:
+        return []
+    items = []
+    for line in result["stdout"].splitlines():
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        items.append({
+            "id": item.get("ID") or item.get("Id") or "",
+            "name": item.get("Names") or item.get("Name") or "",
+            "image": item.get("Image") or "",
+            "state": item.get("State") or "",
+            "status": item.get("Status") or "",
+            "ports": item.get("Ports") or "",
+        })
+    return items
+
+
+def container_payload():
+    items = container_items()
+    running = len([item for item in items if str(item.get("state") or "").lower() == "running"])
+    return {
+        "summary": {"total": len(items), "running": running, "stopped": max(0, len(items) - running)},
+        "items": items,
+    }
+
+
+def post_metric(payload):
+    base_url = os.environ.get("DOCKER_INFRA_REPORTER_BASE_URL", "").rstrip("/")
+    token = os.environ.get("DOCKER_INFRA_REPORTER_TOKEN", "")
+    if not base_url:
+        raise RuntimeError("DOCKER_INFRA_REPORTER_BASE_URL is required")
+    if not token:
+        raise RuntimeError("DOCKER_INFRA_REPORTER_TOKEN is required")
+    request = urllib.request.Request(
+        f"{base_url}/api/reporter/metrics",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        body = response.read().decode("utf-8", errors="replace")
+        if response.status < 200 or response.status >= 300:
+            raise RuntimeError(f"reporter response status {response.status}: {body[:200]}")
+        return response.status
+
+
+def main():
+    node_id = os.environ.get("DOCKER_INFRA_NODE_ID", "")
+    if not node_id:
+        raise RuntimeError("DOCKER_INFRA_NODE_ID is required")
+    payload = {
+        "node_id": node_id,
+        "reported_at": utcnow(),
+        "cpu_percent": cpu_percent(),
+        "memory": memory(),
+        "storage": storage(),
+        "containers": container_payload(),
+        "metadata": {"source": "systemd_collector"},
+    }
+    status = post_metric(payload)
+    print(f"reported node metrics: status={status}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:200]
+        raise SystemExit(f"reporter http error {exc.code}: {detail}")
+"""
+
 DOCKER_IMAGE_USAGE_SCRIPT = r"""
 ids=$(docker container ls -aq --no-trunc)
 if [ -z "$ids" ]; then
@@ -266,6 +432,7 @@ PY
 
 class LocalCommandScripts:
     SYSTEM_METRICS_SCRIPT = SYSTEM_METRICS_SCRIPT
+    NODE_METRICS_AGENT_SCRIPT = NODE_METRICS_AGENT_SCRIPT
     DOCKER_IMAGE_USAGE_SCRIPT = DOCKER_IMAGE_USAGE_SCRIPT
     AI_RESOURCE_SCRIPT = AI_RESOURCE_SCRIPT
     AI_OLLAMA_SCAN_SCRIPT = AI_OLLAMA_SCAN_SCRIPT

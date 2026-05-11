@@ -29,6 +29,15 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
         self.assertIn("metadata JSONB NOT NULL DEFAULT '{}'::jsonb", sql)
         self.assertIn("test_run_id TEXT", sql)
 
+    def test_template_tables_are_not_created_by_core_schema(self):
+        core = (MIGRATION_DIR / "001_core_schema.sql").read_text(encoding="utf-8")
+        removal = (MIGRATION_DIR / "012_remove_templates.sql").read_text(encoding="utf-8")
+
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS templates", core)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS template_versions", core)
+        self.assertIn("DROP TABLE IF EXISTS template_versions", removal)
+        self.assertIn("DROP TABLE IF EXISTS templates", removal)
+
 
 class MigrationSchemaLiveFlowTest(unittest.TestCase):
     def setUp(self):

@@ -178,27 +178,6 @@ def stream_service_ai():
     _stream_events(events)
 
 
-def template_detail():
-    templates_model = wiz.model("struct").templates
-    template_id = str(wiz.request.query().get("template_id") or "").strip()
-    if not template_id:
-        wiz.response.status(400, message="template_id가 필요합니다.", error_code="TEMPLATE_ID_REQUIRED")
-        return
-
-    code = 200
-    payload = {}
-    try:
-        payload = templates_model.detail(template_id)
-    except templates_model.TemplateError as exc:
-        code = exc.status_code
-        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
-        code = 503
-        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
-
-    wiz.response.status(code, **payload)
-
-
 def create_service():
     services_model = wiz.model("struct").services
     catalog = wiz.model("struct/infra_catalog_registry")

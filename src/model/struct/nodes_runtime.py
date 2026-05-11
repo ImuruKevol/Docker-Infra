@@ -1,5 +1,7 @@
 import datetime
 
+from psycopg.types.json import Jsonb
+
 connect = wiz.model("db/postgres").connect
 local_catalog = wiz.model("struct/local_command_catalog")
 shared = wiz.model("struct/nodes_shared")
@@ -126,9 +128,36 @@ class NodeRuntimeMixin(files_mixin):
         return {"service_groups": service_groups, "unmanaged_containers": unmanaged}
 
     def _remember_containers(self, node_id, items, test_run_id=None, env=None):
-        payload = self._latest_metric_payload(node_id, env=env)
-        payload["containers"] = {"summary": _container_summary(items), "items": items}
-        self._write_snapshot(node_id, payload, "containers_refresh", test_run_id=test_run_id, env=env)
+        refreshed_at = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        containers = {"summary": _container_summary(items), "items": items}
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM node_metrics
+                    WHERE node_id = %s
+                    ORDER BY reported_at DESC, created_at DESC
+                    LIMIT 1
+                    """,
+                    (node_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return
+                cursor.execute(
+                    """
+                    UPDATE node_metrics
+                    SET containers = %s,
+                        metadata = COALESCE(metadata, '{}'::jsonb) || %s
+                    WHERE id = %s
+                    """,
+                    (
+                        Jsonb(containers),
+                        Jsonb({"containers_refreshed_at": refreshed_at, "containers_refresh_test_run_id": test_run_id}),
+                        row["id"],
+                    ),
+                )
 
     def cached_containers_panel(self, node_id, env=None):
         latest = self.latest_metric(node_id, env=env) or {}

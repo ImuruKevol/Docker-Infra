@@ -3,6 +3,7 @@ import re
 import subprocess
 import urllib.request
 import uuid
+import hashlib
 from pathlib import PurePosixPath
 
 import yaml
@@ -115,15 +116,16 @@ class ServicesWizard:
     ServiceError = services.ServiceError
     ComposeValidationError = validator.ComposeValidationError
 
-    def _require_template_or_import(self, body):
-        if body.get("import_source") or body.get("source") == "server_compose_import_wizard":
-            return
-        if str(body.get("template_id") or "").strip():
+    def _is_import_source(self, body):
+        return bool(body.get("import_source")) or body.get("source") in {"server_compose_import", "server_compose_import_wizard"}
+
+    def _require_base_content_source(self, body):
+        if str(body.get("base_content") or "").strip():
             return
         raise services.ServiceError(
             400,
-            "만들 서비스의 종류를 선택해주세요.",
-            "SERVICE_TEMPLATE_REQUIRED",
+            "서비스 초안을 먼저 작성해주세요.",
+            "SERVICE_DRAFT_REQUIRED",
         )
 
     def _require_base_content(self, body):
@@ -131,9 +133,44 @@ class ServicesWizard:
             return
         raise services.ServiceError(
             400,
-            "서비스 종류의 기본 구성을 불러오지 못했습니다. 서비스 종류를 다시 선택해주세요.",
-            "SERVICE_TEMPLATE_CONTENT_REQUIRED",
+            "서비스 초안을 먼저 작성해주세요.",
+            "SERVICE_DRAFT_CONTENT_REQUIRED",
         )
+
+    def prepare_manual(self, payload, env=None):
+        body = payload or {}
+        content = str(body.get("content") or body.get("base_content") or "")
+        if not content.strip():
+            raise services.ServiceError(400, "Compose 내용을 입력해주세요.", "COMPOSE_CONTENT_REQUIRED")
+        filename = str(body.get("filename") or "docker-compose.yaml").split("/")[-1] or "docker-compose.yaml"
+        suggested_name = str(body.get("suggested_name") or body.get("name") or "직접 작성 서비스").strip()
+        namespace = _normalize(suggested_name) or "manual_service"
+        validation = validator.validate({
+            "namespace": namespace,
+            "filename": filename,
+            "content": content,
+            "allow_warnings": True,
+            "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],
+        })
+        components = self.components_from_content(content)
+        checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        return {
+            "filename": filename,
+            "content": content,
+            "components": components,
+            "suggested_name": suggested_name,
+            "source": "manual_compose",
+            "source_ref": {
+                "source": "manual_compose",
+                "filename": filename,
+                "checksum": checksum,
+            },
+            "warnings": validation.get("warnings") or [],
+            "summary": {
+                "services": len(components),
+                "ports": sum(len(item.get("ports") or []) for item in components),
+            },
+        }
 
     def _unique_namespace(self, name, env=None):
         base = _normalize(name) or "service"
@@ -216,8 +253,9 @@ class ServicesWizard:
             "content": content,
             "components": components,
             "suggested_name": suggested_name,
-            "source": "server_compose_import_wizard",
+            "source": "server_compose_import",
             "source_ref": {
+                "source": "server_compose_import",
                 "node_id": body.get("node_id"),
                 "path": source_path,
                 "filename": filename,
@@ -304,7 +342,7 @@ class ServicesWizard:
         return _rewrite_internal_service_ref(content, namespace, service_names)
 
     def _validation_options(self, body):
-        if body.get("import_source") or body.get("source") == "server_compose_import_wizard":
+        if self._is_import_source(body):
             return {
                 "allow_warnings": True,
                 "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],
@@ -313,7 +351,7 @@ class ServicesWizard:
 
     def preflight(self, payload, env=None):
         body = payload or {}
-        self._require_template_or_import(body)
+        self._require_base_content_source(body)
         self._require_base_content(body)
         name = str(body.get("name") or "").strip()
         if not name:
@@ -336,7 +374,7 @@ class ServicesWizard:
 
     def create(self, payload, env=None):
         body = payload or {}
-        self._require_template_or_import(body)
+        self._require_base_content_source(body)
         self._require_base_content(body)
         name = str(body.get("name") or "").strip()
         if not name:
@@ -372,10 +410,19 @@ class ServicesWizard:
             "domain_mode": body.get("domain_mode"),
             "import_source": body.get("import_source"),
         }
+        source = body.get("source") or ("server_compose_import" if self._is_import_source(body) else "manual_compose")
+        draft_metadata = body.get("draft_metadata") if isinstance(body.get("draft_metadata"), dict) else {}
+        if draft_metadata:
+            draft_metadata = {
+                **draft_metadata,
+                "source": draft_metadata.get("source") or body.get("source") or source,
+            }
         if generated_secret_keys:
             wizard_metadata["generated_secret_keys"] = generated_secret_keys
             wizard_metadata["secret_strategy"] = "runtime_generated"
-        source_ref = body.get("source_ref") or body.get("import_source") or {"template_id": body.get("template_id"), "wizard": "services.create"}
+        if draft_metadata and not draft_metadata.get("source"):
+            draft_metadata["source"] = source
+        source_ref = body.get("source_ref") or body.get("import_source") or {"source": source, "wizard": "services.create"}
         if generated_secret_keys and isinstance(source_ref, dict):
             source_ref = {**source_ref, "generated_secret_keys": generated_secret_keys}
         return services.create({
@@ -388,8 +435,9 @@ class ServicesWizard:
             "port": port,
             "ssl_mode": ssl_mode,
             "test_run_id": body.get("test_run_id"),
-            "source": body.get("source") or ("server_compose_import_wizard" if body.get("import_source") else "ui_wizard"),
+            "source": source,
             "source_ref": source_ref,
+            "draft_metadata": draft_metadata,
             "domain_metadata": domain_selection,
             "wizard": wizard_metadata,
         }, env=env, validation=validation)

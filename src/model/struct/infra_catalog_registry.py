@@ -44,7 +44,6 @@ class InfraCatalog:
                     "nodes": _count(cursor, "nodes"),
                     "services": _count(cursor, "services"),
                     "service_domains": _count(cursor, "service_domains"),
-                    "templates": _count(cursor, "templates"),
                     "images": _count(cursor, "images"),
                     "operations": _count(cursor, "operation_logs"),
                     "cloudflare_zones": _count(cursor, "cloudflare_zones"),
@@ -76,7 +75,39 @@ class InfraCatalog:
         )
         return items
 
-    def dashboard(self):
+    def _node_metric_rows_for_chart(self, cursor, chart_range):
+        params = []
+        where = []
+        if chart_range.get("start_at") and chart_range.get("end_at"):
+            where.append("reported_at >= %s::timestamptz")
+            where.append("reported_at <= %s::timestamptz")
+            params.extend([chart_range.get("start_at"), chart_range.get("end_at")])
+        else:
+            where.append("reported_at::date >= %s::date")
+            where.append("reported_at::date <= %s::date")
+            params.extend([chart_range.get("start_date"), chart_range.get("end_date")])
+        cursor.execute(
+            f"""
+            SELECT
+                node_id,
+                cpu_percent,
+                memory,
+                storage,
+                containers,
+                reported_at,
+                metadata
+            FROM node_metrics
+            WHERE {" AND ".join(where)}
+            ORDER BY reported_at DESC, created_at DESC
+            LIMIT 10000
+            """,
+            params,
+        )
+        return [_serialize(dict(row)) for row in cursor.fetchall()]
+
+    def dashboard(self, start_date=None, end_date=None, start_at=None, end_at=None):
+        resource_chart = metric_history.dashboard_chart(start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at)
+        node_resource_charts = []
         counts = self.counts()
         with connect() as connection:
             with connection.cursor() as cursor:
@@ -125,6 +156,25 @@ class InfraCatalog:
                         "containers": node.pop("latest_containers", None) or {},
                         "reported_at": node.pop("latest_reported_at", None),
                     }
+                chart_nodes = _rows(
+                    cursor,
+                    """
+                    SELECT id, name, role, host, status, is_local_master
+                    FROM nodes
+                    ORDER BY is_local_master DESC, created_at DESC
+                    """,
+                )
+                chart_nodes_by_id = {str(node["id"]): node for node in chart_nodes}
+                node_ids = [node["id"] for node in chart_nodes if node.get("id")]
+                node_resource_charts = metric_history.dashboard_node_charts(
+                    node_ids,
+                    start_date=resource_chart.get("start_date"),
+                    end_date=resource_chart.get("end_date"),
+                    start_at=resource_chart.get("start_at"),
+                    end_at=resource_chart.get("end_at"),
+                )
+                for chart in node_resource_charts:
+                    chart["node"] = chart_nodes_by_id.get(str(chart.get("node_id"))) or {}
                 cursor.execute(
                     """
                     SELECT status, count(*) AS count
@@ -134,6 +184,35 @@ class InfraCatalog:
                     """
                 )
                 operation_statuses = {row["status"]: int(row["count"]) for row in cursor.fetchall()}
+                db_metric_rows = None
+                if (not resource_chart.get("rows")) or any(not chart.get("rows") for chart in node_resource_charts):
+                    db_metric_rows = self._node_metric_rows_for_chart(cursor, resource_chart)
+                if not resource_chart.get("rows") and db_metric_rows:
+                    db_resource_chart = metric_history.dashboard_chart_from_metrics(
+                        db_metric_rows,
+                        start_date=resource_chart.get("start_date"),
+                        end_date=resource_chart.get("end_date"),
+                        start_at=resource_chart.get("start_at"),
+                        end_at=resource_chart.get("end_at"),
+                    )
+                    if db_resource_chart.get("rows"):
+                        resource_chart = db_resource_chart
+                if db_metric_rows and node_resource_charts:
+                    db_node_charts = metric_history.dashboard_node_charts_from_metrics(
+                        node_ids,
+                        db_metric_rows,
+                        start_date=resource_chart.get("start_date"),
+                        end_date=resource_chart.get("end_date"),
+                        start_at=resource_chart.get("start_at"),
+                        end_at=resource_chart.get("end_at"),
+                    )
+                    db_node_charts_by_id = {str(chart.get("node_id")): chart for chart in db_node_charts if chart.get("rows")}
+                    node_resource_charts = [
+                        db_node_charts_by_id.get(str(chart.get("node_id")), chart) if not chart.get("rows") else chart
+                        for chart in node_resource_charts
+                    ]
+                    for chart in node_resource_charts:
+                        chart["node"] = chart_nodes_by_id.get(str(chart.get("node_id"))) or chart.get("node") or {}
         setup_status = setup.status(include_checks=False)
         return {
             "counts": counts,
@@ -141,7 +220,8 @@ class InfraCatalog:
             "setup": setup_status,
             "nodes": nodes,
             "node_metric_history": metric_history.dashboard_summary(),
-            "node_resource_chart": metric_history.dashboard_chart(),
+            "node_resource_chart": resource_chart,
+            "node_resource_charts": node_resource_charts,
             "recent_operations": recent_operations,
             "operation_statuses": operation_statuses,
             "integrations": self.integrations(),
@@ -206,29 +286,6 @@ class InfraCatalog:
             with connection.cursor() as cursor:
                 images = _rows(cursor, "SELECT * FROM images ORDER BY created_at DESC LIMIT 80")
         return {"images": images, "integrations": self.integrations(), "counts": self.counts()}
-
-    def templates(self):
-        with connect() as connection:
-            with connection.cursor() as cursor:
-                templates = _rows(
-                    cursor,
-                    """
-                    SELECT
-                        t.*,
-                        COALESCE(v.version_count, 0) AS version_count,
-                        v.latest_version
-                    FROM templates t
-                    LEFT JOIN (
-                        SELECT template_id, count(*) AS version_count, max(version) AS latest_version
-                        FROM template_versions
-                        GROUP BY template_id
-                    ) v ON v.template_id = t.id
-                    ORDER BY t.created_at DESC
-                    LIMIT 80
-                    """,
-                )
-                versions = _rows(cursor, "SELECT * FROM template_versions ORDER BY created_at DESC LIMIT 80")
-        return {"templates": templates, "versions": versions, "setup": setup.status(include_checks=False)}
 
     def domains(self):
         with connect() as connection:

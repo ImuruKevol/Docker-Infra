@@ -31,7 +31,7 @@ docker compose -f docker/compose/test.yaml --profile proxy run --rm proxy-sandbo
 | 시스템 이미지 업로드 | `/root/docker-infra/data/system-assets/` |
 | 도메인 인증서 | `/root/docker-infra/data/domain-certificates/` |
 | 내장 백업 Harbor data | `/root/docker-infra/data/backup-harbor/` 또는 운영 volume |
-| 템플릿 파일 | `/root/docker-infra/data/templates/` |
+| 서비스 Compose 파일 | `.runtime/dev/services` |
 | 개발 artifact | `.runtime/dev/artifacts` |
 | 테스트 artifact | `.runtime/test/artifacts` |
 | 개발 log | `.runtime/dev/logs` |
@@ -214,7 +214,7 @@ nginx 기본값:
 
 사용자는 Harbor 계정과 token을 직접 다루지 않는다.
 
-## 12. 이미지와 템플릿
+## 12. 이미지와 서비스 초안
 
 이미지 화면은 로컬 이미지와 백업 이미지를 구분한다.
 
@@ -223,7 +223,7 @@ nginx 기본값:
 - 삭제 전 영향 서비스 표시
 - 일괄 삭제는 확인 모달과 audit log 필요
 
-템플릿은 Compose 원문보다 입력값 schema 중심으로 관리한다. 기본 화면은 이름, 설명, 이미지 이름, 이미지 버전, 필요한 입력값을 보여주고, Compose 원문은 Monaco editor 고급 관리 화면에서 수정한다.
+서비스 생성은 AI 초안, Compose 직접 작성, 서버 Compose 가져오기 중 하나로 시작한다. Compose 원문은 생성 화면의 초안 입력과 서비스 상세의 고급 관리 화면에서만 직접 수정한다.
 
 ## 13. 테스트 방향
 

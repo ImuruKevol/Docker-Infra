@@ -11,7 +11,6 @@ export class Component implements OnInit {
         { link: '/macros', label: 'nav.macros', icon: 'fa-bolt' },
         { link: '/domains', label: 'nav.domains', icon: 'fa-globe' },
         { link: '/images', label: 'nav.images', icon: 'fa-cubes' },
-        { link: '/templates', label: 'nav.templates', icon: 'fa-file-code' },
         { link: '/system', label: 'nav.system', icon: 'fa-gear' },
         { link: '/tools', label: 'nav.tools', icon: 'fa-toolbox' },
     ];

@@ -41,7 +41,6 @@ class AuthSetupStaticContractTest(unittest.TestCase):
             "page.services",
             "page.domains",
             "page.images",
-            "page.templates",
             "page.system",
             "page.tools",
         ]

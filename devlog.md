@@ -122,3 +122,10 @@
 | 2026-05-10 | 120 | AI output 포맷 계약과 values 기본값 객체 반환 규칙 추가 | [상세](devlog/2026-05-10/120-ai-output-format-contract.md) |
 | 2026-05-10 | 121 | AI 재시도 20회 확대와 Gemini 템플릿 수정 실검증 | [상세](devlog/2026-05-10/121-ai-retry-20-gemini-template-verification.md) |
 | 2026-05-11 | 122 | AI 설정 카드별 저장과 등록 노드 Ollama 스캔 UI 추가 | [상세](devlog/2026-05-11/122-ai-settings-card-save-node-ollama-scan.md) |
+| 2026-05-11 | 123 | 템플릿 기능 제거와 AI 서비스 초안 이전 TODO 문서 추가 | [상세](devlog/2026-05-11/123-template-removal-todo.md) |
+| 2026-05-11 | 124 | 서비스 생성 화면 AI 우선 UX와 자동 보정 컨텍스트 보강 | [상세](devlog/2026-05-11/124-service-create-ai-first-ux.md) |
+| 2026-05-11 | 125 | 대시보드 서버 자원 추이 기간 필터와 DB fallback 보강 | [상세](devlog/2026-05-11/125-dashboard-resource-range-db-fallback.md) |
+| 2026-05-11 | 126 | 노드 자원 수집 systemd timer 자동 구성 | [상세](devlog/2026-05-11/126-node-metrics-systemd-collector.md) |
+| 2026-05-11 | 127 | 서비스 생성 AI 초안 후 2단계 진행 차단 수정 | [상세](devlog/2026-05-11/127-service-create-step2-validation-fix.md) |
+| 2026-05-11 | 128 | 대시보드 서버별 자원 차트와 1분 중복 샘플 방어 | [상세](devlog/2026-05-11/128-dashboard-node-resource-charts-dedupe.md) |
+| 2026-05-11 | 129 | 자원 수집 web 의존 제거와 collector timer 복구 | [상세](devlog/2026-05-11/129-monitoring-web-independent-collector-repair.md) |

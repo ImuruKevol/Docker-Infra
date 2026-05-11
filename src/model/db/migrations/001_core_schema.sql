@@ -117,32 +117,6 @@ CREATE TABLE IF NOT EXISTS node_metrics (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS templates (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL,
-    namespace TEXT NOT NULL UNIQUE,
-    path TEXT NOT NULL,
-    description TEXT,
-    enabled BOOLEAN NOT NULL DEFAULT true,
-    test_run_id TEXT,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS template_versions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    template_id UUID NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
-    version INTEGER NOT NULL,
-    path TEXT NOT NULL,
-    checksum TEXT NOT NULL,
-    test_run_id TEXT,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(template_id, version)
-);
-
 CREATE TABLE IF NOT EXISTS services (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     namespace TEXT NOT NULL UNIQUE,
@@ -305,7 +279,7 @@ DECLARE
 BEGIN
     FOREACH table_name IN ARRAY ARRAY[
         'system_settings', 'integration_harbor', 'integration_gitlab', 'cloudflare_zones',
-        'nodes', 'node_credentials', 'node_metrics', 'templates', 'template_versions',
+        'nodes', 'node_credentials', 'node_metrics',
         'services', 'service_domains', 'compose_versions', 'images', 'image_builds',
         'jobs', 'job_steps', 'job_logs', 'proxy_configs', 'certificates', 'electron_setting_backups'
     ] LOOP

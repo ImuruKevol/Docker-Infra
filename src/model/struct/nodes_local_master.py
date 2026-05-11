@@ -12,31 +12,78 @@ _parse_docker_ps_lines = shared.parse_docker_ps_lines
 _container_summary = shared.container_summary
 _swarm_from_docker_info = shared.swarm_from_docker_info
 _node_status_from_swarm = shared.node_status_from_swarm
+_parse_reported_at = shared.parse_reported_at
 
 
 class NodeLocalMasterMixin:
     def _write_node_metric(self, cursor, node_id, payload, test_run_id=None, metadata=None):
         payload = payload or {}
         containers = payload.get("containers") or {"items": []}
+        metadata = dict(metadata or {})
+        metadata["source"] = metadata.get("source") or "node_metric"
+        reported_at = _parse_reported_at(payload.get("reported_at"))
+        memory = payload.get("memory") or {}
+        storage = payload.get("storage") or {}
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"node_metrics:{node_id}",))
         cursor.execute(
             """
-            INSERT INTO node_metrics(node_id, cpu_percent, memory, storage, containers, test_run_id, metadata)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING *
+            SELECT *
+            FROM node_metrics
+            WHERE node_id = %s
+              AND reported_at >= %s::timestamptz - interval '60 seconds'
+              AND reported_at <= %s::timestamptz + interval '60 seconds'
+            ORDER BY ABS(EXTRACT(EPOCH FROM (reported_at - %s::timestamptz))) ASC, created_at DESC
+            LIMIT 1
             """,
-            (
-                node_id,
-                payload.get("cpu_percent"),
-                Jsonb(payload.get("memory") or {}),
-                Jsonb(payload.get("storage") or {}),
-                Jsonb(containers),
-                test_run_id,
-                Jsonb(metadata or {}),
-            ),
+            (node_id, reported_at, reported_at, reported_at),
         )
+        existing = cursor.fetchone()
+        if existing is not None:
+            cursor.execute(
+                """
+                UPDATE node_metrics
+                SET cpu_percent = %s,
+                    memory = %s,
+                    storage = %s,
+                    containers = %s,
+                    reported_at = %s,
+                    test_run_id = COALESCE(%s, test_run_id),
+                    metadata = COALESCE(metadata, '{}'::jsonb) || %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                (
+                    payload.get("cpu_percent"),
+                    Jsonb(memory),
+                    Jsonb(storage),
+                    Jsonb(containers),
+                    reported_at,
+                    test_run_id,
+                    Jsonb(metadata),
+                    existing["id"],
+                ),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO node_metrics(node_id, cpu_percent, memory, storage, containers, reported_at, test_run_id, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    node_id,
+                    payload.get("cpu_percent"),
+                    Jsonb(memory),
+                    Jsonb(storage),
+                    Jsonb(containers),
+                    reported_at,
+                    test_run_id,
+                    Jsonb(metadata),
+                ),
+            )
         row = cursor.fetchone()
         try:
-            metric_history.append_db_row(row, source=(metadata or {}).get("source"))
+            metric_history.append_db_row(row, source=metadata.get("source"))
         except Exception:
             pass
         return row

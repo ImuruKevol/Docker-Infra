@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 TEST_RUNTIME_ROOT = ROOT / ".runtime" / "test"
 DEFAULT_TEST_ROOTS = [
-    TEST_RUNTIME_ROOT / "templates",
+    TEST_RUNTIME_ROOT / "services",
     TEST_RUNTIME_ROOT / "artifacts",
     TEST_RUNTIME_ROOT / "logs",
     TEST_RUNTIME_ROOT / "proxy" / "nginx",

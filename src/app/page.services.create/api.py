@@ -1,11 +1,4 @@
 import json
-import secrets
-import string
-
-import yaml
-
-
-SECRET_ALPHABET = string.ascii_letters + string.digits
 
 
 def _request_payload():
@@ -29,31 +22,7 @@ def _stream_events(events):
     wiz.response.response(resp)
 
 
-def _random_secret(length=28):
-    return "".join(secrets.choice(SECRET_ALPHABET) for _ in range(length))
-
-
-def _apply_runtime_template_values(templates_model, payload):
-    template = payload.get("template") or {}
-    metadata = template.get("metadata") or {}
-    generated = [str(key) for key in metadata.get("generated_secrets") or [] if str(key)]
-    if not generated:
-        return payload
-    files = payload.get("files") or {}
-    values = yaml.safe_load(files.get("values.default.yaml") or "{}") or {}
-    for key in generated:
-        values[key] = _random_secret()
-    payload["preview"] = templates_model.preview({
-        "namespace": template.get("namespace"),
-        "compose": files.get("docker-compose.yaml") or "",
-        "values_default": yaml.safe_dump(values, sort_keys=False, allow_unicode=False),
-    })
-    payload["generated_secret_keys"] = generated
-    return payload
-
-
 def load():
-    templates_model = wiz.model("struct").templates
     domains_model = wiz.model("struct").domains
     webserver = wiz.model("struct/webserver")
     code = 200
@@ -65,32 +34,24 @@ def load():
                 continue
             certs = webserver.certificates_for_domain(zone.get("domain"), zone_id=zone.get("id"))
             zones.append({**zone, "certificate_summary": certs.get("summary") or {}})
-        payload = {
-            "templates": templates_model.load().get("templates", []),
-            "zones": zones,
-        }
+        payload = {"zones": zones}
     except RuntimeError as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
 
 
-def template_detail():
-    templates_model = wiz.model("struct").templates
+def prepare_compose_draft():
     wizard = wiz.model("struct").services_wizard
-    template_id = str(wiz.request.query().get("template_id") or "").strip()
-    if not template_id:
-        wiz.response.status(400, message="template_id가 필요합니다.", error_code="TEMPLATE_ID_REQUIRED")
-        return
+    body = wiz.request.query()
     code = 200
     payload = {}
     try:
-        payload = templates_model.detail(template_id)
-        payload = _apply_runtime_template_values(templates_model, payload)
-        metadata = (payload.get("template") or {}).get("metadata") or {}
-        content = payload.get("preview", {}).get("rendered_compose") or payload.get("files", {}).get("docker-compose.yaml") or ""
-        payload["components"] = wizard.components_from_content(content, metadata=metadata)
-    except templates_model.TemplateError as exc:
+        payload = wizard.prepare_manual(body)
+    except wizard.ComposeValidationError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}
+    except wizard.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except RuntimeError as exc:

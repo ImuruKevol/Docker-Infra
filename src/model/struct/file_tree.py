@@ -74,19 +74,6 @@ class FileTree:
             if row is None:
                 raise FileTreeError(404, "서비스를 찾을 수 없습니다.", "SERVICE_NOT_FOUND")
             return Path(row["compose_path"]).expanduser().resolve().parent
-        if scope == "template":
-            template_id = _text(context.get("template_id"))
-            if template_id:
-                with connect(env=env) as connection:
-                    with connection.cursor() as cursor:
-                        cursor.execute("SELECT path FROM templates WHERE id = %s", (template_id,))
-                        row = cursor.fetchone()
-                if row is None:
-                    raise FileTreeError(404, "템플릿을 찾을 수 없습니다.", "TEMPLATE_NOT_FOUND")
-                return Path(row["path"]).expanduser().resolve()
-            root = Path(config.data_dir(env)) / "templates"
-            root.mkdir(parents=True, exist_ok=True)
-            return root.resolve()
         if scope == "image":
             root = Path(config.data_dir(env)) / "image-files"
             root.mkdir(parents=True, exist_ok=True)

@@ -10,7 +10,6 @@
   "macros": "매크로",
   "domains": "도메인 관리",
         "images": "이미지 관리",
-        "templates": "템플릿 관리",
         "system": "시스템 설정",
         "tools": "도구 다운로드"
     }

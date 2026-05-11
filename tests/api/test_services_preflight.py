@@ -18,6 +18,7 @@ ROLLBACK_MODEL = ROOT / "src" / "model" / "struct" / "services_rollback.py"
 STATUS_MODEL = ROOT / "src" / "model" / "struct" / "services_status.py"
 FLOW_MODEL = ROOT / "src" / "model" / "struct" / "services_flow.py"
 WIZARD_MODEL = ROOT / "src" / "model" / "struct" / "services_wizard.py"
+AI_ASSISTANT_MODEL = ROOT / "src" / "model" / "struct" / "ai_assistant.py"
 PORTS_MODEL = ROOT / "src" / "model" / "struct" / "services_ports.py"
 DEPLOY_MODEL = ROOT / "src" / "model" / "struct" / "services_deploy.py"
 OPERATIONS_MODEL = ROOT / "src" / "model" / "struct" / "operations.py"
@@ -110,6 +111,35 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("/services/create?", servers_view)
         self.assertIn("import_node_id", servers_view)
         self.assertIn("생성 화면으로 이동", servers_template)
+
+    def test_service_create_uses_draft_sources_without_templates(self):
+        api = CREATE_API.read_text(encoding="utf-8")
+        view = CREATE_VIEW.read_text(encoding="utf-8")
+        template = CREATE_TEMPLATE.read_text(encoding="utf-8")
+        wizard = WIZARD_MODEL.read_text(encoding="utf-8")
+        assistant = AI_ASSISTANT_MODEL.read_text(encoding="utf-8")
+
+        self.assertIn("def prepare_compose_draft():", api)
+        self.assertIn("prepare_manual", api)
+        self.assertIn("public async applyManualCompose", view)
+        self.assertIn("applyComposeDraft", view)
+        self.assertIn("draft_metadata", view)
+        self.assertIn("manual_compose", view)
+        self.assertIn("server_compose_import", view)
+        self.assertIn("Compose 직접 작성", template)
+        self.assertIn("SERVICE_DRAFT_REQUIRED", wizard)
+        self.assertIn("def prepare_manual", wizard)
+        self.assertIn("draft_metadata", wizard)
+        self.assertIn('"draft"', (ROOT / "src" / "model" / "struct" / "services.py").read_text(encoding="utf-8"))
+        services_view = SERVICES_VIEW.read_text(encoding="utf-8")
+        services_template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("versionSourceLabel", services_view)
+        self.assertIn("versionDraftText", services_view)
+        self.assertIn("versionSourceLabel(version)", services_template)
+        self.assertIn("generated_secret_keys", assistant)
+        for token in ["template_detail", "selectedTemplateId", "templateLoading", "templateSelectorItems", "template_id"]:
+            self.assertNotIn(token, api)
+            self.assertNotIn(token, view)
 
     def test_service_edit_wizard_contract_is_wired(self):
         api = SERVICES_API.read_text(encoding="utf-8")

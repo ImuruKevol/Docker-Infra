@@ -51,16 +51,24 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
     ComposeValidationError = validator.ComposeValidationError
     IMPORT_WARNING_CODES = {"FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"}
 
-    def template_root(self):
+    def service_root(self):
         status = setup.status(include_checks=False)
-        raw = (status.get("settings") or {}).get("template_root") or ".runtime/dev/templates"
+        settings = status.get("settings") or {}
+        raw = settings.get("service_root") or ".runtime/dev/services"
         root = Path(raw).expanduser()
         if not root.is_absolute():
             root = _project_root() / root
         return root
 
+    def legacy_service_root(self):
+        raw = ".runtime/dev/templates"
+        root = Path(raw).expanduser()
+        if not root.is_absolute():
+            root = _project_root() / root
+        return root / "services"
+
     def service_dir(self, namespace):
-        return self.template_root() / "services" / namespace
+        return self.service_root() / namespace
 
     def default_compose(self, namespace, service_name="web", image="nginx:alpine", port=80, env_vars=None, volumes=None):
         return service_compose.default_compose(
@@ -115,6 +123,7 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
         test_run_id = payload.get("test_run_id")
         source = payload.get("source") or "ui_wizard"
         source_ref = payload.get("source_ref")
+        draft_metadata = payload.get("draft_metadata") if isinstance(payload.get("draft_metadata"), dict) else {}
         domain_metadata = {"source": "ui_wizard", **dict(payload.get("domain_metadata") or {})}
 
         if not content:
@@ -174,6 +183,8 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
                 }
                 if source_ref:
                     metadata["source_ref"] = source_ref
+                if draft_metadata:
+                    metadata["draft"] = draft_metadata
                 if payload.get("wizard"):
                     metadata["wizard"] = payload.get("wizard")
                 cursor.execute(
@@ -232,7 +243,11 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
                         str(history_dir / filename),
                         checksum,
                         test_run_id,
-                        Jsonb({"source": "ui_wizard", "history_id": history_id}),
+                        Jsonb({
+                            "source": source,
+                            "history_id": history_id,
+                            "draft": draft_metadata,
+                        }),
                     ),
                 )
                 version = _row(cursor.fetchone())

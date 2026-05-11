@@ -101,9 +101,10 @@ class ServiceDeleteMixin:
 
     def _remove_service_files(self, service, operation_id, env=None):
         root = self._service_root(service)
-        services_root = (self.template_root() / "services").resolve()
+        service_roots = [self.service_root().resolve(), self.legacy_service_root().resolve()]
         try:
-            if root != services_root and root.is_relative_to(services_root) and root.exists():
+            managed = any(root != service_root and root.is_relative_to(service_root) for service_root in service_roots)
+            if managed and root.exists():
                 shutil.rmtree(root)
                 operations.append_output(operation_id, f"removed service files: {root}", stream="system", metadata={"step": "service files remove", "path": str(root)}, env=env)
                 return str(root)

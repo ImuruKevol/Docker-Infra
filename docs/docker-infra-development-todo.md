@@ -145,8 +145,8 @@ Done:
 - 새 서비스 버튼은 `/services/create` 독립 화면으로 진입
 - 운영자가 서비스 ID, namespace, 내부 service key, container name을 직접 입력하지 않음
 - 서비스 namespace와 내부 service key는 중복 확인 후 자동 생성
-- 단계 1: 서비스 이름, 설명, 템플릿 선택
-- 템플릿은 1단계 이후 잠금 처리
+- 단계 1: AI 초안, Compose 직접 작성, 서버 Compose 가져오기 중 하나로 서비스 초안 준비
+- 서비스 초안은 1단계 이후 구성 확인 흐름에 공통 반영
 - 단계 2: Compose에 포함된 여러 service의 이미지 이름, 버전/tag, 내부 포트 입력
 - 단계 2 안에 고급 설정 토글을 두고 환경변수와 데이터 보관 설정을 숨김 처리
 - 이미지 존재 확인: 로컬 이미지 저장소 확인 후 Docker Hub 확인
@@ -167,31 +167,29 @@ Done:
 필요한 TODO:
 
 - `docs/service-management-audit-todo.md`의 P0/P1 항목을 서비스 생성 기준 TODO의 최종 기준으로 삼는다.
-- 템플릿 선택이 없는 기본 nginx fallback 제거
-- 템플릿 공개 endpoint 기준으로 도메인 연결 port 자동 선택
-- 템플릿 secret 값은 서비스 생성 시 자동 생성
+- Compose 초안이 없는 기본 nginx fallback 제거
+- Compose 분석 결과의 공개 endpoint 기준으로 도메인 연결 port 자동 선택
+- AI/Compose 초안에서 필요한 secret 값은 서비스 생성 시 자동 생성
 - 일반 화면에서 이미지명/tag/내부 port 직접 입력을 고급 설정으로 격리
-- 템플릿 schema와 wizard form 자동 매핑 고도화
+- Compose 초안과 wizard form 자동 매핑 고도화
 - [Done] port 자동 조정 결과를 compose version metadata에 표시
 
-### 5.2 템플릿 기반 생성
+### 5.2 서비스 초안 기반 생성
 
 완료된 작업:
 
-- 기본 템플릿을 실제 도메인 연결이 가능한 다중 서비스 스택으로 교체
-- 기본 템플릿은 WordPress, Nextcloud, Odoo, Wiki.js 4종으로 정리
-- 각 템플릿은 web/WAS 역할과 DB 또는 cache 같은 내부 구성요소를 함께 포함
+- 템플릿/기본 구성 개념을 제거하고 서비스 생성의 시작점을 AI 초안, Compose 직접 작성, 서버 Compose 가져오기로 정리
+- AI 초안은 완성 Compose, wizard form, 구성요소, 경고, 운영 메모를 반환
+- 직접 작성 또는 가져온 Compose는 동일한 `components_from_content` 경로로 wizard form에 반영
 - DB, Redis 같은 내부 구성은 외부 공개 port 없이 Compose 내부 네트워크로만 연결
-- 템플릿은 Compose 원문보다 `필요 입력값 schema` 중심으로 관리
-- 템플릿 선택 시 이름, 이미지, 포트, 환경변수, volume 필드를 wizard form으로 자동 매핑
-- 서비스 ID, container name 같은 운영자에게 불필요한 입력은 기본 템플릿 흐름에서 제거
-- 기존 단일 컨테이너 seed와 Harbor/GitLab 계열 seed는 기본 제공 템플릿에서 제거
+- 서비스 ID, container name 같은 운영자에게 불필요한 입력은 기본 생성 흐름에서 제거
+- 템플릿 seed, 릴리즈, 버전 관리는 제거
 
 필요한 TODO:
 
-- 템플릿 schema의 field type, secret 처리, 조건부 표시 규칙을 더 세분화
-- 템플릿 편집 화면은 관리자 고급 기능으로 유지
-- 템플릿 릴리즈와 버전 이력은 유지하되 서비스 생성 기본 흐름에서는 숨김
+- AI가 반환한 운영 메모를 서비스 상세 또는 compose version metadata에 저장할지 결정
+- AI 초안 생성의 live/API 테스트를 추가
+- 직접 작성 Compose payload로 서비스 생성 API 테스트 추가
 
 ### 5.3 배포/수정/롤백
 

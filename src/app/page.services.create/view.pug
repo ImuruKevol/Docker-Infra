@@ -38,72 +38,72 @@ main(class="space-y-5 px-5 py-5")
                 p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{steps()[step() - 1].description}}
 
             div(class="space-y-5 px-5 py-5")
-                div(*ngIf="step() === 1", class="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_340px]")
-                    div(class="space-y-4")
-                        label(class="block")
-                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서비스 이름
-                            input(type="text", [(ngModel)]="form.name", placeholder="예: 사내 게시판", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                        label(class="block")
-                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 설명
-                            textarea([(ngModel)]="form.description", rows="4", placeholder="운영자가 알아볼 수 있는 설명", class="w-full resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                        label(class="block")
-                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서비스 종류
-                            wiz-component-search-select([items]="templateSelectorItems()", [value]="selectedTemplateId()", (valueChange)="selectTemplate($event)", [placeholder]="'만들 서비스 종류 선택'", [searchPlaceholder]="'서비스 종류 검색'", [emptyText]="'사용 가능한 서비스 종류가 없습니다.'", [disabled]="templateLoading() || templateLocked()")
-                        p(*ngIf="!selectedTemplateId() && !templateLocked() && !importSource()", class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
-                            i(class="fa-solid fa-circle-info mr-1")
-                            | 서비스 종류를 선택해야 다음 단계에서 필요한 설정을 자동으로 준비할 수 있습니다.
-                        p(*ngIf="selectedTemplateId() || templateLocked()", class="text-xs text-zinc-500 dark:text-zinc-400")
-                            i(class="fa-solid fa-lock mr-1")
-                            span(*ngIf="!importSource()") 템플릿은 다음 단계로 넘어간 뒤 고정됩니다.
-                            span(*ngIf="importSource()") 가져온 Compose 기준으로 생성하므로 템플릿 선택은 잠겨 있습니다.
-                    div(class="space-y-3")
-                        div(class="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 dark:border-sky-900/70 dark:bg-sky-950/30")
-                            div(class="flex items-center justify-between gap-3")
-                                p(class="text-sm font-semibold text-sky-950 dark:text-sky-100") AI 자동 구성
-                                button(type="button", (click)="generateServiceWithAi()", [disabled]="aiBusy() || templateLoading()", class="inline-flex h-8 items-center gap-2 rounded-md bg-sky-600 px-2.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-60")
+                div(*ngIf="step() === 1", class="space-y-5")
+                    div(class="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_320px]")
+                        div(class="rounded-md border border-sky-200 bg-sky-50 px-4 py-4 dark:border-sky-900/70 dark:bg-sky-950/30")
+                            div(class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between")
+                                div
+                                    p(class="text-xs font-semibold uppercase text-sky-700 dark:text-sky-300") AI 자동 구성
+                                    h3(class="mt-1 text-base font-semibold text-sky-950 dark:text-sky-100") 만들고 싶은 서비스를 설명하세요.
+                                    p(class="mt-1 text-xs leading-5 text-sky-800 dark:text-sky-200") Docker Infra에 맞는 서비스, 도메인, 포트, 데이터 보관 초안을 자동으로 만듭니다.
+                                button(type="button", (click)="generateServiceWithAi()", [disabled]="aiBusy()", class="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md bg-sky-600 px-4 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60")
                                     i(class="fa-solid", [ngClass]="aiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
-                                    span {{aiBusy() ? '생성 중' : '적용'}}
-                            label(class="mt-3 block")
-                                span(class="mb-1 block text-xs font-semibold text-sky-700 dark:text-sky-300") 사용할 모델
-                                wiz-component-search-select([items]="aiModelOptions()", [value]="aiForm.model_ref", (valueChange)="aiForm.model_ref = $event", [placeholder]="'AI 모델 선택'", [searchPlaceholder]="'모델 검색'", [emptyText]="'시스템 설정에서 모델 목록을 불러오세요.'")
-                            textarea([(ngModel)]="aiForm.intent", rows="5", placeholder="예: 내부용 Wiki. PostgreSQL 포함, wiki만 도메인으로 공개, 데이터는 영구 보관, 비밀번호는 자동 생성.", class="mt-3 w-full resize-none rounded-md border border-sky-200 bg-white px-3 py-2 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-sky-900/70 dark:bg-zinc-950 dark:text-zinc-100")
-                            div(*ngIf="aiBusy() || aiStreamRows().length", class="mt-3 rounded-md border border-sky-200 bg-white/70 px-3 py-2 dark:border-sky-900/70 dark:bg-zinc-950")
+                                    span {{aiBusy() ? '생성 중' : 'AI로 초안 만들기'}}
+                            textarea([(ngModel)]="aiForm.intent", rows="7", placeholder="예: 내부용 Wiki. PostgreSQL 포함, wiki만 도메인으로 공개, 데이터는 영구 보관, 비밀번호는 자동 생성.", class="mt-4 w-full resize-y rounded-md border border-sky-200 bg-white px-3 py-3 text-sm leading-6 text-zinc-900 placeholder:text-zinc-400 dark:border-sky-900/70 dark:bg-zinc-950 dark:text-zinc-100")
+                            div(class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[1fr_260px]")
+                                label(class="block")
+                                    span(class="mb-1 block text-xs font-semibold text-sky-700 dark:text-sky-300") 서비스 이름
+                                    input(type="text", [(ngModel)]="form.name", placeholder="AI가 자동으로 채울 수 있습니다.", class="h-10 w-full rounded-md border border-sky-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-sky-900/70 dark:bg-zinc-950 dark:text-zinc-100")
+                                label(class="block")
+                                    span(class="mb-1 block text-xs font-semibold text-sky-700 dark:text-sky-300") 사용할 모델
+                                    wiz-component-search-select([items]="aiModelOptions()", [value]="aiForm.model_ref", (valueChange)="setAiModel($event)", [placeholder]="'AI 모델 선택'", [searchPlaceholder]="'모델 검색'", [emptyText]="'시스템 설정에서 모델 목록을 불러오세요.'")
+                            div(class="mt-3 flex flex-wrap gap-2")
+                                button(*ngFor="let example of aiExamples()", type="button", (click)="useAiExample(example.prompt)", class="inline-flex h-8 items-center gap-2 rounded-md border border-sky-200 bg-white px-2.5 text-xs font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-900/70 dark:bg-zinc-950 dark:text-sky-200 dark:hover:bg-sky-950")
+                                    i(class="fa-solid fa-bolt")
+                                    span {{example.title}}
+                            div(*ngIf="aiBusy() || aiStreamRows().length", class="mt-4 rounded-md border border-sky-200 bg-white/70 px-3 py-2 dark:border-sky-900/70 dark:bg-zinc-950")
                                 div(class="flex items-center justify-between gap-2")
                                     p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") AI 진행 상태
-                                    span(class="text-[11px] font-semibold text-sky-500 dark:text-sky-400") {{aiOutputTokenCount()}} chars
-                                div(class="mt-2 max-h-28 space-y-1 overflow-auto")
+                                    span(class="text-[11px] font-semibold text-sky-500 dark:text-sky-400") {{aiOutputTokenCount()}}자
+                                div(class="mt-2 max-h-32 space-y-1 overflow-auto")
                                     p(*ngFor="let event of aiStreamRows()", class="text-xs leading-5", [ngClass]="event.type === 'error' ? 'text-rose-600 dark:text-rose-300' : 'text-sky-900 dark:text-sky-100'")
                                         i(*ngIf="event.type === 'progress'", class="fa-solid fa-spinner fa-spin mr-1")
                                         span(class="font-semibold") {{event.label || (event.type === 'provider' ? 'model' : event.type)}}
                                         span  · {{event.message || event.text || event.provider?.label + ' / ' + event.provider?.model}}
-                            div(class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2")
-                                div
-                                    p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") Input
-                                    div(class="mt-1 space-y-1")
-                                        p(*ngFor="let row of serviceAiInputRows()", class="text-xs text-sky-900 dark:text-sky-100")
-                                            span(class="font-semibold") {{row.key}}
-                                            span(class="text-sky-700 dark:text-sky-300")  · {{row.value}}
-                                div
-                                    p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") Output
-                                    div(class="mt-1 space-y-1")
-                                        p(*ngFor="let row of serviceAiOutputRows()", class="text-xs text-sky-900 dark:text-sky-100")
-                                            span(class="font-semibold") {{row.key}}
-                                            span(class="text-sky-700 dark:text-sky-300")  · {{row.value}}
                             div(*ngIf="aiResult?.warnings?.length", class="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
                                 p(*ngFor="let warning of aiResult.warnings") {{warning}}
-                        div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
-                            p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 자동으로 처리되는 값
-                            div(class="mt-3 space-y-2 text-xs text-zinc-600 dark:text-zinc-300")
-                                p 내부 식별값과 컨테이너 이름은 자동 생성됩니다.
-                                p 포트 충돌은 배포 직전에 자동으로 다음 가용 port로 조정합니다.
-                                p SSL은 등록 도메인의 인증서 상태에 따라 자동 선택됩니다.
+                        div(class="space-y-3")
+                            div(*ngFor="let row of aiAutomationRows()", class="rounded-md border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
+                                div(class="flex items-start gap-3")
+                                    span(class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300")
+                                        i(class="fa-solid", [ngClass]="row.icon")
+                                    div
+                                        p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{row.title}}
+                                        p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{row.description}}
+                            div(*ngIf="baseContent", class="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-300")
+                                i(class="fa-solid fa-circle-check mr-1")
+                                | 서비스 초안이 적용되었습니다.
+                    div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
+                        div(class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between")
+                            div
+                                p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 고급 사용자용 Compose 직접 작성
+                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 기존 Compose 파일을 붙여넣을 때만 사용합니다.
+                            button(type="button", (click)="toggleManualCompose()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                i(class="fa-solid", [ngClass]="manualComposeOpen() ? 'fa-chevron-up' : 'fa-chevron-down'")
+                                span {{manualComposeOpen() ? '닫기' : '열기'}}
+                        div(*ngIf="manualComposeOpen()", class="mt-3")
+                            textarea([(ngModel)]="manualCompose", rows="12", placeholder="services:\n  app:\n    image: nginx:alpine\n    ports:\n      - \"8080:80\"\n    healthcheck:\n      test: [\"CMD-SHELL\", \"wget -qO- http://127.0.0.1/ || exit 1\"]\n      interval: 30s\n      timeout: 5s\n      retries: 3", class="w-full resize-y rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100")
+                            div(class="mt-3 flex justify-end")
+                                button(type="button", (click)="applyManualCompose()", [disabled]="manualBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                    i(class="fa-solid", [ngClass]="manualBusy() ? 'fa-spinner fa-spin' : 'fa-check'")
+                                    span Compose 적용
 
                 div(*ngIf="step() === 2", class="space-y-4")
                     div(*ngFor="let item of components; let i = index", class="rounded-md border border-zinc-200 px-4 py-4 dark:border-zinc-800")
                         div(class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between")
                             div
                                 h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{item.label || ('구성 ' + (i + 1))}}
-                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 템플릿에 포함된 서비스 단위입니다.
+                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") Compose 초안에 포함된 서비스 단위입니다.
                             button(type="button", (click)="checkImage(item)", [disabled]="imageCheck(item)?.loading", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                 i(class="fa-solid", [ngClass]="imageCheck(item)?.loading ? 'fa-spinner fa-spin' : 'fa-magnifying-glass'")
                                 span 이미지 확인
@@ -138,7 +138,7 @@ main(class="space-y-5 px-5 py-5")
                                         input(type="text", [(ngModel)]="item.image_name", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100")
                                     label(class="block")
                                         span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 버전
-                                        input(type="text", [(ngModel)]="item.image_tag", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100")
+                                        input(type="text", [(ngModel)]="item.image_tag", placeholder="비우면 latest", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100")
                                 div(class="mt-3")
                                     div(class="flex items-center justify-between gap-3")
                                         p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 연결 포트
@@ -178,10 +178,11 @@ main(class="space-y-5 px-5 py-5")
                             div
                                 p(class="text-sm font-semibold") 도메인 사용 안 함
                                 p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 내부 또는 나중 연결용 서비스로 저장합니다.
-                        button(type="button", (click)="setDomainMode('registered')", [disabled]="zones().length === 0", class="flex w-full items-start justify-between rounded-md border px-4 py-3 text-left disabled:opacity-50", [ngClass]="form.domain_mode === 'registered' ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200' : 'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100'")
+                        button(type="button", (click)="setDomainMode('registered')", [disabled]="zones().length === 0 || !hasConnectablePorts()", class="flex w-full items-start justify-between rounded-md border px-4 py-3 text-left disabled:opacity-50", [ngClass]="form.domain_mode === 'registered' ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200' : 'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100'")
                             div
                                 p(class="text-sm font-semibold") 등록된 도메인 사용
-                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") SSL 인증서는 상태에 따라 자동 처리합니다.
+                                p(*ngIf="hasConnectablePorts()", class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") SSL 인증서는 상태에 따라 자동 처리합니다.
+                                p(*ngIf="!hasConnectablePorts()", class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 연결할 포트가 있는 구성에서 사용할 수 있습니다.
                         div(*ngIf="form.domain_mode === 'registered'", class="grid grid-cols-1 gap-3 md:grid-cols-[180px_1fr]")
                             label(class="block")
                                 span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 앞 주소

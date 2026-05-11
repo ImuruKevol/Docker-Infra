@@ -85,7 +85,7 @@
 - [x] wizard form 값과 고급 Compose 수정값 충돌 표시
 - [x] 서비스 생성 wizard를 모달에서 `/services/create` 독립 화면으로 전환
 - [x] 운영자에게 서비스 ID와 내부 service key 입력을 요구하지 않도록 제거
-- [x] 템플릿 선택 후 다음 단계에서는 템플릿 변경을 잠금 처리
+- [x] 서비스 초안 적용 후 다음 단계에서는 AI/직접 작성/import 결과를 공통 wizard 상태로 반영
 - [x] 다중 Compose service 기준 이미지와 내부 포트 입력 UI 구현
 - [x] 환경변수/볼륨 입력은 고급 설정 토글 안으로 이동
 - [x] 이미지 존재 확인: 로컬 이미지 확인 후 Docker Hub 확인
@@ -102,12 +102,12 @@
 - [x] 서비스 상세 요청 race 방지 token 적용
 - [x] 목록 API에서 편집/상세 전용 option 로딩 분리
 - [x] 서비스 수정 모달을 열 때 도메인 option 지연 로드
-- [x] `/services/create` 일반 생성 흐름에서 템플릿 선택 필수화
-- [x] 템플릿 없는 기본 `nginx:alpine` fallback 제거
-- [x] 생성 API에서 템플릿 또는 Compose import source 필수 검증
-- [x] 템플릿 metadata에 공개 endpoint와 사용자용 구성요소 라벨 추가
+- [x] `/services/create` 일반 생성 흐름에서 서비스 초안 필수화
+- [x] 서비스 초안 없는 기본 `nginx:alpine` fallback 제거
+- [x] 생성 API에서 AI/직접 작성/import Compose 초안 필수 검증
+- [x] Compose 분석 결과에 공개 endpoint와 사용자용 구성요소 라벨 반영
 - [x] 도메인 연결 포트는 공개 endpoint를 우선 자동 선택
-- [x] 템플릿 DB/app secret은 생성 시 랜덤 자동 생성
+- [x] AI/Compose 초안의 DB/app secret은 생성 시 랜덤 자동 생성
 - [x] 생성 2단계 일반 영역에서 이미지명/tag/내부 port 직접 입력 제거
 - [x] 이미지명/tag/내부 port 직접 수정은 고급 설정으로 격리
 - [x] preflight 이미지/포트 검사를 실제 배포 대상 노드 기준으로 고도화
@@ -188,14 +188,15 @@
 - [x] 서비스가 사용하지 않는 이미지 정리 실행 버튼 추가
 - [ ] 위험 작업 audit log 확인 영역 추가
 
-## P11. 템플릿
+## P11. 서비스 초안 생성
 
-- [x] 기본 템플릿을 실제 도메인 연결 가능한 다중 서비스 스택으로 재구성
-- [x] 템플릿을 Compose 원문보다 입력값 schema 중심으로 재정의
-- [x] 템플릿 선택 시 wizard form으로 자동 매핑
-- [x] WordPress, Nextcloud, Odoo, Wiki.js처럼 웹+DB/캐시가 함께 동작하는 쉬운 분류로 정리
-- [ ] 템플릿 편집/릴리즈 UI는 고급 관리 기능으로 분리
-- [x] 기본 템플릿에서 서비스 ID/container name 같은 불필요한 운영자 입력 제거 방향 반영
+- [x] 템플릿/기본 구성 기능 제거
+- [x] AI 초안, Compose 직접 작성, 서버 Compose 가져오기를 서비스 생성 진입점으로 정리
+- [x] Compose 초안 적용 시 wizard form으로 자동 매핑
+- [x] `/templates` 화면, 메뉴, 모델, DB 테이블 제거
+- [ ] AI 초안 결과의 운영 메모 저장 위치 결정
+- [ ] 직접 작성 Compose payload 기반 API 테스트 추가
+- [x] 기본 생성 흐름에서 서비스 ID/container name 같은 불필요한 운영자 입력 제거 방향 반영
 
 ## P12. 매크로와 터미널
 

@@ -18,7 +18,7 @@ export class Component implements OnInit {
             confirm_password: '',
             advertise_address: '',
             proxy_type: 'nginx',
-            template_root: '.runtime/dev/templates',
+            service_root: '.runtime/dev/services',
             backup_system: {
                 enabled: false,
                 data_path: ''
@@ -76,7 +76,7 @@ export class Component implements OnInit {
             this.setup.set(data.setup);
             const checks = data.setup?.checks || {};
             this.data.setup.advertise_address = data.setup?.settings?.advertise_address || checks.advertise_address || '';
-            this.data.setup.template_root = data.setup?.settings?.template_root || '.runtime/dev/templates';
+            this.data.setup.service_root = data.setup?.settings?.service_root || '.runtime/dev/services';
             this.data.setup.proxy_type = 'nginx';
             const backup = data.setup?.backup_system || {};
             this.data.setup.backup_system.enabled = backup.enabled === true;

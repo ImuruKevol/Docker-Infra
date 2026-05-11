@@ -31,12 +31,26 @@ main(class="space-y-6 px-5 py-5")
             div(class="flex flex-col gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
                 div
                     h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 서버 자원 추이
-                    p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") 최근 24시간 서버 평균 자원 사용량입니다.
-                a(routerLink="/servers", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                    i(class="fa-solid fa-chart-area")
-                    span 서버별 보기
+                    p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") {{resourceRangeText()}}
+                div(class="flex flex-wrap items-end gap-2")
+                    label(class="block")
+                        span(class="mb-1 block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 시작일
+                        input(type="date", [ngModel]="resourceStartDate()", (ngModelChange)="resourceStartDate.set($event)", class="h-8 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                    label(class="block")
+                        span(class="mb-1 block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 종료일
+                        input(type="date", [ngModel]="resourceEndDate()", (ngModelChange)="resourceEndDate.set($event)", class="h-8 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                    button(type="button", (click)="applyResourceRange()", [disabled]="resourceChartBusy()", class="inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                        i(class="fa-solid", [ngClass]="resourceChartBusy() ? 'fa-spinner fa-spin' : 'fa-chart-line'")
+                        span 조회
+                    button(type="button", (click)="openNodeCharts()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                        i(class="fa-solid fa-chart-area")
+                        span 서버별 보기
             div(class="p-4")
-                div(*ngIf="resourceRows().length === 0", class="flex h-64 items-center justify-center rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400") 표시할 자원 기록이 없습니다.
+                div(*ngIf="resourceChartError()", class="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300") {{resourceChartError()}}
+                div(*ngIf="resourceChartBusy() && resourceRows().length === 0", class="flex h-64 items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400")
+                    i(class="fa-solid fa-spinner fa-spin")
+                    span 자원 기록을 불러오는 중입니다.
+                div(*ngIf="!resourceChartBusy() && resourceRows().length === 0", class="flex h-64 items-center justify-center rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400") 선택한 기간에 표시할 자원 기록이 없습니다.
                 div(*ngIf="resourceRows().length > 0", class="h-64")
                     canvas(data-resource-chart-canvas="dashboard", class="block h-full w-full")
 
@@ -103,3 +117,23 @@ main(class="space-y-6 px-5 py-5")
                             p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400") {{formatDate(operation.created_at)}}
                         span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(operation.status)") {{statusLabel(operation.status)}}
                     div(*ngIf="operations().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 작업 이력이 없습니다.
+
+        div(*ngIf="nodeChartsOpen()", class="fixed inset-0 z-40 flex items-start justify-center bg-zinc-950/40 px-4 py-6 backdrop-blur-sm")
+            section(class="max-h-[84vh] w-full max-w-6xl overflow-y-auto rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950")
+                div(class="sticky top-0 z-10 flex flex-col gap-2 border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950 md:flex-row md:items-center md:justify-between")
+                    div
+                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 서버별 자원 추이
+                        p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") {{resourceStartDate()}} ~ {{resourceEndDate()}}
+                    button(type="button", (click)="closeNodeCharts()", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900")
+                        i(class="fa-solid fa-xmark")
+                div(class="p-4")
+                    div(*ngIf="nodeResourceCharts().length === 0", class="flex h-48 items-center justify-center rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400") 서버별 자원 기록이 없습니다.
+                    div(*ngIf="nodeResourceCharts().length > 0", class="grid grid-cols-1 gap-4 xl:grid-cols-2")
+                        div(*ngFor="let chart of nodeResourceCharts()", class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+                            div(class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                                h3(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{nodeChartTitle(chart)}}
+                                p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400") {{nodeChartSubtitle(chart)}}
+                            div(class="p-4")
+                                div(*ngIf="nodeChartRows(chart).length === 0", class="flex h-56 items-center justify-center rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400") 선택한 기간에 표시할 자원 기록이 없습니다.
+                                div(*ngIf="nodeChartRows(chart).length > 0", class="h-56")
+                                    canvas([attr.data-node-resource-chart-canvas]="chart.node_id", class="block h-full w-full")

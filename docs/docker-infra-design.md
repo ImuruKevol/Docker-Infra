@@ -31,7 +31,7 @@ Docker Infra는 개발자가 아닌 전산 담당자 또는 일반 관리자가 
 - 전역 매크로와 서버 전용 매크로 관리, Monaco 편집, streaming 실행 결과
 - 서버별 웹 터미널
 - 서비스 생성/수정 마법사
-- Compose 템플릿 관리
+- 서비스 Compose 초안 생성과 관리
 - 서비스 배포, 수정, 롤백
 - 도메인 관리, Cloudflare DNS record 동기화와 CRUD
 - 도메인별 인증서 업로드와 만료일 분석
@@ -92,7 +92,7 @@ flowchart LR
 
 | 구성 요소 | 역할 |
 |---|---|
-| Web UI | 서버, 서비스, 도메인, 이미지, 템플릿, 시스템 설정 화면 |
+| Web UI | 서버, 서비스, 도메인, 이미지, 시스템 설정 화면 |
 | WIZ API | 인증, 설정, DB 접근, Docker/SSH/nginx/Cloudflare 작업 조율 |
 | PostgreSQL | 설정, 서버, 서비스, 도메인, 인증서, 이미지, 작업 결과 저장 |
 | Local Executor | Docker Infra host에서 Docker, Swarm, nginx, certbot 명령 실행 |
@@ -117,8 +117,6 @@ flowchart LR
 | `services` | `namespace`, `name`, `description`, `status`, `target_node_id` | 서비스 기본 정보 |
 | `service_domains` | `service_id`, `domain_id`, `hostname`, `internal_port`, `ssl_mode`, `nginx_config_id` | 서비스와 도메인 연결 |
 | `compose_versions` | `service_id`, `version`, `path`, `checksum`, `created_at` | Compose 버전 이력 |
-| `templates` | `name`, `description`, `image_name`, `image_version`, `input_schema` | 서비스 템플릿 |
-| `template_versions` | `template_id`, `version`, `compose_path`, `created_at` | 명시적 템플릿 릴리즈 |
 | `local_images` | `node_id`, `repository`, `tag`, `image_id`, `size`, `created_at`, `last_used_at` | 서버별 로컬 이미지 cache |
 | `service_image_backups` | `service_id`, `source_image`, `backup_image`, `digest`, `size`, `created_at` | 서비스 이미지 백업 버전 |
 | `proxy_configs` | `service_domain_id`, `config_path`, `content`, `checksum`, `active` | nginx 설정 이력 |
@@ -188,7 +186,7 @@ flowchart LR
 
 - Compose YAML 원문 확인/수정
 - nginx config 원문 확인/수정
-- template input schema 직접 수정
+- 서비스 Compose 초안 직접 수정
 
 배포 전 검증은 다음을 확인한다.
 
@@ -301,7 +299,6 @@ API는 화면 중심의 굵은 흐름으로 제공한다.
 - `/api/services/{id}/domains`: 서비스와 도메인/nginx 연결
 - `/api/domains`: Cloudflare zone, DNS record, 인증서 관리
 - `/api/images`: 로컬 이미지와 백업 이미지 조회/삭제
-- `/api/templates`: 템플릿과 명시적 릴리즈 관리
 - `/api/operations`: operation log와 audit log 조회
 
 OpenAPI는 이 기준으로 정리하고, 제거된 다단계 작업 큐 API는 문서와 테스트에서 제외한다.
@@ -319,7 +316,7 @@ OpenAPI는 이 기준으로 정리하고, 제거된 다단계 작업 큐 API는 
 9. 서버 관리 마무리
 10. 이미지 관리 재정의
 11. 시스템 설정 재정의
-12. 템플릿, 매크로, 터미널 안정화
+12. 서비스 초안, 매크로, 터미널 안정화
 13. DB/API 계약과 테스트 갱신
 
 ## 16. 남은 결정

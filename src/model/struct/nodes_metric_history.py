@@ -21,6 +21,8 @@ HEADER = [
     "source",
 ]
 
+DEDUPLICATE_WINDOW_SECONDS = 60
+
 
 class MetricHistoryError(Exception):
     def __init__(self, status_code, message, error_code, **extra):
@@ -117,6 +119,35 @@ def _parse_reported_at(value):
     return parsed.astimezone(datetime.timezone.utc)
 
 
+def _reported_delta_seconds(left, right):
+    left_dt = _parse_reported_at(left)
+    right_dt = _parse_reported_at(right)
+    if left_dt is None or right_dt is None:
+        return None
+    return abs((left_dt - right_dt).total_seconds())
+
+
+def _deduplicate_metric_rows(rows, window_seconds=DEDUPLICATE_WINDOW_SECONDS):
+    deduplicated = []
+    for row in sorted(rows or [], key=lambda item: item.get("reported_at") or ""):
+        replacement_index = None
+        replacement_delta = None
+        for index, existing in enumerate(deduplicated):
+            if str(existing.get("node_id") or "") != str(row.get("node_id") or ""):
+                continue
+            delta = _reported_delta_seconds(existing.get("reported_at"), row.get("reported_at"))
+            if delta is None or delta > window_seconds:
+                continue
+            if replacement_delta is None or delta < replacement_delta:
+                replacement_index = index
+                replacement_delta = delta
+        if replacement_index is None:
+            deduplicated.append(row)
+        else:
+            deduplicated[replacement_index] = row
+    return sorted(deduplicated, key=lambda item: item.get("reported_at") or "")
+
+
 def _parse_datetime(value, field="datetime"):
     if value in (None, ""):
         return None
@@ -201,7 +232,6 @@ class NodesMetricHistory:
         metadata = metric.get("metadata") or {}
         path = self.path_for(node_id, reported_at=reported_at, env=env)
         path.parent.mkdir(parents=True, exist_ok=True)
-        write_header = not path.exists() or path.stat().st_size == 0
         row = {
             "reported_at": _iso(reported_at),
             "node_id": str(node_id or ""),
@@ -217,12 +247,31 @@ class NodesMetricHistory:
             "containers_stopped": summary["stopped"],
             "source": source or metadata.get("source") or "",
         }
+        existing_rows = self._read_rows(path)
+        replacement_index = None
+        replacement_delta = None
+        for index, existing in enumerate(existing_rows):
+            if str(existing.get("node_id") or "") != row["node_id"]:
+                continue
+            delta = _reported_delta_seconds(existing.get("reported_at"), row.get("reported_at"))
+            if delta is None or delta > DEDUPLICATE_WINDOW_SECONDS:
+                continue
+            if replacement_delta is None or delta < replacement_delta:
+                replacement_index = index
+                replacement_delta = delta
+        if replacement_index is not None:
+            existing_rows[replacement_index] = {**existing_rows[replacement_index], **row}
+            existing_rows.sort(key=lambda item: item.get("reported_at") or "")
+            self._write_rows(path, existing_rows)
+            return {"path": str(path), "row": row, "deduplicated": True}
+
+        write_header = not path.exists() or path.stat().st_size == 0
         with path.open("a", newline="", encoding="utf-8") as stream:
             writer = csv.DictWriter(stream, fieldnames=HEADER)
             if write_header:
                 writer.writeheader()
             writer.writerow(row)
-        return {"path": str(path), "row": row}
+        return {"path": str(path), "row": row, "deduplicated": False}
 
     def append_db_row(self, row, source=None, env=None):
         if row is None:
@@ -281,6 +330,27 @@ class NodesMetricHistory:
             "source": row.get("source") or "",
         }
 
+    def _normalize_metric_row(self, row):
+        row = row or {}
+        memory = row.get("memory") or {}
+        storage = row.get("storage") or {}
+        summary = _container_summary(row.get("containers") or {})
+        return {
+            "reported_at": _iso(row.get("reported_at")),
+            "node_id": str(row.get("node_id") or ""),
+            "cpu_percent": _as_float(row.get("cpu_percent")),
+            "memory_used_percent": _as_float(memory.get("used_percent")),
+            "memory_used_bytes": _as_int(memory.get("used")),
+            "memory_total_bytes": _as_int(memory.get("total")),
+            "storage_used_percent": _as_float(storage.get("used_percent")),
+            "storage_used_bytes": _as_int(storage.get("used")),
+            "storage_total_bytes": _as_int(storage.get("total")),
+            "containers_total": summary["total"],
+            "containers_running": summary["running"],
+            "containers_stopped": summary["stopped"],
+            "source": (row.get("metadata") or {}).get("source") or row.get("source") or "database",
+        }
+
     def _read_rows(self, path):
         if not path.exists() or path.stat().st_size == 0:
             return []
@@ -325,7 +395,7 @@ class NodesMetricHistory:
                     include = start.isoformat() <= row_date <= end.isoformat()
                 if include:
                     rows.append(self._normalize_row(row))
-        rows.sort(key=lambda row: row.get("reported_at") or "")
+        rows = _deduplicate_metric_rows(rows)
         if len(rows) > row_limit:
             rows = rows[-row_limit:]
         return {
@@ -340,15 +410,9 @@ class NodesMetricHistory:
             "summary": self._summary(rows),
         }
 
-    def dashboard_chart(self, start_date=None, end_date=None, limit=288, env=None):
-        start_at = None
-        end_at = None
-        if not start_date and not end_date:
-            end_at = datetime.datetime.now(datetime.timezone.utc)
-            start_at = end_at - datetime.timedelta(hours=24)
-        data = self.query(node_id=None, start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at, limit=10000, env=env)
+    def _dashboard_chart_payload(self, data, rows, limit=288, source="csv", node_id=None):
         buckets = {}
-        for row in data.get("rows") or []:
+        for row in rows or []:
             key = _bucket_time(row.get("reported_at"))
             if not key:
                 continue
@@ -361,11 +425,11 @@ class NodesMetricHistory:
             bucket["containers_total"] += _as_float(row.get("containers_total"))
             bucket["containers_running"] += _as_float(row.get("containers_running"))
 
-        rows = []
+        chart_rows = []
         for key in sorted(buckets):
             bucket = buckets[key]
             count = max(1, bucket["count"])
-            rows.append({
+            chart_rows.append({
                 "reported_at": bucket["reported_at"],
                 "node_count": len([node for node in bucket["nodes"] if node]),
                 "sample_count": bucket["count"],
@@ -376,16 +440,78 @@ class NodesMetricHistory:
                 "containers_running": round(bucket["containers_running"] / count, 2),
             })
         row_limit = _limit_value(limit, default=288, maximum=10000)
-        if len(rows) > row_limit:
-            rows = rows[-row_limit:]
+        if len(chart_rows) > row_limit:
+            chart_rows = chart_rows[-row_limit:]
         return {
-            **{key: data.get(key) for key in ["root", "start_date", "end_date"]},
-            "node_id": None,
-            "count": len(rows),
-            "rows": rows,
-            "summary": self._summary(rows),
-            "source_count": data.get("count", 0),
+            **{key: data.get(key) for key in ["root", "start_date", "end_date", "start_at", "end_at"]},
+            "node_id": str(node_id) if node_id else None,
+            "count": len(chart_rows),
+            "rows": chart_rows,
+            "summary": self._summary(chart_rows),
+            "source_count": data.get("count", len(rows or [])),
+            "source": source,
         }
+
+    def dashboard_chart(self, start_date=None, end_date=None, start_at=None, end_at=None, limit=288, env=None):
+        if not start_date and not end_date and not start_at and not end_at:
+            end_at = datetime.datetime.now(datetime.timezone.utc)
+            start_at = end_at - datetime.timedelta(hours=24)
+        data = self.query(node_id=None, start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at, limit=10000, env=env)
+        return self._dashboard_chart_payload(data, data.get("rows") or [], limit=limit, source="csv")
+
+    def dashboard_node_charts(self, node_ids, start_date=None, end_date=None, start_at=None, end_at=None, limit=288, env=None):
+        if not start_date and not end_date and not start_at and not end_at:
+            end_at = datetime.datetime.now(datetime.timezone.utc)
+            start_at = end_at - datetime.timedelta(hours=24)
+        charts = []
+        for node_id in node_ids or []:
+            data = self.query(node_id=node_id, start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at, limit=10000, env=env)
+            charts.append(self._dashboard_chart_payload(data, data.get("rows") or [], limit=limit, source="csv", node_id=node_id))
+        return charts
+
+    def dashboard_chart_from_metrics(self, rows, start_date=None, end_date=None, start_at=None, end_at=None, limit=288, env=None, node_id=None):
+        if not start_date and not end_date and not start_at and not end_at:
+            end_at = datetime.datetime.now(datetime.timezone.utc)
+            start_at = end_at - datetime.timedelta(hours=24)
+        start, end, start_dt, end_dt = _range_bounds(start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at)
+        normalized = []
+        for row in rows or []:
+            normalized_row = self._normalize_metric_row(row)
+            if node_id and str(normalized_row.get("node_id") or "") != str(node_id):
+                continue
+            if start_dt and end_dt:
+                row_dt = _parse_reported_at(normalized_row.get("reported_at"))
+                include = row_dt is not None and start_dt <= row_dt <= end_dt
+            else:
+                row_date = self._row_date(normalized_row)
+                include = start.isoformat() <= row_date <= end.isoformat()
+            if include:
+                normalized.append(normalized_row)
+        normalized = _deduplicate_metric_rows(normalized)
+        data = {
+            "root": str(self.root(env=env)),
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "start_at": start_dt.isoformat().replace("+00:00", "Z") if start_dt else None,
+            "end_at": end_dt.isoformat().replace("+00:00", "Z") if end_dt else None,
+            "count": len(normalized),
+        }
+        return self._dashboard_chart_payload(data, normalized, limit=limit, source="database", node_id=node_id)
+
+    def dashboard_node_charts_from_metrics(self, node_ids, rows, start_date=None, end_date=None, start_at=None, end_at=None, limit=288, env=None):
+        return [
+            self.dashboard_chart_from_metrics(
+                rows,
+                start_date=start_date,
+                end_date=end_date,
+                start_at=start_at,
+                end_at=end_at,
+                limit=limit,
+                env=env,
+                node_id=node_id,
+            )
+            for node_id in (node_ids or [])
+        ]
 
     def delete_range(self, node_id=None, start_date=None, end_date=None, start_at=None, end_at=None, env=None):
         if (not start_date or not end_date) and (not start_at or not end_at):

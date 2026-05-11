@@ -39,64 +39,64 @@
 
 - [x] 목록 `load`에서 상세 `detail_service` await 제거
 - [x] 서비스 상세 요청 race 방지 token 추가
-- [x] 목록 API에서 템플릿, 노드, 도메인 option 같은 편집 전용 데이터를 제거
+- [x] 목록 API에서 생성/편집 전용 option 같은 데이터를 제거
 - [x] 서비스 수정 모달을 열 때만 도메인 option 로드
 
-## 3. P0: 템플릿 필수화와 기본 nginx fallback 제거
+## 3. P0: 서비스 초안 필수화와 기본 nginx fallback 제거
 
 ### 문제
 
-새 서비스 생성에서 서비스 이름만 입력하면 템플릿 없이도 다음 단계로 진행할 수 있고, 내부적으로 `nginx:alpine` 기본 Compose가 사용된다.
+새 서비스 생성에서 서비스 이름만 입력하면 구체적인 Compose 초안 없이도 다음 단계로 진행할 수 있고, 내부적으로 `nginx:alpine` 기본 Compose가 사용된다.
 
 ### 왜 중요한가
 
-일반 관리자는 “nginx 컨테이너 하나”를 만들고 싶은 것이 아니라 “홈페이지”, “파일 공유”, “업무 관리” 같은 업무 목적의 서비스를 만들고 싶다. 템플릿 없는 기본 nginx는 개발자용 테스트 흐름에 가깝고, 사용자가 실제로 무엇을 배포하는지 이해하기 어렵다.
+일반 관리자는 “nginx 컨테이너 하나”를 만들고 싶은 것이 아니라 “홈페이지”, “파일 공유”, “업무 관리” 같은 업무 목적의 서비스를 만들고 싶다. 서비스 초안 없는 기본 nginx는 개발자용 테스트 흐름에 가깝고, 사용자가 실제로 무엇을 배포하는지 이해하기 어렵다.
 
 ### 완료 기준
 
-- 일반 생성 흐름에서는 서비스 종류 또는 템플릿 선택이 필수다.
-- 템플릿을 선택하지 않으면 2단계로 넘어갈 수 없다.
-- 서버 Compose 가져오기 흐름만 템플릿 없이 진행할 수 있다.
-- API 직접 호출도 템플릿 또는 import source가 없으면 차단한다.
+- 일반 생성 흐름에서는 AI 초안, Compose 직접 작성, 서버 Compose 가져오기 중 하나가 필수다.
+- Compose 초안이 없으면 2단계로 넘어갈 수 없다.
+- 서버 Compose 가져오기 흐름도 동일한 초안 적용 경로로 진행한다.
+- API 직접 호출도 `base_content` 또는 import source가 없으면 차단한다.
 - 기본 `nginx:alpine` Compose는 일반 생성 fallback으로 쓰지 않는다.
 
 ### 작업
 
-- [x] `/services/create` 1단계 검증에 템플릿 필수 조건 추가
-- [x] 생성 API `preflight`, `create_service`에서 템플릿/import source 필수 검증 추가
+- [x] `/services/create` 1단계 검증에 서비스 초안 필수 조건 추가
+- [x] 생성 API `preflight`, `create_service`에서 Compose 초안/import source 필수 검증 추가
 - [x] 생성 화면 초기 `default_content`, `default_components` 의존 제거
-- [x] 템플릿 선택 UI 문구를 “서비스 종류 선택” 기준으로 수정
+- [x] 서비스 초안 UI 문구를 AI/Compose 기준으로 수정
 
-## 4. P1: 템플릿 메타데이터를 사용자용 구조로 확장
+## 4. P1: Compose 초안을 사용자용 구조로 확장
 
 ### 문제
 
-템플릿은 다중 Compose service를 포함하지만 화면에는 `구성 1`, `구성 2` 또는 `web`, `db` 수준으로 노출된다. 어떤 구성요소가 실제 사용자가 접속하는 화면인지, 어떤 구성요소가 내부 DB/캐시인지 명확하지 않다.
+AI/직접 작성/import Compose는 다중 Compose service를 포함하지만 화면에는 `구성 1`, `구성 2` 또는 `web`, `db` 수준으로 노출될 수 있다. 어떤 구성요소가 실제 사용자가 접속하는 화면인지, 어떤 구성요소가 내부 DB/캐시인지 명확해야 한다.
 
 ### 왜 중요한가
 
-일반 사용자는 “web 컨테이너의 80/tcp”가 아니라 “웹 화면으로 접속”을 이해한다. 서비스와 도메인 연결도 템플릿이 공개 endpoint를 알려줘야 자동 선택할 수 있다.
+일반 사용자는 “web 컨테이너의 80/tcp”가 아니라 “웹 화면으로 접속”을 이해한다. 서비스와 도메인 연결도 Compose 분석 결과가 공개 endpoint를 알려줘야 자동 선택할 수 있다.
 
 ### 완료 기준
 
-- 템플릿 metadata에 공개 endpoint가 명시된다.
-- 템플릿 metadata에 구성요소별 사용자용 이름과 설명이 있다.
+- Compose 초안 분석 결과에 공개 endpoint가 명시된다.
+- Compose 초안 분석 결과에 구성요소별 사용자용 이름과 설명이 있다.
 - 도메인 연결 포트는 공개 endpoint를 우선 선택한다.
 - 내부 DB/캐시 구성은 외부 연결 대상으로 기본 노출하지 않는다.
 - 화면에는 “웹 화면”, “데이터베이스”, “캐시”처럼 의미 기반 라벨이 표시된다.
 
 ### 작업
 
-- [x] seed template metadata에 `public_endpoint` 추가
-- [x] seed template metadata에 `component_labels` 추가
-- [x] `components_from_content`가 metadata를 받아 사용자용 라벨과 공개 endpoint flag를 반환
+- [x] Compose 초안 분석 결과에 `public_endpoint` 반영
+- [x] Compose 초안 분석 결과에 `component_labels` 반영
+- [x] `components_from_content`가 사용자용 라벨과 공개 endpoint flag를 반환
 - [x] 도메인 연결 포트 radio group에서 공개 endpoint를 추천/자동 선택
 
 ## 5. P1: 비밀번호와 내부 secret 자동 생성
 
 ### 문제
 
-기본 템플릿의 DB 비밀번호가 `*_change_me` 형태로 들어 있다. 사용자가 이를 인지하고 바꾸지 않으면 보안상 취약하고, 직접 바꾸라고 요구하면 난이도가 높아진다.
+서비스 초안의 DB 비밀번호가 `*_change_me` 형태로 들어 있거나 비어 있으면 사용자가 이를 직접 이해하고 바꾸기 어렵다.
 
 ### 왜 중요한가
 
@@ -104,15 +104,15 @@
 
 ### 완료 기준
 
-- 템플릿 metadata에 자동 생성 secret 필드가 정의된다.
+- AI/Compose 초안 결과에 자동 생성 secret 필드가 정의된다.
 - 서비스 생성 시마다 secret 값이 랜덤 생성되어 Compose에 반영된다.
 - 기본 화면에는 secret 값이 노출되지 않는다.
 - 고급 설정에서만 필요한 경우 확인 또는 재생성할 수 있는 구조로 확장 가능해야 한다.
 
 ### 작업
 
-- [x] seed template metadata에 `generated_secrets` 추가
-- [x] 서비스 생성용 template detail API에서 secret 값을 생성한 preview Compose 반환
+- [x] AI/Compose 초안 결과에 `generated_secrets` 추가
+- [x] 서비스 생성용 draft API에서 secret 값을 생성한 preview Compose 반환
 - [x] 생성 화면 일반 영역에서 환경변수 raw key/value를 숨김 유지
 - [x] 추후 secret 재생성/마스킹 UI를 위한 metadata 보존
 
@@ -124,13 +124,13 @@
 
 ### 왜 중요한가
 
-사용자는 “이미지 tag”보다 “버전”, “내부 포트”보다 “연결 포트”를 이해한다. 제한을 하더라도 템플릿이 정한 안정적인 기본값을 쓰는 쪽이 더 안전하다.
+사용자는 “이미지 tag”보다 “버전”, “내부 포트”보다 “연결 포트”를 이해한다. 제한을 하더라도 Compose 초안이 정한 안정적인 기본값을 쓰는 쪽이 더 안전하다.
 
 ### 완료 기준
 
 - 일반 생성 화면에는 이미지/포트가 읽기 쉬운 요약으로만 표시된다.
 - 이미지명, tag 직접 수정과 내부 포트 추가/삭제는 고급 설정 안으로 이동한다.
-- 도메인 단계의 연결 포트는 템플릿이 표시한 공개 endpoint 중심으로 노출된다.
+- 도메인 단계의 연결 포트는 Compose 초안 분석 결과가 표시한 공개 endpoint 중심으로 노출된다.
 - 수정 모달도 기본 변경과 고급 변경을 명확히 분리한다.
 
 ### 작업
@@ -215,8 +215,8 @@
 ## 10. 실행 순서
 
 1. P0 화면 진입 속도와 데이터 분리
-2. P0 템플릿 필수화와 기본 nginx fallback 제거
-3. P1 템플릿 메타데이터와 자동 secret
+2. P0 서비스 초안 필수화와 기본 nginx fallback 제거
+3. P1 Compose 초안 메타데이터와 자동 secret
 4. P1 생성 화면 원시 Docker 입력 축소
 5. P1 실제 배포 대상 기준 자동 점검
 6. P2 상세 고급 정보 격리

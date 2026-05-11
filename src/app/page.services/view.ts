@@ -5,10 +5,8 @@ export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
     public busy = signal<boolean>(false);
     public detailLoading = signal<boolean>(false);
-    public templateLoading = signal<boolean>(false);
     public error = signal<string>('');
     public services = signal<any[]>([]);
-    public templates = signal<any[]>([]);
     public nodes = signal<any[]>([]);
     public zones = signal<any[]>([]);
     public selected = signal<any>(null);
@@ -56,7 +54,6 @@ export class Component implements OnInit, OnDestroy {
     public operationModalOpen = signal<boolean>(false);
     public operationBusy = signal<boolean>(false);
     public operationDetail = signal<any>(null);
-    public selectedTemplateId = signal<string>('');
     public serviceForm: any = this.emptyForm();
     public compose: any = this.emptyCompose();
     public envVars: any[] = [];
@@ -206,7 +203,6 @@ export class Component implements OnInit, OnDestroy {
         if (code === 200) {
             const services = data.services || [];
             this.services.set(services);
-            this.templates.set(data.templates || []);
             this.nodes.set(data.nodes || []);
             this.zones.set(data.zones || []);
             const next = services.find((item: any) => item.id === selectedId) || services[0] || null;
@@ -291,8 +287,6 @@ export class Component implements OnInit, OnDestroy {
         this.validation.set(null);
         this.composeConflicts.set([]);
         this.lastCreated.set(null);
-        this.selectedTemplateId.set('');
-        this.templateLoading.set(false);
         this.serviceForm = this.emptyForm();
         this.compose = this.emptyCompose();
         this.envVars = [];
@@ -307,27 +301,8 @@ export class Component implements OnInit, OnDestroy {
 
     public setServiceMode(mode: 'basic_web' | 'direct_compose') {
         this.serviceMode.set(mode);
-        if (this.selectedTemplateId()) {
-            this.selectedTemplateId.set('');
-        }
         this.advancedCompose.set(mode === 'direct_compose');
         this.refreshCompose(true);
-    }
-
-    public templateSelectorItems() {
-        return this.templates()
-            .filter((item: any) => item?.enabled !== false)
-            .map((item: any) => ({
-                value: item.id,
-                label: item.name,
-                description: `${item.namespace} · ${item.description || '설명 없음'}`,
-                badge: item?.metadata?.category || 'template',
-                badgeClass: this.templateCategoryBadgeClass(item?.metadata?.category || 'template'),
-            }));
-    }
-
-    public selectedTemplateRecord() {
-        return this.templates().find((item: any) => item.id === this.selectedTemplateId()) || null;
     }
 
     public nodeSelectorItems() {
@@ -388,50 +363,6 @@ export class Component implements OnInit, OnDestroy {
             if (zone?.domain) return prefix ? `${prefix}.${zone.domain}` : zone.domain;
         }
         return this.serviceForm.domain || '도메인 미입력';
-    }
-
-    public async selectTemplate(templateId: string) {
-        this.selectedTemplateId.set(templateId || '');
-        if (!templateId) {
-            this.refreshCompose(true);
-            return;
-        }
-        this.templateLoading.set(true);
-        const { code, data } = await wiz.call('template_detail', { template_id: templateId });
-        if (code === 200) {
-            const values = data?.preview?.values || {};
-            this.serviceForm.name = data?.template?.name || this.serviceForm.name;
-            if (!this.serviceForm.description) {
-                this.serviceForm.description = data?.template?.description || '';
-            }
-            this.serviceForm.namespace = String(values.namespace || data?.template?.namespace || this.serviceForm.namespace || '').trim();
-            this.serviceForm.service_name = String(values.service_name || this.serviceForm.service_name || 'web').trim();
-            this.applyImageRef(String(values.image || data?.template?.metadata?.primary_image || this.serviceForm.image || 'nginx:alpine').trim());
-            this.serviceForm.port = Number(values.service_port || this.serviceForm.port || 80);
-            this.normalizeNamespace();
-            this.compose.namespace = this.serviceForm.namespace || 'my_service';
-            this.compose.filename = 'docker-compose.yaml';
-            this.compose.content = data?.preview?.rendered_compose || data?.files?.['docker-compose.yaml'] || '';
-            this.advancedCompose.set(this.serviceMode() === 'direct_compose');
-            this.validation.set(null);
-        } else {
-            this.selectedTemplateId.set('');
-            await this.alert(data?.message || '템플릿을 불러올 수 없습니다.');
-        }
-        this.templateLoading.set(false);
-        await this.service.render();
-    }
-
-    public clearSelectedTemplate() {
-        this.selectedTemplateId.set('');
-        this.serviceForm = this.emptyForm();
-        this.compose = this.emptyCompose();
-        this.envVars = [];
-        this.volumes = [];
-        this.advancedCompose.set(this.serviceMode() === 'direct_compose');
-        this.validation.set(null);
-        this.composeConflicts.set([]);
-        this.refreshCompose(true);
     }
 
     private splitImageRef(ref: string) {
@@ -573,11 +504,8 @@ export class Component implements OnInit, OnDestroy {
             volumes: this.normalizedVolumes(),
             filename: this.compose.filename,
             content: this.compose.content,
-            source: this.selectedTemplateId() ? 'template_catalog' : undefined,
-            source_ref: this.selectedTemplateId() ? {
-                template_id: this.selectedTemplateId(),
-                template_namespace: this.selectedTemplateRecord()?.namespace || '',
-            } : undefined,
+            source: 'manual_compose',
+            source_ref: { source: 'manual_compose', wizard: 'services.legacy_modal' },
         };
     }
 
@@ -1119,13 +1047,10 @@ export class Component implements OnInit, OnDestroy {
     private streamProgressMessage(value: any) {
         const text = String(value || '');
         let stage = 'AI 응답 작성 중';
-        if (text.includes('"README.md"')) stage = 'README 작성 중';
-        else if (text.includes('"values.schema.json"')) stage = 'Schema 작성 중';
-        else if (text.includes('"values.default.yaml"')) stage = '기본값 작성 중';
-        else if (text.includes('"docker-compose.yaml"') || text.includes('"compose"')) stage = 'Compose 작성 중';
+        if (text.includes('"docker-compose.yaml"') || text.includes('"compose"') || text.includes('"base_content"')) stage = 'Compose 작성 중';
         else if (text.includes('"components"')) stage = '컴포넌트 설정 작성 중';
         else if (text.includes('"form"')) stage = '서비스 기본 정보 작성 중';
-        else if (text.includes('"template"')) stage = '템플릿 메타데이터 작성 중';
+        else if (text.includes('"notes"')) stage = '운영 메모 작성 중';
         const latest = this.latestStreamLine(text);
         return latest ? `${stage} · ${latest}` : stage;
     }
@@ -1352,8 +1277,6 @@ export class Component implements OnInit, OnDestroy {
                 form: this.editForm,
                 components: this.editComponents,
                 base_content: this.detail()?.compose_content || '',
-                template_id: '',
-                templates: this.templates(),
                 zones: this.zones(),
                 service: this.detail()?.service || {},
             }, async (data: any) => {
@@ -2325,13 +2248,38 @@ export class Component implements OnInit, OnDestroy {
 
     public sourceLabel(service: any) {
         const source = service?.metadata?.source || '';
+        return this.sourceText(source);
+    }
+
+    public versionSourceLabel(version: any) {
+        return this.sourceText(version?.metadata?.source || version?.metadata?.draft?.source || '');
+    }
+
+    private sourceText(source: string) {
         const labels: any = {
             ui_wizard: '화면에서 생성',
+            ai_draft: 'AI 초안에서 생성',
+            manual_compose: 'Compose 직접 작성',
             server_compose_import: '서버 Compose 가져오기',
             server_compose_import_wizard: '서버 Compose 가져오기',
-            template_catalog: '템플릿에서 생성',
+            compose_rollback: '되돌리기',
         };
         return labels[source] || source || '-';
+    }
+
+    public versionDraftText(version: any) {
+        const draft = version?.metadata?.draft || {};
+        const notes = draft.notes;
+        if (Array.isArray(notes) && notes.length) return String(notes[0] || '');
+        if (typeof notes === 'string' && notes.trim()) return notes.trim();
+        const summary = draft.summary;
+        if (typeof summary === 'string' && summary.trim()) return summary.trim();
+        if (summary && typeof summary === 'object') {
+            const services = summary.services ?? summary.service_count;
+            const ports = summary.ports ?? summary.port_count;
+            if (services || ports) return `구성 ${services || 0}개, 포트 ${ports || 0}개`;
+        }
+        return '';
     }
 
     public statusLabel(status: string) {
@@ -2401,29 +2349,9 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public createModeDescription() {
-        if (this.selectedTemplateRecord()) {
-            return `${this.selectedTemplateRecord()?.name} 템플릿으로 Compose 초안을 채워서 시작합니다.`;
-        }
         return this.serviceMode() === 'basic_web'
-            ? '기본 웹 서비스 템플릿으로 Compose를 자동 생성합니다.'
+            ? '기본 웹 서비스 Compose를 자동 생성합니다.'
             : 'Compose 초안을 직접 조정하면서 서비스 초안을 저장합니다.';
-    }
-
-    public templateCategoryBadgeClass(category: string) {
-        const value = String(category || '').toLowerCase();
-        if (['service', 'web'].includes(value)) {
-            return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
-        }
-        if (['was', 'api'].includes(value)) {
-            return 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300';
-        }
-        if (['db', 'database'].includes(value)) {
-            return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
-        }
-        if (['cache', 'queue'].includes(value)) {
-            return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300';
-        }
-        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300';
     }
 
     public formatDate(value: any) {

@@ -19,7 +19,8 @@ detect_local_environment = environment.detect_local_environment
 SETUP_COMPLETED_KEY = "setup.completed"
 SETUP_COMPLETED_AT_KEY = "setup.completed_at"
 SETUP_DEFAULT_PROXY_KEY = "setup.default_proxy"
-SETUP_TEMPLATE_ROOT_KEY = "setup.template_root"
+SETUP_SERVICE_ROOT_KEY = "setup.service_root"
+LEGACY_SETUP_TEMPLATE_ROOT_KEY = "setup.template_root"
 SETUP_ADVERTISE_ADDRESS_KEY = "setup.advertise_address"
 ALLOWED_PROXY_TYPES = {"nginx"}
 
@@ -79,7 +80,8 @@ class SetupService:
             SETUP_COMPLETED_KEY,
             SETUP_COMPLETED_AT_KEY,
             SETUP_DEFAULT_PROXY_KEY,
-            SETUP_TEMPLATE_ROOT_KEY,
+            SETUP_SERVICE_ROOT_KEY,
+            LEGACY_SETUP_TEMPLATE_ROOT_KEY,
             SETUP_ADVERTISE_ADDRESS_KEY,
         ]
         with connection.cursor() as cursor:
@@ -101,7 +103,7 @@ class SetupService:
                     "completed": False,
                     "completed_at": None,
                     "default_proxy": None,
-                    "template_root": None,
+                    "service_root": None,
                     "advertise_address": None,
                 },
                 "local_master": None,
@@ -113,6 +115,9 @@ class SetupService:
             settings = self._settings(connection)
             has_password = auth.get_password_hash(connection) is not None
             completed = bool(_setting_value(settings.get(SETUP_COMPLETED_KEY)))
+            service_root = _setting_value(settings.get(SETUP_SERVICE_ROOT_KEY))
+            if service_root is None:
+                service_root = _setting_value(settings.get(LEGACY_SETUP_TEMPLATE_ROOT_KEY))
             local_master = self._local_master(connection)
             return {
                 "configured": completed and has_password and local_master is not None,
@@ -122,7 +127,7 @@ class SetupService:
                     "completed": completed,
                     "completed_at": _setting_value(settings.get(SETUP_COMPLETED_AT_KEY)),
                     "default_proxy": _setting_value(settings.get(SETUP_DEFAULT_PROXY_KEY)),
-                    "template_root": _setting_value(settings.get(SETUP_TEMPLATE_ROOT_KEY)),
+                    "service_root": service_root,
                     "advertise_address": _setting_value(settings.get(SETUP_ADVERTISE_ADDRESS_KEY)),
                 },
                 "local_master": local_master,
@@ -225,15 +230,15 @@ class SetupService:
 
         checks = detect_local_environment(env=env)
         advertise_address = payload.get("advertise_address") or checks["advertise_address"]
-        template_root = payload.get("template_root") or ".runtime/dev/templates"
+        service_root = payload.get("service_root") or ".runtime/dev/services"
         proxy_type = self._choose_proxy(payload.get("proxy_type"), checks)
         test_run_id = payload.get("test_run_id")
         completed_at = utcnow().isoformat().replace("+00:00", "Z")
 
         try:
-            Path(template_root).expanduser().mkdir(parents=True, exist_ok=True)
+            Path(service_root).expanduser().mkdir(parents=True, exist_ok=True)
         except Exception as exc:
-            raise SetupError(400, f"Template root를 생성할 수 없습니다: {exc}", "TEMPLATE_ROOT_UNAVAILABLE")
+            raise SetupError(400, f"서비스 파일 저장 경로를 생성할 수 없습니다: {exc}", "SERVICE_ROOT_UNAVAILABLE")
 
         backup_requested = bool((payload.get("backup_system") or {}).get("enabled"))
         backup_error = None
@@ -248,7 +253,7 @@ class SetupService:
                 self._upsert_setting(cursor, SETUP_COMPLETED_KEY, True, "boolean", test_run_id)
                 self._upsert_setting(cursor, SETUP_COMPLETED_AT_KEY, completed_at, "datetime", test_run_id)
                 self._upsert_setting(cursor, SETUP_DEFAULT_PROXY_KEY, proxy_type, "string", test_run_id)
-                self._upsert_setting(cursor, SETUP_TEMPLATE_ROOT_KEY, template_root, "path", test_run_id)
+                self._upsert_setting(cursor, SETUP_SERVICE_ROOT_KEY, service_root, "path", test_run_id)
                 self._upsert_setting(cursor, SETUP_ADVERTISE_ADDRESS_KEY, advertise_address, "string", test_run_id)
                 local_master = self._upsert_local_master(cursor, advertise_address, test_run_id, checks)
                 try:

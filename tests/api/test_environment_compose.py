@@ -58,7 +58,7 @@ class EnvironmentComposeTest(unittest.TestCase):
         )
 
     def test_cleanup_helper_only_removes_project_local_test_runtime_roots(self):
-        probe = ROOT / ".runtime" / "test" / "templates" / "cleanup-probe"
+        probe = ROOT / ".runtime" / "test" / "services" / "cleanup-probe"
         probe.mkdir(parents=True, exist_ok=True)
         (probe / "probe.txt").write_text("temporary test artifact", encoding="utf-8")
 

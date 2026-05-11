@@ -128,6 +128,128 @@ def _node_exporter_status_command(params):
     return ["sh", "-lc", script]
 
 
+def _collector_param(params, key, error_code):
+    value = str((params or {}).get(key) or "").strip()
+    if not value:
+        raise LocalCommandError(400, f"{key}가 필요합니다.", error_code)
+    return value
+
+
+def _metrics_collector_paths(params):
+    service_name = str((params or {}).get("service_name") or "docker-infra-node-metrics.service").strip()
+    timer_name = str((params or {}).get("timer_name") or "docker-infra-node-metrics.timer").strip()
+    service_unit = service_name[:-8] if service_name.endswith(".service") else service_name
+    timer_unit = timer_name[:-6] if timer_name.endswith(".timer") else timer_name
+    if NETWORK_NAME_RE.match(service_unit) is None:
+        raise LocalCommandError(400, "metrics collector service 이름이 올바르지 않습니다.", "INVALID_METRICS_COLLECTOR_SERVICE")
+    if NETWORK_NAME_RE.match(timer_unit) is None:
+        raise LocalCommandError(400, "metrics collector timer 이름이 올바르지 않습니다.", "INVALID_METRICS_COLLECTOR_TIMER")
+    return {
+        "service_name": service_name,
+        "timer_name": timer_name,
+        "script_path": str((params or {}).get("script_path") or "/usr/local/bin/docker-infra-node-metrics-agent"),
+        "env_path": str((params or {}).get("env_path") or "/etc/docker-infra/node-metrics.env"),
+        "state_file": str((params or {}).get("state_file") or "/var/lib/docker-infra/node-metrics.prev"),
+    }
+
+
+def _metrics_collector_ensure_command(params):
+    node_id = _collector_param(params, "node_id", "METRICS_COLLECTOR_NODE_ID_REQUIRED")
+    reporter_token = _collector_param(params, "reporter_token", "METRICS_COLLECTOR_TOKEN_REQUIRED")
+    reporter_base_url = _collector_param(params, "reporter_base_url", "METRICS_COLLECTOR_BASE_URL_REQUIRED").rstrip("/")
+    if not (reporter_base_url.startswith("http://") or reporter_base_url.startswith("https://")):
+        raise LocalCommandError(400, "reporter_base_url은 http(s) URL이어야 합니다.", "INVALID_METRICS_COLLECTOR_BASE_URL")
+    interval_seconds = str((params or {}).get("interval_seconds") or 600).strip()
+    try:
+        interval = max(60, min(int(interval_seconds), 3600))
+    except Exception:
+        raise LocalCommandError(400, "interval_seconds는 정수여야 합니다.", "INVALID_METRICS_COLLECTOR_INTERVAL")
+    timer_schedule = "OnCalendar=*:0/10\n" if interval == 600 else f"OnUnitActiveSec={interval}s\n"
+    paths = _metrics_collector_paths(params)
+    script = (
+        "set -eu\n"
+        "SUDO=''\n"
+        "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+        f"SCRIPT_PATH={shlex.quote(paths['script_path'])}\n"
+        f"ENV_PATH={shlex.quote(paths['env_path'])}\n"
+        f"STATE_FILE={shlex.quote(paths['state_file'])}\n"
+        f"SERVICE_NAME={shlex.quote(paths['service_name'])}\n"
+        f"TIMER_NAME={shlex.quote(paths['timer_name'])}\n"
+        "TMP_SCRIPT=$(mktemp)\n"
+        "TMP_ENV=$(mktemp)\n"
+        "TMP_SERVICE=$(mktemp)\n"
+        "TMP_TIMER=$(mktemp)\n"
+        "cleanup() { rm -f \"$TMP_SCRIPT\" \"$TMP_ENV\" \"$TMP_SERVICE\" \"$TMP_TIMER\"; }\n"
+        "trap cleanup EXIT\n"
+        "cat > \"$TMP_SCRIPT\" <<'PY'\n"
+        f"{NODE_METRICS_AGENT_SCRIPT}\n"
+        "PY\n"
+        "cat > \"$TMP_ENV\" <<EOF\n"
+        f"DOCKER_INFRA_NODE_ID={shlex.quote(node_id)}\n"
+        f"DOCKER_INFRA_REPORTER_TOKEN={shlex.quote(reporter_token)}\n"
+        f"DOCKER_INFRA_REPORTER_BASE_URL={shlex.quote(reporter_base_url)}\n"
+        f"DOCKER_INFRA_METRICS_STATE_FILE={shlex.quote(paths['state_file'])}\n"
+        "EOF\n"
+        "cat > \"$TMP_SERVICE\" <<EOF\n"
+        "[Unit]\n"
+        "Description=Docker Infra node metrics collector\n"
+        "After=network-online.target docker.service\n"
+        "Wants=network-online.target\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        f"EnvironmentFile={paths['env_path']}\n"
+        f"ExecStart={paths['script_path']}\n"
+        "EOF\n"
+        "cat > \"$TMP_TIMER\" <<EOF\n"
+        "[Unit]\n"
+        "Description=Run Docker Infra node metrics collector every 10 minutes\n\n"
+        "[Timer]\n"
+        "OnBootSec=1min\n"
+        f"{timer_schedule}"
+        "AccuracySec=10s\n"
+        "Persistent=true\n"
+        f"Unit={paths['service_name']}\n\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+        "EOF\n"
+        "$SUDO install -d -m 700 \"$(dirname \"$ENV_PATH\")\"\n"
+        "$SUDO install -d -m 700 \"$(dirname \"$STATE_FILE\")\"\n"
+        "$SUDO install -m 0755 \"$TMP_SCRIPT\" \"$SCRIPT_PATH\"\n"
+        "$SUDO install -m 0600 \"$TMP_ENV\" \"$ENV_PATH\"\n"
+        "$SUDO install -m 0644 \"$TMP_SERVICE\" \"/etc/systemd/system/$SERVICE_NAME\"\n"
+        "$SUDO install -m 0644 \"$TMP_TIMER\" \"/etc/systemd/system/$TIMER_NAME\"\n"
+        "$SUDO systemctl daemon-reload\n"
+        "$SUDO systemctl stop \"$TIMER_NAME\" >/dev/null 2>&1 || true\n"
+        "$SUDO systemctl enable \"$TIMER_NAME\"\n"
+        "$SUDO systemctl start \"$TIMER_NAME\"\n"
+        "$SUDO systemctl start \"$SERVICE_NAME\"\n"
+        "$SUDO systemctl is-active --quiet \"$TIMER_NAME\"\n"
+        "printf 'Metrics collector timer running\\n'\n"
+        "$SUDO systemctl --no-pager --full status \"$TIMER_NAME\" | sed -n '1,12p'\n"
+    )
+    return ["sh", "-lc", script]
+
+
+def _metrics_collector_status_command(params):
+    paths = _metrics_collector_paths(params)
+    script = (
+        "set -eu\n"
+        "SUDO=''\n"
+        "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+        f"TIMER_NAME={shlex.quote(paths['timer_name'])}\n"
+        f"SERVICE_NAME={shlex.quote(paths['service_name'])}\n"
+        "$SUDO systemctl is-active --quiet \"$TIMER_NAME\"\n"
+        "if $SUDO systemctl is-failed --quiet \"$SERVICE_NAME\"; then\n"
+        "  $SUDO systemctl --no-pager --full status \"$SERVICE_NAME\" | sed -n '1,12p' || true\n"
+        "  exit 1\n"
+        "fi\n"
+        "printf 'Metrics collector timer running\\n'\n"
+        "$SUDO systemctl --no-pager --full status \"$TIMER_NAME\" | sed -n '1,12p'\n"
+        "$SUDO systemctl --no-pager --full status \"$SERVICE_NAME\" | sed -n '1,8p' || true\n"
+    )
+    return ["sh", "-lc", script]
+
+
 def _docker_image_remove_command(params):
     image_ref = str((params or {}).get("image_ref") or "").strip()
     if not image_ref:
@@ -358,6 +480,7 @@ def _filesystem_read_command(params):
 
 
 SYSTEM_METRICS_SCRIPT = scripts.SYSTEM_METRICS_SCRIPT
+NODE_METRICS_AGENT_SCRIPT = scripts.NODE_METRICS_AGENT_SCRIPT
 DOCKER_IMAGE_USAGE_SCRIPT = scripts.DOCKER_IMAGE_USAGE_SCRIPT
 AI_RESOURCE_SCRIPT = scripts.AI_RESOURCE_SCRIPT
 AI_OLLAMA_SCAN_SCRIPT = scripts.AI_OLLAMA_SCAN_SCRIPT
@@ -398,6 +521,8 @@ COMMAND_SPECS = {
     "backup.harbor.ps": {"category": "backup", "factory": _backup_harbor_ps_command},
     "monitoring.node_exporter.ensure": {"category": "monitoring", "factory": _node_exporter_ensure_command, "destructive": True, "default_timeout_seconds": 120},
     "monitoring.node_exporter.status": {"category": "monitoring", "factory": _node_exporter_status_command, "default_timeout_seconds": 20},
+    "monitoring.metrics_collector.ensure": {"category": "monitoring", "factory": _metrics_collector_ensure_command, "destructive": True, "default_timeout_seconds": 120},
+    "monitoring.metrics_collector.status": {"category": "monitoring", "factory": _metrics_collector_status_command, "default_timeout_seconds": 20},
     "system.metrics": {"category": "system", "argv": ["sh", "-lc", SYSTEM_METRICS_SCRIPT]},
     "ai.resources": {"category": "ai", "argv": ["sh", "-lc", AI_RESOURCE_SCRIPT], "default_timeout_seconds": 12},
     "ai.ollama_scan": {"category": "ai", "factory": _ai_ollama_scan_command, "default_timeout_seconds": 12},
@@ -425,6 +550,7 @@ class LocalCommandCatalog:
     MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_SECONDS
     MAX_CAPTURE_CHARS = MAX_CAPTURE_CHARS
     SYSTEM_METRICS_SCRIPT = SYSTEM_METRICS_SCRIPT
+    NODE_METRICS_AGENT_SCRIPT = NODE_METRICS_AGENT_SCRIPT
     LocalCommandError = LocalCommandError
     COMMAND_SPECS = COMMAND_SPECS
     AI_RESOURCE_SCRIPT = AI_RESOURCE_SCRIPT

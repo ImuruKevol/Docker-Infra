@@ -671,7 +671,7 @@
                                                 "completed": true,
                                                 "completed_at": "2026-05-06T00:00:00Z",
                                                 "default_proxy": "none",
-                                                "template_root": ".runtime/dev/templates",
+                                                "service_root": ".runtime/dev/services",
                                                 "advertise_address": "127.0.0.1"
                                             },
                                             "local_master": {
@@ -765,7 +765,7 @@
                                 "confirm_password": "<redacted>",
                                 "advertise_address": "127.0.0.1",
                                 "proxy_type": "nginx",
-                                "template_root": ".runtime/dev/templates",
+                                "service_root": ".runtime/dev/services",
                                 "test_run_id": "di-test-run",
                                 "backup_system": {
                                     "enabled": false,
@@ -794,7 +794,7 @@
                                                 "completed": true,
                                                 "completed_at": "2026-05-06T00:00:00Z",
                                                 "default_proxy": "none",
-                                                "template_root": ".runtime/dev/templates",
+                                                "service_root": ".runtime/dev/services",
                                                 "advertise_address": "127.0.0.1"
                                             },
                                             "local_master": {
@@ -2358,7 +2358,7 @@
                             "completed",
                             "completed_at",
                             "default_proxy",
-                            "template_root",
+                            "service_root",
                             "advertise_address"
                         ],
                         "additionalProperties": false,
@@ -2374,7 +2374,7 @@
                                 "type": "string",
                                 "nullable": true
                             },
-                            "template_root": {
+                            "service_root": {
                                 "type": "string",
                                 "nullable": true
                             },
@@ -2426,7 +2426,7 @@
                 "type": "object",
                 "required": [
                     "password",
-                    "template_root"
+                    "service_root"
                 ],
                 "additionalProperties": false,
                 "properties": {
@@ -2452,9 +2452,9 @@
                         ],
                         "default": "nginx"
                     },
-                    "template_root": {
+                    "service_root": {
                         "type": "string",
-                        "example": ".runtime/dev/templates"
+                        "example": ".runtime/dev/services"
                     },
                     "test_run_id": {
                         "type": "string",

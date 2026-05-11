@@ -10,7 +10,6 @@ import yaml
 settings = wiz.model("struct/settings")
 ai_settings = wiz.model("struct/ai_settings")
 nodes_model = wiz.model("struct/nodes")
-templates_model = wiz.model("struct/templates")
 services_wizard = wiz.model("struct/services_wizard")
 compose_rules = wiz.model("struct/compose_rules")
 compose_validator = wiz.model("struct/compose_validator")
@@ -41,7 +40,6 @@ class AIAssistantError(Exception):
 class AIAssistant:
     def contracts(self):
         return {
-            "template": self.template_contract(),
             "service": self.service_contract(),
             "compose_validation": self.compose_validation_contract(),
         }
@@ -192,50 +190,6 @@ class AIAssistant:
             {"provider": provider, "model": model},
         )
 
-    def template_contract(self):
-        return {
-            "input": [
-                {
-                    "key": "intent",
-                    "required": True,
-                    "description": "사용자가 만들거나 수정하려는 템플릿 요구사항",
-                },
-                {
-                    "key": "mode",
-                    "required": True,
-                    "values": ["template_create", "template_update"],
-                },
-                {
-                    "key": "current",
-                    "required": False,
-                    "description": "수정 모드에서 현재 템플릿 정의",
-                },
-                {
-                    "key": "constraints",
-                    "required": False,
-                    "description": "포트, 이미지, 보안, 볼륨, 도메인 등 추가 제약",
-                },
-            ],
-            "output": [
-                "template.name",
-                "template.namespace",
-                "template.description",
-                "template.enabled",
-                "template.metadata.primary_image",
-                "template.metadata.category",
-                "template.metadata.component_labels",
-                "template.metadata.public_endpoint",
-                "template.metadata.generated_secrets",
-                "files.docker-compose.yaml",
-                "files.values.default.yaml",
-                "files.values.schema.json",
-                "files.README.md",
-                "summary",
-                "warnings",
-            ],
-            "output_format": self.output_format_contract("template"),
-        }
-
     def service_contract(self):
         return {
             "input": [
@@ -262,12 +216,7 @@ class AIAssistant:
                 {
                     "key": "base_content",
                     "required": False,
-                    "description": "템플릿 또는 현재 서비스 compose 원본",
-                },
-                {
-                    "key": "templates",
-                    "required": False,
-                    "description": "신규 서비스에서 선택 가능한 템플릿 목록",
+                    "description": "현재 서비스 compose 원본 또는 AI가 이어서 수정할 Compose 초안",
                 },
                 {
                     "key": "zones",
@@ -276,7 +225,7 @@ class AIAssistant:
                 },
             ],
             "output": [
-                "template_id",
+                "base_content",
                 "form.name",
                 "form.description",
                 "form.domain_mode",
@@ -290,6 +239,8 @@ class AIAssistant:
                 "components[].ports[]",
                 "components[].env_vars[]",
                 "components[].volumes[]",
+                "generated_secret_keys[]",
+                "notes",
                 "summary",
                 "warnings",
             ],
@@ -322,102 +273,13 @@ class AIAssistant:
                 "rollback_config": compose_rules.DEFAULT_ROLLBACK_CONFIG,
                 "restart_policy": compose_rules.DEFAULT_RESTART_POLICY,
             },
-            "template_rendering": [
-                "docker-compose.yaml may use {{ value_key }} placeholders",
-                "values.default.yaml must define every placeholder used by docker-compose.yaml",
-                "the rendered compose after placeholder substitution must pass this validation contract",
-                "values.schema.json must be a JSON object",
-            ],
         }
 
     def output_format_contract(self, target):
-        if target == "template":
-            return {
-                "root": {
-                    "type": "object",
-                    "required": ["template", "files", "summary", "warnings"],
-                    "forbidden": ["markdown fences", "partial patches", "free-form text outside JSON"],
-                },
-                "template": {
-                    "type": "object",
-                    "required": ["name", "namespace", "description", "enabled", "metadata"],
-                    "rules": [
-                        "namespace uses only lowercase ASCII letters, digits, underscores, dots, slashes, or dashes",
-                        "metadata.generated_secrets is a list of value keys whose defaults are empty strings",
-                        "metadata.component_labels and metadata.public_endpoint describe the compose services when available",
-                    ],
-                },
-                "files": {
-                    "docker-compose.yaml": {
-                        "preferred_type": "object",
-                        "allowed_type": "object or valid YAML string",
-                        "rules": [
-                            "Prefer a Docker Compose object in the outer JSON instead of hand-written YAML text",
-                            "If returned as a string, it must be a complete Docker Compose YAML document, not a patch",
-                            "If returned as a string, use 2-space indentation and no tabs",
-                            "placeholders use {{ value_key }} and every placeholder has a values.default.yaml entry",
-                            "quote placeholders used as scalar values",
-                            "healthcheck.test, interval, timeout, retries, and start_period are sibling keys under healthcheck",
-                            "no container_name, no hostname, no unsupported networks",
-                        ],
-                        "example_object": {
-                            "services": {
-                                "{{ service_name }}": {
-                                    "image": "{{ image }}",
-                                    "ports": ["{{ service_port }}:80"],
-                                    "healthcheck": {
-                                        "test": ["CMD-SHELL", "curl -fsS http://127.0.0.1:80/-/health || exit 1"],
-                                        "interval": "30s",
-                                        "timeout": "10s",
-                                        "retries": 3,
-                                    },
-                                    "networks": ["docker_infra_overlay"],
-                                }
-                            },
-                            "networks": {
-                                "docker_infra_overlay": {"external": True}
-                            },
-                        },
-                    },
-                    "values.default.yaml": {
-                        "preferred_type": "object",
-                        "allowed_type": "object or valid JSON object string",
-                        "rules": [
-                            "Prefer an object in the outer JSON instead of hand-written YAML text",
-                            "Every top-level key must be a placeholder key used by docker-compose.yaml",
-                            "Values must be JSON-safe primitives, arrays, or objects",
-                            "Use empty string for generated secrets and list those keys in metadata.generated_secrets",
-                            "If returned as a string, it must be a valid JSON object string; JSON is valid YAML",
-                            "Do not return malformed YAML lines such as unclosed quotes or key value without a colon",
-                        ],
-                        "example_object": {
-                            "image": "gitlab/gitlab-ce:17.11.1-ce.0",
-                            "external_url": "http://gitlab.local",
-                            "initial_root_password": "",
-                        },
-                    },
-                    "values.schema.json": {
-                        "preferred_type": "object",
-                        "allowed_type": "object or valid JSON object string",
-                        "rules": [
-                            "JSON Schema object for values.default.yaml",
-                            "properties keys match values.default.yaml keys",
-                            "required contains only keys that should not be empty before service creation",
-                        ],
-                    },
-                    "README.md": {
-                        "type": "string",
-                        "rules": [
-                            "Korean Markdown",
-                            "include purpose, required values, ports, volumes, and operational notes",
-                        ],
-                    },
-                },
-            }
         return {
             "root": {
                 "type": "object",
-                "required": ["form", "components", "summary", "warnings"],
+                "required": ["form", "base_content", "components", "summary", "warnings"],
                 "forbidden": ["markdown fences", "partial patches", "free-form text outside JSON"],
             },
             "form": {
@@ -427,41 +289,23 @@ class AIAssistant:
             "components": {
                 "type": "array",
                 "rules": [
-                    "preserve component keys unless changing template",
+                    "component keys must match service keys in base_content",
                     "ports include target, published, protocol, and mode when known",
                     "env_vars include key, value, and secret",
                     "volumes include source, target, type, and readonly",
                 ],
             },
-        }
-
-    def generate_template(self, payload, env=None):
-        payload = payload or {}
-        intent = self._clean_text(payload.get("intent"))
-        if not intent:
-            raise AIAssistantError(400, "AI 요청 내용을 입력하세요.", "MISSING_INTENT")
-
-        context = {
-            "contract": self.template_contract(),
-            "output_format": self.output_format_contract("template"),
-            "mode": payload.get("mode") or "template_create",
-            "intent": intent,
-            "current": payload.get("current") or {},
-            "constraints": payload.get("constraints") or {},
-            "compose_validation": self.compose_validation_contract(),
-        }
-        system = self._system_prompt("template")
-        provider = self._select_provider(env=env, selection=payload)
-        provider_public = self._provider_public(provider)
-        draft, preview, data = self._complete_template_until_valid(system, context, provider, env=env)
-
-        return {
-            "provider": provider_public,
-            "contract": self.template_contract(),
-            "draft": draft,
-            "preview": preview,
-            "summary": self._clean_text(data.get("summary")),
-            "warnings": self._string_list(data.get("warnings")),
+            "base_content": {
+                "preferred_type": "object",
+                "allowed_type": "object or valid YAML string",
+                "rules": [
+                    "complete Docker Compose document, not a patch",
+                    "no placeholder syntax",
+                    "healthcheck.test, interval, timeout, retries, and start_period are sibling keys under healthcheck",
+                    "no container_name, no hostname, no unsupported networks",
+                    "only docker_infra_overlay network when networks are declared",
+                ],
+            },
         }
 
     def generate_service(self, payload, env=None):
@@ -475,13 +319,12 @@ class AIAssistant:
         context = {
             "contract": self.service_contract(),
             "output_format": self.output_format_contract("service"),
+            "docker_infra_context": self._service_create_context(payload),
             "mode": payload.get("mode") or "service_create",
             "intent": intent,
             "form": form,
             "components": components,
             "base_content": payload.get("base_content") or "",
-            "template_id": payload.get("template_id") or "",
-            "templates": self._compact_templates(payload.get("templates") or []),
             "zones": self._compact_zones(payload.get("zones") or []),
             "service": payload.get("service") or {},
             "compose_validation": self.compose_validation_contract(),
@@ -500,64 +343,6 @@ class AIAssistant:
             "warnings": self._string_list(data.get("warnings")),
         }
 
-    def stream_template(self, payload, env=None):
-        payload = payload or {}
-        intent = self._clean_text(payload.get("intent"))
-        if not intent:
-            yield {"type": "error", "message": "AI 요청 내용을 입력하세요.", "error_code": "MISSING_INTENT"}
-            return
-        context = {
-            "contract": self.template_contract(),
-            "output_format": self.output_format_contract("template"),
-            "mode": payload.get("mode") or "template_create",
-            "intent": intent,
-            "current": payload.get("current") or {},
-            "constraints": payload.get("constraints") or {},
-            "compose_validation": self.compose_validation_contract(),
-        }
-        try:
-            provider = self._select_provider(env=env, selection=payload)
-        except Exception as exc:
-            yield self._error_event(exc)
-            return
-        stream_context = context
-        system = self._system_prompt("template")
-        for attempt in range(MAX_AI_REPAIR_ATTEMPTS + 1):
-            data = None
-            if attempt > 0:
-                yield {"type": "status", "message": "검증 실패 내용을 AI에 다시 전달해 output을 보정합니다."}
-            try:
-                for event in self._stream_json_with_provider("template", stream_context, provider, system=system):
-                    if event.get("type") != "complete":
-                        yield event
-                        continue
-                    data = event.get("data") or {}
-                if data is None:
-                    raise AIAssistantError(502, "AI 응답 JSON 객체가 비어 있습니다.", "AI_EMPTY_RESPONSE")
-                draft = self._normalize_template_draft(data, fallback_current=context["current"])
-                preview = self._validate_template_draft(draft, env=env)
-                yield {
-                    "type": "done",
-                    "data": {
-                        "provider": self._provider_public(provider),
-                        "contract": self.template_contract(),
-                        "draft": draft,
-                        "preview": preview,
-                        "summary": self._clean_text(data.get("summary")),
-                        "warnings": self._string_list(data.get("warnings")),
-                    },
-                }
-                return
-            except Exception as exc:
-                if not self._is_output_repairable_error(exc):
-                    yield self._error_event(exc)
-                    return
-                if attempt >= MAX_AI_REPAIR_ATTEMPTS:
-                    yield self._error_event(self._as_output_validation_error(exc, "template"))
-                    return
-                stream_context = self._repair_context("template", context, data, exc, attempt + 1)
-                system = self._repair_system_prompt("template")
-
     def stream_service(self, payload, env=None):
         payload = payload or {}
         intent = self._clean_text(payload.get("intent"))
@@ -567,13 +352,12 @@ class AIAssistant:
         context = {
             "contract": self.service_contract(),
             "output_format": self.output_format_contract("service"),
+            "docker_infra_context": self._service_create_context(payload),
             "mode": payload.get("mode") or "service_create",
             "intent": intent,
             "form": payload.get("form") or {},
             "components": payload.get("components") or [],
             "base_content": payload.get("base_content") or "",
-            "template_id": payload.get("template_id") or "",
-            "templates": self._compact_templates(payload.get("templates") or []),
             "zones": self._compact_zones(payload.get("zones") or []),
             "service": payload.get("service") or {},
             "compose_validation": self.compose_validation_contract(),
@@ -588,7 +372,13 @@ class AIAssistant:
         for attempt in range(MAX_AI_REPAIR_ATTEMPTS + 1):
             data = None
             if attempt > 0:
-                yield {"type": "status", "message": "검증 실패 내용을 AI에 다시 전달해 output을 보정합니다."}
+                yield {
+                    "type": "status",
+                    "message": "검증 실패 내용을 AI에 다시 전달해 output을 보정합니다. (%s/%s)" % (
+                        attempt,
+                        MAX_AI_REPAIR_ATTEMPTS,
+                    ),
+                }
             try:
                 for event in self._stream_json_with_provider("service", stream_context, provider, system=system):
                     if event.get("type") != "complete":
@@ -621,29 +411,6 @@ class AIAssistant:
                 stream_context = self._repair_context("service", context, data, exc, attempt + 1)
                 system = self._repair_system_prompt("service")
 
-    def _complete_template_until_valid(self, system, context, provider, env=None):
-        data = None
-        last_error = None
-        request_context = context
-        request_system = system
-        for attempt in range(MAX_AI_REPAIR_ATTEMPTS + 1):
-            try:
-                data, _ = self._complete_json(request_system, request_context, provider=provider)
-                if not isinstance(data, dict):
-                    raise AIAssistantError(502, "AI 응답 JSON 객체가 비어 있습니다.", "AI_EMPTY_RESPONSE")
-                draft = self._normalize_template_draft(data, fallback_current=context.get("current") or {})
-                preview = self._validate_template_draft(draft, env=env)
-                return draft, preview, data
-            except Exception as exc:
-                last_error = exc
-                if not self._is_output_repairable_error(exc):
-                    raise
-                if attempt >= MAX_AI_REPAIR_ATTEMPTS:
-                    raise self._as_output_validation_error(exc, "template")
-                request_context = self._repair_context("template", context, data, exc, attempt + 1)
-                request_system = self._repair_system_prompt("template")
-        raise self._as_output_validation_error(last_error, "template")
-
     def _complete_service_until_valid(self, system, context, provider, env=None):
         data = None
         last_error = None
@@ -667,44 +434,35 @@ class AIAssistant:
                 request_system = self._repair_system_prompt("service")
         raise self._as_output_validation_error(last_error, "service")
 
-    def _validate_template_draft(self, draft, env=None):
-        try:
-            return templates_model.preview(
-                {
-                    "namespace": draft["template"]["namespace"],
-                    "compose": draft["files"]["docker-compose.yaml"],
-                    "values_default": draft["files"]["values.default.yaml"],
-                },
-                env=env,
-            )
-        except Exception as exc:
-            raise self._as_output_validation_error(exc, "template")
-
     def _validate_service_draft(self, draft, context, env=None):
-        rendered = None
-        if context.get("base_content") and draft.get("components"):
-            try:
+        content = draft.get("base_content") or context.get("base_content") or ""
+        try:
+            if content and draft.get("components"):
                 rendered = services_wizard.render(
                     {
-                        "base_content": context.get("base_content") or "",
+                        "base_content": content,
                         "components": draft.get("components") or [],
                     }
                 )
-                namespace = self._namespace((draft.get("form") or {}).get("name") or (context.get("form") or {}).get("name") or "ai_service")
-                compose_validator.validate(
-                    {
-                        "namespace": namespace,
-                        "filename": "docker-compose.yaml",
-                        "content": rendered,
-                    }
-                )
-            except Exception as exc:
-                raise self._as_output_validation_error(exc, "service")
-        return rendered
+            else:
+                rendered = content
+            if not str(rendered or "").strip():
+                raise AIAssistantError(422, "AI 응답에 Compose 초안이 없습니다.", "AI_OUTPUT_MISSING_FIELD")
+            namespace = self._namespace((draft.get("form") or {}).get("name") or (context.get("form") or {}).get("name") or "ai_service")
+            compose_validator.validate(
+                {
+                    "namespace": namespace,
+                    "filename": "docker-compose.yaml",
+                    "content": rendered,
+                }
+            )
+            return rendered
+        except Exception as exc:
+            raise self._as_output_validation_error(exc, "service")
 
     def _repair_context(self, target, context, data, exc, attempt):
         return {
-            "contract": self.template_contract() if target == "template" else self.service_contract(),
+            "contract": self.service_contract(),
             "output_format": self.output_format_contract(target),
             "compose_validation": self.compose_validation_contract(),
             "mode": context.get("mode"),
@@ -729,15 +487,6 @@ class AIAssistant:
             "If the error is INVALID_YAML or a YAML parser error, rebuild the failed YAML file as an object field when output_format allows it; otherwise rebuild the full YAML text instead of patching only the reported line.",
             "Do not include markdown, explanations, or partial patches.",
         ]
-        if target == "template":
-            lines.extend(
-                [
-                    "If files.docker-compose.yaml failed YAML parsing, return files.docker-compose.yaml as an object in the outer JSON, not as YAML text.",
-                    "If files.values.default.yaml failed YAML parsing, return files.values.default.yaml as an object in the outer JSON, not as YAML text.",
-                    "healthcheck.test, healthcheck.interval, healthcheck.timeout, healthcheck.retries, and healthcheck.start_period must be sibling keys under healthcheck.",
-                    "Do not place interval, timeout, retries, or start_period under the test sequence.",
-                ]
-            )
         return "\n".join(lines)
 
     def _repair_diagnostics(self, target, data, exc):
@@ -747,39 +496,6 @@ class AIAssistant:
         }
         if not isinstance(data, dict):
             return diagnostics
-        if target == "template":
-            files = data.get("files") if isinstance(data.get("files"), dict) else {}
-            diagnostics["yaml_syntax_checklist"] = [
-                "Every mapping entry must use key: value syntax.",
-                "Nested keys must be indented exactly under their parent.",
-                "Sequence items under healthcheck.test must all start with '- ' or use a valid inline list.",
-                "healthcheck interval, timeout, retries, and start_period must align with test, not with test's list items.",
-                "Quote template placeholders used as scalar values.",
-                "When docker-compose.yaml fails parsing, return it as a JSON object field instead of YAML text.",
-                "When values.default.yaml fails parsing, return it as a JSON object field instead of YAML text.",
-            ]
-            diagnostics["expected_healthcheck_shape"] = "\n".join(
-                [
-                    "healthcheck:",
-                    "  test: [\"CMD-SHELL\", \"command || exit 1\"]",
-                    "  interval: \"30s\"",
-                    "  timeout: \"10s\"",
-                    "  retries: 3",
-                ]
-            )
-            diagnostics["files"] = {
-                "docker-compose.yaml": self._line_numbered_text(
-                    self._diagnostic_file_text(files.get("docker-compose.yaml") or files.get("compose") or "")
-                ),
-                "values.default.yaml": self._line_numbered_text(
-                    self._diagnostic_file_text(files.get("values.default.yaml") or files.get("values_default") or "")
-                ),
-                "values.schema.json": self._line_numbered_text(
-                    self._diagnostic_file_text(files.get("values.schema.json") or files.get("values_schema") or "")
-                ),
-            }
-            return diagnostics
-
         diagnostics["service_components"] = data.get("components") or []
         diagnostics["service_form"] = data.get("form") or {}
         return diagnostics
@@ -806,10 +522,9 @@ class AIAssistant:
         if isinstance(exc, AIAssistantError) and exc.code == "AI_OUTPUT_VALIDATION_FAILED":
             return exc
         details = self._exception_payload(exc)
-        label = "템플릿" if target == "template" else "서비스"
         return AIAssistantError(
             422,
-            "AI가 생성한 %s output을 검증할 수 없습니다." % label,
+            "AI가 생성한 서비스 output을 검증할 수 없습니다.",
             "AI_OUTPUT_VALIDATION_FAILED",
             details,
         )
@@ -828,42 +543,25 @@ class AIAssistant:
             "Include a short thinking_summary field that summarizes the decision path without exposing raw chain-of-thought.",
             "Use the compose_validation object in the user context as a hard contract. Fix violations before returning JSON.",
             "Use the output_format object in the user context as the exact output contract.",
-            "Write user-facing text in Korean: summary, warnings, thinking_summary, template.description, form.description, and README.md.",
+            "Write user-facing text in Korean: summary, warnings, thinking_summary, form.description, and notes.",
             "Keep code, YAML, JSON keys, image names, environment variable names, service keys, namespaces, and identifiers in ASCII or their official spelling.",
         ]
-        if target == "template":
-            common.extend(
-                [
-                    "The output must contain template and files keys.",
-                    "Prefer returning files.docker-compose.yaml as a Docker Compose object in the outer JSON. The application will serialize the object into valid YAML.",
-                    "files.docker-compose.yaml must be a compose document using {{ value_key }} placeholders where values are configurable.",
-                    "If files.docker-compose.yaml is returned as a string, mentally parse it as YAML and fix indentation or block structure errors before responding.",
-                    "In files.docker-compose.yaml, quote every placeholder used as a scalar value, for example image: \"{{ image }}\", command item \"--token={{ registration_token }}\", and environment list item \"REGISTRATION_TOKEN={{ registration_token }}\".",
-                    "Never render placeholder defaults that make YAML document markers such as '...' or '---' appear as standalone compose values.",
-                    "files.values.default.yaml must define every placeholder used by the compose document.",
-                    "Prefer returning files.values.default.yaml as an object in the outer JSON. The application will serialize the object into valid YAML.",
-                    "If files.values.default.yaml is returned as a string, it must be a valid JSON object string, because JSON is valid YAML.",
-                    "files.values.default.yaml must define a mapping/object. Every key must be unique and every string value with ':' or '#' must be quoted if hand-written as YAML.",
-                    "For healthcheck blocks, test, interval, timeout, retries, and start_period must be sibling keys under healthcheck.",
-                    "For sensitive placeholders such as tokens, passwords, and keys, use an empty string default like 'registration_token: \"\"' and list the key in metadata.generated_secrets.",
-                    "files.values.schema.json must be a JSON Schema object for the default values.",
-                    "metadata.generated_secrets must list value keys that should be generated as secrets.",
-                    "The rendered compose from docker-compose.yaml and values.default.yaml must have services, healthchecks, no container_name, no hostname, and only the docker_infra_overlay network.",
-                    "When updating a template, preserve current template identity and unrelated files unless the user explicitly asks to change them.",
-                ]
-            )
-        else:
-            common.extend(
-                [
-                    "The output must contain form and components keys.",
-                    "components must preserve component keys from the input unless a new template is selected.",
-                    "Each port must include target, published, protocol, and mode when known.",
-                    "Each env var must include key, value, and secret when known.",
-                    "Each volume must include source, target, type, and readonly when known.",
-                    "When a public endpoint is requested, choose one valid component port as the domain target.",
-                    "Respect the existing Compose validation constraints when choosing images, ports, env, volumes, and domain target.",
-                ]
-            )
+        common.extend(
+            [
+                "The output must contain form, base_content, and components keys.",
+                "For service_create, assume the user is a beginner. Convert plain-language requirements into a complete Docker Infra service draft.",
+                "Use docker_infra_context to align service metadata, domain selection, public endpoint, ports, volumes, secrets, and validation expectations.",
+                "base_content must be a complete Docker Compose document that can be saved directly as docker-compose.yaml.",
+                "Do not use placeholder syntax in base_content.",
+                "components must match services in base_content.",
+                "Each port must include target, published, protocol, and mode when known.",
+                "Each env var must include key, value, and secret when known.",
+                "Each volume must include source, target, type, and readonly when known.",
+                "When a public endpoint is requested, choose one valid component port as the domain target.",
+                "If zones are provided and the intent asks for public access or a domain, use domain_mode=registered, a valid zone_id, and a short domain_prefix. Otherwise use domain_mode=none.",
+                "Respect the existing Compose validation constraints when choosing images, ports, env, volumes, and domain target.",
+            ]
+        )
         return "\n".join(common)
 
     def _complete_json(self, system, context, env=None, selection=None, provider=None):
@@ -1433,75 +1131,50 @@ class AIAssistant:
             {"message": str(last_error) if last_error else ""},
         )
 
-    def _normalize_template_draft(self, data, fallback_current=None):
-        fallback_current = fallback_current or {}
-        template = data.get("template") if isinstance(data.get("template"), dict) else {}
-        files = data.get("files") if isinstance(data.get("files"), dict) else {}
-        current_template = fallback_current.get("template") if isinstance(fallback_current.get("template"), dict) else {}
-        current_files = fallback_current.get("files") if isinstance(fallback_current.get("files"), dict) else {}
-
-        name = self._clean_text(template.get("name") or current_template.get("name") or "AI Generated Template")
-        namespace = self._namespace(template.get("namespace") or current_template.get("namespace") or name)
-        description = self._clean_text(template.get("description") or current_template.get("description"))
-        enabled = template.get("enabled")
-        if enabled is None:
-            enabled = current_template.get("enabled")
-        if enabled is None:
-            enabled = True
-
-        metadata = template.get("metadata") if isinstance(template.get("metadata"), dict) else {}
-        current_metadata = current_template.get("metadata") if isinstance(current_template.get("metadata"), dict) else {}
-        merged_metadata = dict(current_metadata)
-        merged_metadata.update(metadata)
-        merged_metadata.setdefault("category", "custom")
-
-        compose = self._to_yaml_file_text(
-            files.get("docker-compose.yaml")
-            or files.get("compose")
-            or current_files.get("docker-compose.yaml")
-        )
-        if not compose:
-            raise AIAssistantError(422, "AI 응답에 docker-compose.yaml이 없습니다.", "AI_OUTPUT_MISSING_FIELD")
-
-        values_default = self._to_yaml_file_text(
-            files.get("values.default.yaml")
-            if "values.default.yaml" in files
-            else files.get("values_default", current_files.get("values.default.yaml", {}))
-        )
-        self._ensure_yaml_object(values_default, "values.default.yaml")
-        values_schema = self._to_json_text(
-            files.get("values.schema.json")
-            if "values.schema.json" in files
-            else files.get("values_schema", current_files.get("values.schema.json", {}))
-        )
-        self._ensure_json_object(values_schema, "values.schema.json")
-        readme = self._clean_text(files.get("README.md") or files.get("readme") or current_files.get("README.md"))
-        if not readme:
-            readme = "# %s\n\n%s\n" % (name, description or "Generated by Docker Infra AI.")
-
-        if not merged_metadata.get("primary_image"):
-            image = self._first_image(compose)
-            if image:
-                merged_metadata["primary_image"] = image
-
+    def _service_create_context(self, payload):
+        payload = payload or {}
         return {
-            "template": {
-                "id": current_template.get("id"),
-                "name": name,
-                "namespace": namespace,
-                "description": description,
-                "enabled": bool(enabled),
-                "metadata": merged_metadata,
-            },
-            "files": {
-                "docker-compose.yaml": compose,
-                "values.default.yaml": values_default,
-                "values.schema.json": values_schema,
-                "README.md": readme,
-            },
+            "user_level": self._clean_text(payload.get("user_level") or "beginner"),
+            "creation_mode": self._clean_text(payload.get("creation_mode") or "ai_first"),
+            "primary_flow": "AI drafts the service first; direct Compose editing is advanced-only.",
+            "managed_elements": [
+                "service metadata",
+                "Docker Compose services",
+                "domain zone and prefix",
+                "nginx upstream target",
+                "SSL mode",
+                "published and target ports",
+                "named volumes",
+                "runtime-generated secrets",
+            ],
+            "automation_scope": payload.get("automation_scope") or [
+                {"title": "서비스 구성", "description": "이미지, 포트, 환경변수, 데이터 보관"},
+                {"title": "도메인 연결", "description": "등록 도메인, 공개 포트, SSL 방식"},
+                {"title": "자동 보정", "description": "검증 실패 시 AI 재호출 후 다시 검사"},
+            ],
+            "input_contract": payload.get("docker_infra_inputs") or self.service_contract().get("input"),
+            "output_contract": payload.get("docker_infra_outputs") or self.service_contract().get("output"),
+            "expectations": [
+                "Return a complete service draft that can pass compose validation without manual YAML editing.",
+                "Choose one public component and port when the user asks for browser or domain access.",
+                "Prefer named volumes over host paths for beginner-created persistent data.",
+                "Mark sensitive values as secret and list generated_secret_keys instead of returning real production secrets.",
+                "Include Korean warnings for assumptions, floating tags, unsupported requests, or manual follow-up.",
+            ],
         }
 
     def _normalize_service_draft(self, data, fallback):
+        files = data.get("files") if isinstance(data.get("files"), dict) else {}
+        base_content = self._to_yaml_file_text(
+            data.get("base_content")
+            or data.get("compose")
+            or files.get("docker-compose.yaml")
+            or files.get("compose")
+            or fallback.get("base_content")
+        )
+        if base_content == "{}\n":
+            base_content = ""
+
         form = data.get("form") if isinstance(data.get("form"), dict) else {}
         fallback_form = fallback.get("form") if isinstance(fallback.get("form"), dict) else {}
         merged_form = dict(fallback_form)
@@ -1530,7 +1203,10 @@ class AIAssistant:
 
         components = data.get("components") if isinstance(data.get("components"), list) else []
         if not components:
-            components = fallback.get("components") or []
+            if base_content:
+                components = services_wizard.components_from_content(base_content)
+            else:
+                components = fallback.get("components") or []
         normalized_components = self._normalize_components(components, fallback_components=fallback.get("components") or [])
         if not normalized_components:
             raise AIAssistantError(422, "AI 응답에 서비스 컴포넌트가 없습니다.", "AI_OUTPUT_MISSING_FIELD")
@@ -1541,15 +1217,12 @@ class AIAssistant:
                 merged_form["domain_target_key"] = merged_form.get("domain_target_key") or target["key"]
                 merged_form["domain_target_port"] = merged_form.get("domain_target_port") or str(target["port"])
 
-        template_id = self._clean_text(data.get("template_id") or fallback.get("template_id"))
-        allowed_templates = {str(t.get("id")) for t in (fallback.get("templates") or []) if t.get("id")}
-        if template_id and allowed_templates and template_id not in allowed_templates:
-            template_id = self._clean_text(fallback.get("template_id"))
-
         return {
-            "template_id": template_id,
+            "base_content": base_content,
             "form": merged_form,
             "components": normalized_components,
+            "generated_secret_keys": self._string_list(data.get("generated_secret_keys")),
+            "notes": self._clean_text(data.get("notes") or data.get("readme")),
         }
 
     def _normalize_components(self, components, fallback_components=None):
@@ -1647,82 +1320,6 @@ class AIAssistant:
         if isinstance(value, (dict, list)):
             return yaml.safe_dump(value, sort_keys=False, allow_unicode=False)
         return self._clean_text(value)
-
-    def _ensure_yaml_object(self, text, label):
-        try:
-            data = yaml.safe_load(text or "{}") or {}
-        except Exception as exc:
-            raise AIAssistantError(
-                422,
-                "AI가 생성한 %s 파일이 올바른 YAML 객체가 아닙니다." % label,
-                "AI_OUTPUT_VALIDATION_FAILED",
-                {
-                    "message": str(exc),
-                    "file": label,
-                    "expected_format": (
-                        "values.default.yaml은 바깥 JSON의 object로 반환하는 것을 권장합니다. "
-                        "문자열로 반환할 경우에는 JSON object 문자열 또는 완전한 YAML mapping이어야 합니다."
-                    ),
-                },
-            )
-        if not isinstance(data, dict):
-            raise AIAssistantError(
-                422,
-                "AI가 생성한 %s 파일은 YAML object여야 합니다." % label,
-                "AI_OUTPUT_VALIDATION_FAILED",
-                {
-                    "file": label,
-                    "expected_format": "top-level YAML mapping/object",
-                },
-            )
-        return data
-
-    def _to_json_text(self, value):
-        if isinstance(value, str):
-            text = value.strip()
-            if not text:
-                return "{}"
-            try:
-                return json.dumps(json.loads(text), ensure_ascii=False, indent=2)
-            except Exception:
-                return text
-        if value is None:
-            value = {}
-        return json.dumps(value, ensure_ascii=False, indent=2)
-
-    def _ensure_json_object(self, text, label):
-        try:
-            data = json.loads(text or "{}")
-        except Exception as exc:
-            raise AIAssistantError(
-                422,
-                "AI가 생성한 %s 파일이 올바른 JSON 객체가 아닙니다." % label,
-                "AI_OUTPUT_VALIDATION_FAILED",
-                {"message": str(exc)},
-            )
-        if not isinstance(data, dict):
-            raise AIAssistantError(
-                422,
-                "AI가 생성한 %s 파일은 JSON 객체여야 합니다." % label,
-                "AI_OUTPUT_VALIDATION_FAILED",
-            )
-        return data
-
-    def _compact_templates(self, templates):
-        result = []
-        for item in templates or []:
-            if not isinstance(item, dict):
-                continue
-            result.append(
-                {
-                    "id": item.get("id"),
-                    "name": item.get("name"),
-                    "namespace": item.get("namespace"),
-                    "description": item.get("description"),
-                    "metadata": item.get("metadata") or {},
-                }
-            )
-        return result[:50]
 
     def _compact_zones(self, zones):
         result = []
@@ -1841,7 +1438,7 @@ class AIAssistant:
     def _namespace(self, value):
         value = self._key(value)
         if not value:
-            return "ai-template"
+            return "ai-service"
         return value[:60]
 
     def _domain_prefix(self, value):

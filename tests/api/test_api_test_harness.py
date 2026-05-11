@@ -149,8 +149,8 @@ class ApiTestHarnessTest(unittest.TestCase):
 
     def test_stale_cleanup_removes_only_marked_old_test_resources(self):
         now = datetime.datetime(2026, 5, 6, tzinfo=datetime.timezone.utc)
-        stale = ROOT / ".runtime" / "test" / "templates" / "stale-resource"
-        fresh = ROOT / ".runtime" / "test" / "templates" / "fresh-resource"
+        stale = ROOT / ".runtime" / "test" / "services" / "stale-resource"
+        fresh = ROOT / ".runtime" / "test" / "services" / "fresh-resource"
         write_resource_marker(stale, "old-run", "di_test_20260505_old", created_at=now - datetime.timedelta(hours=25))
         write_resource_marker(fresh, "new-run", "di_test_20260506_new", created_at=now)
 

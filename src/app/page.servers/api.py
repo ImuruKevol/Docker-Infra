@@ -1,3 +1,16 @@
+from flask import request
+
+
+def _request_base_url():
+    forwarded_proto = (request.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip()
+    forwarded_host = (request.headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+    proto = forwarded_proto or request.scheme
+    host = forwarded_host or request.headers.get("Host")
+    if host:
+        return f"{proto}://{host}".rstrip("/")
+    return request.url_root.rstrip("/")
+
+
 def _error_payload(exc, default_code=500, default_error="UNEXPECTED_ERROR"):
     if hasattr(exc, "status_code") and hasattr(exc, "message") and hasattr(exc, "error_code"):
         extra = getattr(exc, "extra", {}) or {}
@@ -68,7 +81,8 @@ def ensure_monitoring_agent():
     payload = {}
 
     try:
-        result = monitoring.check_exporters(body)
+        body["reporter_base_url"] = body.get("reporter_base_url") or _request_base_url()
+        result = monitoring.ensure_exporters(body)
         payload = {
             **result,
             **nodes_model.overview_summary(selected_id=body.get("node_id"), auto_sync_local_master=False),
@@ -102,7 +116,7 @@ def ensure_local_master():
         selected = result["local_master"]
         if selected:
             try:
-                monitoring_result = monitoring.ensure_exporters({"node_id": selected["id"]})
+                monitoring_result = monitoring.ensure_exporters({"node_id": selected["id"], "reporter_base_url": _request_base_url()})
                 selected = nodes_model.detail(selected["id"])
                 result["local_master"] = selected
             except Exception as exc:
@@ -141,7 +155,7 @@ def register_slave():
         monitoring_result = None
         if is_new:
             try:
-                monitoring_result = monitoring.ensure_exporters({"node_id": node["id"]})
+                monitoring_result = monitoring.ensure_exporters({"node_id": node["id"], "reporter_base_url": _request_base_url()})
                 node = nodes_model.detail(node["id"])
             except Exception as exc:
                 monitoring_result = {"status": "failed", "message": str(exc)}

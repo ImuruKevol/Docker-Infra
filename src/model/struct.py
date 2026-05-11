@@ -144,10 +144,6 @@ class Struct:
         return self._load("setup")
 
     @property
-    def templates(self):
-        return self._load("templates")
-
-    @property
     def ssh_executor(self):
         return self._load("ssh_executor")
 

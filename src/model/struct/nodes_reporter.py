@@ -44,6 +44,69 @@ class NodeReporterMixin:
         )
         return _metric_to_dict(cursor.fetchone())
 
+    def _upsert_metric(self, cursor, node, payload, memory, storage, containers, reported_at, metadata):
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"node_metrics:{node['id']}",))
+        cursor.execute(
+            """
+            SELECT *
+            FROM node_metrics
+            WHERE node_id = %s
+              AND reported_at >= %s::timestamptz - interval '60 seconds'
+              AND reported_at <= %s::timestamptz + interval '60 seconds'
+            ORDER BY ABS(EXTRACT(EPOCH FROM (reported_at - %s::timestamptz))) ASC, created_at DESC
+            LIMIT 1
+            """,
+            (node["id"], reported_at, reported_at, reported_at),
+        )
+        existing = cursor.fetchone()
+        if existing is not None:
+            cursor.execute(
+                """
+                UPDATE node_metrics
+                SET cpu_percent = %s,
+                    memory = %s,
+                    storage = %s,
+                    containers = %s,
+                    reported_at = %s,
+                    test_run_id = COALESCE(%s, test_run_id),
+                    metadata = COALESCE(metadata, '{}'::jsonb) || %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                (
+                    payload.get("cpu_percent"),
+                    Jsonb(memory),
+                    Jsonb(storage),
+                    Jsonb(containers),
+                    reported_at,
+                    node["test_run_id"],
+                    Jsonb(metadata),
+                    existing["id"],
+                ),
+            )
+            return cursor.fetchone()
+        cursor.execute(
+            """
+            INSERT INTO node_metrics(
+                node_id, cpu_percent, memory, storage, containers,
+                reported_at, test_run_id, metadata
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                node["id"],
+                payload.get("cpu_percent"),
+                Jsonb(memory),
+                Jsonb(storage),
+                Jsonb(containers),
+                reported_at,
+                node["test_run_id"],
+                Jsonb(metadata),
+            ),
+        )
+        return cursor.fetchone()
+
     def issue_reporter_token(self, node_id, env=None):
         token = secrets.token_urlsafe(32)
         issued_at = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
@@ -115,6 +178,9 @@ class NodeReporterMixin:
         storage = payload.get("storage") or {}
         containers = payload.get("containers") or {"items": []}
         metadata = payload.get("metadata") or {}
+        if isinstance(metadata, dict) is False:
+            metadata = {}
+        metadata = {**metadata, "source": metadata.get("source") or "reporter_ingest"}
         if isinstance(memory, dict) is False or isinstance(storage, dict) is False:
             raise NodeError(400, "memory와 storage는 object여야 합니다.", "INVALID_METRIC_PAYLOAD")
         if isinstance(containers, (dict, list)) is False:
@@ -124,29 +190,9 @@ class NodeReporterMixin:
             with connection.cursor() as cursor:
                 credential = self._fetch_reporter_credential(cursor, reporter_token, node_id=node_id)
                 node = _node_to_dict(self._fetch_node(cursor, credential["node_id"]))
-                cursor.execute(
-                    """
-                    INSERT INTO node_metrics(
-                        node_id, cpu_percent, memory, storage, containers,
-                        reported_at, test_run_id, metadata
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING *
-                    """,
-                    (
-                        node["id"],
-                        payload.get("cpu_percent"),
-                        Jsonb(memory),
-                        Jsonb(storage),
-                        Jsonb(containers),
-                        reported_at,
-                        node["test_run_id"],
-                        Jsonb(metadata),
-                    ),
-                )
-                metric = _metric_to_dict(cursor.fetchone())
+                metric = _metric_to_dict(self._upsert_metric(cursor, node, payload, memory, storage, containers, reported_at, metadata))
                 try:
-                    metric_history.append(node["id"], metric, source=metadata.get("source") or "reporter_ingest")
+                    metric_history.append(node["id"], metric, source=metadata.get("source"))
                 except Exception:
                     pass
                 now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
