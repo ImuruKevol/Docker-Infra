@@ -1325,6 +1325,47 @@ export class Component implements OnInit, OnDestroy {
         return this.formatChartTooltipTime(raw);
     }
 
+    private escapeChartTooltipText(value: any) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    private rangeTooltipOptions(rows: any[], metricKey: string, label: string, color: string) {
+        return {
+            theme: this.isDarkMode() ? 'dark' : 'light',
+            custom: (options: any) => {
+                const dataPointIndex = Number(options?.dataPointIndex ?? -1);
+                const seriesIndex = Number(options?.seriesIndex ?? 0);
+                const row = rows[dataPointIndex] || {};
+                const seriesX = options?.w?.globals?.seriesX || options?.seriesX || [];
+                const rawTime = seriesX?.[seriesIndex]?.[dataPointIndex] ?? row?.reported_at;
+                const bg = this.isDarkMode() ? '#18181b' : '#ffffff';
+                const fg = this.isDarkMode() ? '#f4f4f5' : '#18181b';
+                const muted = this.isDarkMode() ? '#a1a1aa' : '#71717a';
+                const border = this.isDarkMode() ? '#3f3f46' : '#e4e4e7';
+                const time = this.escapeChartTooltipText(this.formatChartTooltipTime(rawTime));
+                const min = this.escapeChartTooltipText(this.formatChartTooltipPercent(this.chartStatValue(row, metricKey, 'min')));
+                const avg = this.escapeChartTooltipText(this.formatChartTooltipPercent(this.chartStatValue(row, metricKey, 'avg')));
+                const max = this.escapeChartTooltipText(this.formatChartTooltipPercent(this.chartStatValue(row, metricKey, 'max')));
+                const title = this.escapeChartTooltipText(label);
+                return `
+                    <div style="min-width: 170px; border: 1px solid ${border}; background: ${bg}; color: ${fg}; border-radius: 6px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);">
+                        <div style="border-bottom: 1px solid ${border}; padding: 7px 10px; font-size: 12px; font-weight: 600;">${time}</div>
+                        <div style="display: grid; gap: 5px; padding: 8px 10px; font-size: 12px;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;"><span style="color: ${muted};"><span style="display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 999px; background: ${color}; opacity: 0.45;"></span>${title} Min</span><strong>${min}</strong></div>
+                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;"><span style="color: ${muted};"><span style="display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 999px; background: ${color};"></span>${title} Average</span><strong>${avg}</strong></div>
+                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;"><span style="color: ${muted};"><span style="display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 999px; background: ${color}; opacity: 0.75;"></span>${title} Max</span><strong>${max}</strong></div>
+                        </div>
+                    </div>
+                `;
+            },
+        };
+    }
+
     private chartTimestamp(row: any) {
         const date = this.chartDateFromValue(row?.reported_at);
         return date ? date.getTime() : String(row?.reported_at || '');
@@ -1370,6 +1411,7 @@ export class Component implements OnInit, OnDestroy {
         return {
             ...this.apexBaseOptions(height),
             chart: { ...this.apexBaseOptions(height).chart, type: 'rangeArea' },
+            tooltip: this.rangeTooltipOptions(rows, 'cpu_percent', 'CPU', '#0ea5e9'),
             colors: ['rgba(14,165,233,0.22)', '#0ea5e9'],
             stroke: { curve: 'smooth', width: [0, 2] },
             fill: { opacity: [0.22, 1] },
@@ -1392,6 +1434,7 @@ export class Component implements OnInit, OnDestroy {
         return {
             ...this.apexBaseOptions(height),
             chart: { ...this.apexBaseOptions(height).chart, type: 'rangeArea' },
+            tooltip: this.rangeTooltipOptions(rows, 'memory_used_percent', 'Memory', '#10b981'),
             colors: ['#bbf7d0', '#10b981'],
             stroke: { curve: 'smooth', width: [0, 2] },
             fill: { opacity: [0.22, 1] },

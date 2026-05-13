@@ -172,3 +172,4 @@
 | 2026-05-13 | 170 | 대시보드 배치·도메인 조회·ApexCharts hover와 자원 min/max 보정 | [상세](devlog/2026-05-13/170-dashboard-domain-chart-fixes.md) |
 | 2026-05-13 | 171 | 대시보드 등록 도메인 목록 표시 기준 단순화 | [상세](devlog/2026-05-13/171-dashboard-registered-domain-list.md) |
 | 2026-05-13 | 172 | 대시보드 도메인 카드 조회 SQL 확정과 서비스 재시작 반영 | [상세](devlog/2026-05-13/172-dashboard-domain-card-runtime-fix.md) |
+| 2026-05-13 | 173 | CPU/Memory 자원 차트 hover tooltip min-max 표시 보강 | [상세](devlog/2026-05-13/173-resource-tooltip-minmax.md) |
