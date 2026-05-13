@@ -201,6 +201,58 @@ def stream_service_ai():
     _stream_events(events)
 
 
+def stream_runtime_ai_repair():
+    ai_assistant = wiz.model("struct").ai_assistant
+    try:
+        payload = _request_payload()
+        events = ai_assistant.stream_runtime_repair(payload)
+    except Exception as exc:
+        events = [{
+            "type": "error",
+            "message": getattr(exc, "message", str(exc)),
+            "error_code": getattr(exc, "code", "AI_RUNTIME_REPAIR_STREAM_FAILED"),
+        }]
+    _stream_events(events)
+
+
+def ai_runtime_repair():
+    ai_assistant = wiz.model("struct").ai_assistant
+    code = 200
+    payload = {}
+    try:
+        result = ai_assistant.repair_runtime(wiz.request.query())
+        service_id = (result.get("update_result") or {}).get("service", {}).get("id") or wiz.request.query().get("service_id")
+        payload = {"result": result}
+        if service_id:
+            payload.update(_service_detail_payload(service_id))
+    except Exception as exc:
+        code = getattr(exc, "status_code", 400)
+        payload = {
+            "message": getattr(exc, "message", str(exc)),
+            "error_code": getattr(exc, "code", None) or getattr(exc, "error_code", "AI_RUNTIME_REPAIR_FAILED"),
+            **getattr(exc, "details", {}),
+            **getattr(exc, "extra", {}),
+        }
+    wiz.response.status(code, **payload)
+
+
+def start_runtime_ai_verification():
+    ai_assistant = wiz.model("struct").ai_assistant
+    code = 202
+    payload = {}
+    try:
+        result = ai_assistant.start_runtime_verification(wiz.request.query())
+        payload = {"result": result}
+    except Exception as exc:
+        code = getattr(exc, "status_code", 400)
+        payload = {
+            "message": getattr(exc, "message", str(exc)),
+            "error_code": getattr(exc, "code", "AI_RUNTIME_VERIFY_START_FAILED"),
+            **getattr(exc, "details", {}),
+        }
+    wiz.response.status(code, **payload)
+
+
 def create_service():
     services_model = wiz.model("struct").services
     catalog = wiz.model("struct/infra_catalog_registry")

@@ -49,6 +49,7 @@ export class Component implements OnInit, OnDestroy {
     public editSection = signal<EditSection>('basic');
     public editBusy = signal<boolean>(false);
     public editAiBusy = signal<boolean>(false);
+    public runtimeAiBusy = signal<boolean>(false);
     public editAdvancedSettings = signal<boolean>(false);
     public rollbackModalOpen = signal<boolean>(false);
     public rollbackBusy = signal<boolean>(false);
@@ -63,9 +64,17 @@ export class Component implements OnInit, OnDestroy {
     public volumes: any[] = [];
     public editForm: any = {};
     public editComponents: any[] = [];
+    public editOperatorComment = signal<string>('');
     public editAiIntent = signal<string>('');
     public editAiResult: any = null;
+    public runtimeAiResult: any = null;
+    public runtimeAiModalOpen = signal<boolean>(false);
+    public runtimeAiIntent = signal<string>('');
+    public runtimeAiAllowContainerActions = signal<boolean>(true);
+    public runtimeAiStreamEvents = signal<any[]>([]);
+    public runtimeAiOutputTokenCount = signal<number>(0);
     public editAiModelRef = signal<string>('auto');
+    public runtimeAiModelRef = signal<string>('auto');
     public aiModelOptions = signal<any[]>([]);
     public aiDefaultModelRef = signal<string>('auto');
     public editAiStreamEvents = signal<any[]>([]);
@@ -237,6 +246,7 @@ export class Component implements OnInit, OnDestroy {
             this.aiModelOptions.set(data.options || []);
             this.aiDefaultModelRef.set(data.default_model_ref || 'auto');
             this.editAiModelRef.set(data.default_model_ref || 'auto');
+            this.runtimeAiModelRef.set(data.default_model_ref || 'auto');
         }
     }
 
@@ -995,6 +1005,7 @@ export class Component implements OnInit, OnDestroy {
         if (domain?.domain) this.matchEditDomainZone(domain.domain);
         this.ensureEditDomainTarget();
         this.editAdvancedSettings.set(false);
+        this.editOperatorComment.set(service?.metadata?.operator_comment || '');
         this.editAiIntent.set('');
         this.editAiModelRef.set(this.aiDefaultModelRef() || 'auto');
         this.resetEditAiStream();
@@ -1045,6 +1056,7 @@ export class Component implements OnInit, OnDestroy {
     public editAiInputRows() {
         return [
             { key: 'intent', value: '수정 요구사항' },
+            { key: 'operator_comment', value: '서비스 수정 추가 코멘트' },
             { key: 'model', value: 'AI 설정에서 사용 가능한 모델' },
             { key: 'form', value: '현재 서비스와 도메인' },
             { key: 'components', value: '현재 이미지, 포트, 환경변수, 볼륨' },
@@ -1126,12 +1138,12 @@ export class Component implements OnInit, OnDestroy {
             thinkingBuffer = parts.pop() || '';
             for (const line of parts) {
                 for (const text of this.streamLines(line)) {
-                    pushRow({ type: 'thinking', message: text, text });
+                    pushRow({ type: 'thinking', label: '판단 요약', message: text, text });
                 }
             }
             if (force && thinkingBuffer.trim()) {
                 const text = this.streamLines(thinkingBuffer).join(' ');
-                if (text) pushRow({ type: 'thinking', message: text, text });
+                if (text) pushRow({ type: 'thinking', label: '판단 요약', message: text, text });
                 thinkingBuffer = '';
             }
         };
@@ -1160,7 +1172,7 @@ export class Component implements OnInit, OnDestroy {
         return rows.slice(-8);
     }
 
-    private async streamEditAi(functionName: string, payload: any, onDone: (data: any) => Promise<void>) {
+    private async streamAi(functionName: string, payload: any, pushEvent: (event: any) => void, onDone: (data: any) => Promise<void>) {
         const formData = new FormData();
         formData.append('payload', JSON.stringify(payload || {}));
         const response = await fetch(`/wiz/api/page.services/${functionName}`, { method: 'POST', body: formData });
@@ -1170,6 +1182,8 @@ export class Component implements OnInit, OnDestroy {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let doneSeen = false;
+        let donePayload: any = null;
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -1180,16 +1194,30 @@ export class Component implements OnInit, OnDestroy {
                 const line = block.split('\n').find((item: string) => item.startsWith('data: '));
                 if (!line) continue;
                 const event = JSON.parse(line.slice(6));
-                this.pushEditAiEvent(event);
+                pushEvent(event);
                 if (event.type === 'error') {
                     throw new Error(event.message || 'AI 스트림 처리 중 오류가 발생했습니다.');
                 }
                 if (event.type === 'done') {
+                    doneSeen = true;
+                    donePayload = event.data;
                     await onDone(event.data);
                 }
             }
             await this.service.render();
         }
+        if (!doneSeen) {
+            throw new Error('AI 스트림이 완료 이벤트 없이 종료되었습니다.');
+        }
+        return donePayload;
+    }
+
+    private async streamEditAi(functionName: string, payload: any, onDone: (data: any) => Promise<void>) {
+        return await this.streamAi(functionName, payload, (event: any) => this.pushEditAiEvent(event), onDone);
+    }
+
+    private async streamRuntimeAi(functionName: string, payload: any, onDone: (data: any) => Promise<void>) {
+        return await this.streamAi(functionName, payload, (event: any) => this.pushRuntimeAiEvent(event), onDone);
     }
 
     public editAiOutputRows() {
@@ -1303,6 +1331,7 @@ export class Component implements OnInit, OnDestroy {
 
     public async generateEditServiceWithAi() {
         const intent = String(this.editAiIntent() || '').trim();
+        const operatorComment = String(this.editOperatorComment() || '').trim();
         if (!intent) {
             await this.alert('AI 요청 내용을 입력해주세요.');
             return;
@@ -1317,6 +1346,7 @@ export class Component implements OnInit, OnDestroy {
             await this.streamEditAi('stream_service_ai', {
                 mode: 'service_update',
                 intent,
+                operator_comment: operatorComment,
                 model_ref: this.editAiModelRef() || this.aiDefaultModelRef() || 'auto',
                 form: this.editForm,
                 components: this.editComponents,
@@ -1341,6 +1371,7 @@ export class Component implements OnInit, OnDestroy {
         const target = this.editDomainTargetOptions().find((item: any) => item.key === this.editForm.domain_target_key);
         return {
             ...this.editForm,
+            operator_comment: String(this.editOperatorComment() || '').trim(),
             base_content: this.detail()?.compose_content || '',
             components: this.editComponents,
             port: this.editForm.domain_target_port,
@@ -1395,7 +1426,9 @@ export class Component implements OnInit, OnDestroy {
 
     private async deployService(serviceId: string, fromCreate: boolean = false) {
         this.busy.set(true);
-        const { code, data } = await wiz.call('deploy_service_background', { service_id: serviceId });
+        const { code, data } = await wiz.call('deploy_service_background', {
+            service_id: serviceId,
+        });
         if ([200, 202].includes(code)) {
             await this.load(serviceId);
             const message = fromCreate
@@ -1587,10 +1620,10 @@ export class Component implements OnInit, OnDestroy {
 
     private startOperationPolling() {
         this.stopOperationPolling();
-        if (this.operationDetail()?.status !== 'running') return;
+        if (!this.isActiveOperation(this.operationDetail())) return;
         this.operationPollTimer = setInterval(async () => {
             await this.refreshOperationDetail(false);
-            if (this.operationDetail()?.status !== 'running') this.stopOperationPolling();
+            if (!this.isActiveOperation(this.operationDetail())) this.stopOperationPolling();
         }, 2000);
     }
 
@@ -1607,7 +1640,12 @@ export class Component implements OnInit, OnDestroy {
         if (showBusy) this.operationBusy.set(true);
         const { code, data } = await wiz.call('operation_detail', { operation_id: operationId });
         if (code === 200) {
-            this.operationDetail.set(data.operation || null);
+            const operation = data.operation || null;
+            this.operationDetail.set(operation);
+            if (operation && !this.isActiveOperation(operation) && this.selected()?.id) {
+                const detailResult = await wiz.call('detail_service', { service_id: this.selected().id });
+                if (detailResult.code === 200) this.applyDetail(detailResult.data);
+            }
         } else if (showBusy) {
             await this.alert(data?.message || '처리 내역을 불러올 수 없습니다.');
         }
@@ -2246,6 +2284,140 @@ export class Component implements OnInit, OnDestroy {
         return '상태 정보 없음';
     }
 
+    private statusKey(value: any) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    public runtimeIssueOperations() {
+        return (this.detail()?.operations || [])
+            .filter((item: any) => ['failed', 'canceled'].includes(this.statusKey(item?.status)))
+            .slice(0, 10);
+    }
+
+    private runtimeIssueSnapshot() {
+        const containers = this.runtimeContainers()
+            .slice(0, 30)
+            .map((container: any) => ({
+                id: container?.id,
+                name: container?.name,
+                image: container?.image,
+                state: container?.state,
+                status: container?.status,
+                node_id: container?.node_id,
+                node_name: container?.node_name,
+                runtime_service_name: container?.runtime_service_name,
+            }));
+        const problemContainers = this.runtimeContainers()
+            .filter((container: any) => !['running', 'healthy'].includes(this.containerSignal(container)))
+            .slice(0, 10)
+            .map((container: any) => ({
+                id: container?.id,
+                name: container?.name,
+                image: container?.image,
+                state: container?.state,
+                status: container?.status,
+                node_id: container?.node_id,
+                node_name: container?.node_name,
+                runtime_service_name: container?.runtime_service_name,
+            }));
+        return {
+            has_runtime_issues: this.hasRuntimeIssues(),
+            service_status: this.selected()?.status || this.detail()?.service?.status || '',
+            stack_summary: this.runtimeStackSummary(),
+            container_summary: this.runtimeContainerSummary(),
+            container_health: this.runtimeHealthSummary(),
+            containers,
+            problem_containers: problemContainers,
+            failed_operations: this.runtimeIssueOperations().map((operation: any) => ({
+                id: operation?.id,
+                type: operation?.type,
+                status: operation?.status,
+                message: operation?.message,
+                created_at: operation?.created_at,
+                started_at: operation?.started_at,
+                finished_at: operation?.finished_at,
+                result_payload: operation?.result_payload || {},
+                output: (operation?.output || []).slice(-30),
+            })),
+        };
+    }
+
+    public hasRuntimeIssues() {
+        if (['failed', 'canceled'].includes(this.statusKey(this.selected()?.status || this.detail()?.service?.status))) return true;
+        if (this.runtimeIssueOperations().length > 0) return true;
+        const stack = this.runtimeStackSummary();
+        const containers = this.runtimeContainerSummary();
+        const health = this.runtimeHealthSummary();
+        if (Number(stack.task_errors || 0) > 0) return true;
+        if (Number(health.unhealthy || 0) > 0) return true;
+        if (Number(containers.stopped || 0) > 0) return true;
+        if (Number(stack.desired || 0) > 0 && Number(stack.running || 0) < Number(stack.desired || 0)) return true;
+        return this.runtimeContainers().some((container: any) => this.containerSignal(container) !== 'running' && this.containerSignal(container) !== 'healthy');
+    }
+
+    public runRuntimeAiRepair() {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || this.runtimeAiBusy()) return;
+        this.runtimeAiIntent.set('');
+        this.runtimeAiAllowContainerActions.set(true);
+        this.runtimeAiModalOpen.set(true);
+    }
+
+    public closeRuntimeAiModal() {
+        if (this.runtimeAiBusy()) return;
+        this.runtimeAiModalOpen.set(false);
+    }
+
+    private resetRuntimeAiStream() {
+        this.runtimeAiStreamEvents.set([]);
+        this.runtimeAiOutputTokenCount.set(0);
+    }
+
+    private pushRuntimeAiEvent(event: any) {
+        this.runtimeAiStreamEvents.set([...this.runtimeAiStreamEvents(), event].slice(-120));
+        if (event?.type === 'delta') {
+            this.runtimeAiOutputTokenCount.set(this.runtimeAiOutputTokenCount() + String(event.text || '').length);
+        }
+    }
+
+    public runtimeAiStreamRows() {
+        return this.compactAiStreamRows(this.runtimeAiStreamEvents());
+    }
+
+    public async submitRuntimeAiRepair() {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || this.runtimeAiBusy()) return;
+        this.runtimeAiBusy.set(true);
+        this.resetRuntimeAiStream();
+        try {
+            const { code, data } = await wiz.call('start_runtime_ai_verification', {
+                service_id: serviceId,
+                model_ref: this.runtimeAiModelRef() || this.aiDefaultModelRef() || 'auto',
+                intent: String(this.runtimeAiIntent() || '').trim(),
+                client_runtime_issues: this.runtimeIssueSnapshot(),
+                allow_container_terminal_actions: this.runtimeAiAllowContainerActions(),
+                allow_ssh_command: true,
+                apply: true,
+                deploy: true,
+            });
+            if (![200, 202].includes(code)) {
+                throw new Error(data?.message || 'AI 런타임 검사/수정을 시작할 수 없습니다.');
+            }
+            const result = data?.result || {};
+            this.runtimeAiResult = result;
+            this.runtimeAiModalOpen.set(false);
+            const detailResult = await wiz.call('detail_service', { service_id: serviceId });
+            if (detailResult.code === 200) this.applyDetail(detailResult.data);
+            if (result.operation) await this.openOperationModal(result.operation);
+            await this.alert(result.deduplicated ? '이미 실행 중인 AI 검증 작업을 열었습니다.' : 'AI 검증과 수정 작업을 백그라운드에서 시작했습니다.', 'success');
+        } catch (error: any) {
+            this.pushRuntimeAiEvent({ type: 'error', message: error?.message || 'AI 런타임 검사/수정 중 오류가 발생했습니다.' });
+            await this.alert(error?.message || 'AI 런타임 검사/수정을 실행할 수 없습니다.');
+        }
+        this.runtimeAiBusy.set(false);
+        await this.service.render();
+    }
+
     public runtimeNginxText() {
         const summary = this.runtimeDomainSummary();
         if (!Number(summary.total || 0)) return '도메인 없음';
@@ -2257,9 +2429,21 @@ export class Component implements OnInit, OnDestroy {
         return rows.length ? rows[0] : null;
     }
 
+    private isActiveOperation(operation: any) {
+        return ['pending', 'running'].includes(this.statusKey(operation?.status));
+    }
+
+    public activeBackgroundOperation() {
+        return (this.detail()?.operations || []).find((operation: any) => (
+            this.isActiveOperation(operation)
+            && ['service.deploy', 'service.ai.verify'].includes(String(operation?.type || ''))
+        )) || null;
+    }
+
     public operationLabel(type: string) {
         const labels: any = {
             'service.deploy': '서비스 적용',
+            'service.ai.verify': 'AI 백그라운드 검증',
             'service.compose.rollback': 'Compose 되돌리기',
             'service.image.backup': '이미지 백업',
             'service.image.restore': '이미지 복원',

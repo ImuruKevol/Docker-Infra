@@ -26,6 +26,13 @@ def _normalize(value):
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower())).strip("_")
 
 
+def _safe_int(value, fallback=0):
+    try:
+        return int(value)
+    except Exception:
+        return fallback
+
+
 def _split_image(ref):
     clean = str(ref or "nginx:alpine").strip()
     digest = clean.find("@")
@@ -204,6 +211,44 @@ class ServicesWizard:
                         return candidate
         return f"{base}_{uuid.uuid4().hex[:10]}"
 
+    def _create_session_id(self, body):
+        body = body or {}
+        candidates = [body.get("create_session_id")]
+        for key in ["source_ref", "draft_metadata"]:
+            value = body.get(key)
+            if isinstance(value, dict):
+                candidates.append(value.get("create_session_id"))
+        for value in candidates:
+            clean = str(value or "").strip()
+            if clean:
+                return clean[:120]
+        return ""
+
+    def _existing_create_session(self, create_session_id, env=None):
+        if not create_session_id:
+            return None
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM services
+                    WHERE metadata->'source_ref'->>'create_session_id' = %s
+                       OR metadata->'draft'->>'create_session_id' = %s
+                       OR metadata->'wizard'->>'create_session_id' = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (create_session_id, create_session_id, create_session_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        try:
+            return (services.detail(row["id"], env=env) or {}).get("service")
+        except Exception:
+            return None
+
     def default_content(self):
         service_key = f"svc_{uuid.uuid4().hex[:8]}"
         compose = {
@@ -317,6 +362,56 @@ class ServicesWizard:
             "protocol": "tcp",
         }
 
+    def _domain_entries(self, body, env=None):
+        body = body or {}
+        raw_domains = body.get("domains") if isinstance(body.get("domains"), list) else []
+        entries = []
+        for item in raw_domains:
+            if not isinstance(item, dict):
+                continue
+            domain = str(item.get("domain") or "").strip().lower()
+            if not domain:
+                continue
+            target_key = str(item.get("domain_target_key") or item.get("target_key") or body.get("domain_target_key") or "").strip()
+            target_port = _safe_int(item.get("domain_target_port") or item.get("target_port") or item.get("port") or body.get("domain_target_port"), 80)
+            metadata = dict(item.get("metadata") or {})
+            metadata.update({
+                "source": metadata.get("source") or "service_wizard",
+                "compose_service": item.get("compose_service") or item.get("service_key") or target_key.split(":", 1)[0],
+                "target_port": target_port,
+                "published_port": _safe_int(item.get("published_port") or target_port, target_port),
+            })
+            zone_id = item.get("zone_id") or body.get("zone_id") or metadata.get("zone_id")
+            if zone_id:
+                metadata["zone_id"] = zone_id
+            ssl_mode = str(item.get("ssl_mode") or "").strip()
+            if not ssl_mode:
+                ssl_info = webserver.certificates_for_domain(domain, zone_id=zone_id, env=env)
+                ssl_mode = "existing" if int((ssl_info.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
+            entries.append({"domain": domain, "port": target_port, "ssl_mode": ssl_mode, "metadata": metadata})
+        if not entries and str(body.get("domain") or "").strip():
+            domain = str(body.get("domain") or "").strip().lower()
+            selection = self._domain_port_selection(body)
+            port = int(selection.get("target_port") or body.get("domain_target_port") or 80)
+            metadata = dict(body.get("domain_metadata") or {})
+            metadata.update(selection)
+            metadata["source"] = metadata.get("source") or "service_wizard"
+            zone_id = body.get("zone_id") or metadata.get("zone_id")
+            if zone_id:
+                metadata["zone_id"] = zone_id
+            ssl_info = webserver.certificates_for_domain(domain, zone_id=zone_id, env=env)
+            ssl_mode = "existing" if int((ssl_info.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
+            entries.append({"domain": domain, "port": port, "ssl_mode": ssl_mode, "metadata": metadata})
+        deduped = []
+        seen = set()
+        for item in entries:
+            key = item["domain"].lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
     def render(self, payload, namespace=None):
         body = payload or {}
         compose = yaml.safe_load(body.get("base_content") or self.default_content()) or {}
@@ -386,11 +481,12 @@ class ServicesWizard:
             "content": content,
             **validation_options,
         })
+        domain_entries = self._domain_entries(body, env=env)
         return {
             "namespace": namespace,
             "content": content,
             "validation": validation,
-            "preflight": preflight_model.check(body, content, namespace, validation=validation, env=env),
+            "preflight": preflight_model.check({**body, "domains": domain_entries or body.get("domains") or []}, content, namespace, validation=validation, env=env),
         }
 
     def create(self, payload, env=None):
@@ -400,16 +496,17 @@ class ServicesWizard:
         name = str(body.get("name") or "").strip()
         if not name:
             raise services.ServiceError(400, "서비스 이름을 입력해주세요.", "SERVICE_NAME_REQUIRED")
+        create_session_id = self._create_session_id(body)
+        existing = self._existing_create_session(create_session_id, env=env)
+        if existing:
+            return {"service": existing, "idempotent_reuse": True}
         namespace = self._unique_namespace(name, env=env)
         content = self.render(body, namespace=namespace)
-        domain = str(body.get("domain") or "").strip()
-        domain_selection = self._domain_port_selection(body)
-        port = int(domain_selection.get("target_port") or body.get("domain_target_port") or 80)
-        ssl_mode = "none"
-        if domain:
-            ssl_info = webserver.certificates_for_domain(domain, zone_id=body.get("zone_id"), env=env)
-            ssl_mode = "existing" if int((ssl_info.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
-            domain_selection["zone_id"] = body.get("zone_id")
+        domain_entries = self._domain_entries(body, env=env)
+        primary_domain = domain_entries[0] if domain_entries else {}
+        domain = primary_domain.get("domain") or ""
+        port = int(primary_domain.get("port") or body.get("domain_target_port") or 80)
+        ssl_mode = primary_domain.get("ssl_mode") or "none"
         validation_options = self._validation_options(body)
         validation = validator.validate({
             "namespace": namespace,
@@ -417,7 +514,7 @@ class ServicesWizard:
             "content": content,
             **validation_options,
         })
-        preflight = preflight_model.check(body, content, namespace, validation=validation, env=env)
+        preflight = preflight_model.check({**body, "domains": domain_entries or body.get("domains") or []}, content, namespace, validation=validation, env=env)
         if preflight.get("ok") is not True:
             raise services.ServiceError(
                 409,
@@ -429,8 +526,11 @@ class ServicesWizard:
         wizard_metadata = {
             "components": body.get("components") or [],
             "domain_mode": body.get("domain_mode"),
+            "domains": domain_entries,
             "import_source": body.get("import_source"),
         }
+        if create_session_id:
+            wizard_metadata["create_session_id"] = create_session_id
         source = body.get("source") or ("server_compose_import" if self._is_import_source(body) else "manual_compose")
         draft_metadata = body.get("draft_metadata") if isinstance(body.get("draft_metadata"), dict) else {}
         if draft_metadata:
@@ -438,12 +538,16 @@ class ServicesWizard:
                 **draft_metadata,
                 "source": draft_metadata.get("source") or body.get("source") or source,
             }
+        if create_session_id:
+            draft_metadata = {**draft_metadata, "create_session_id": create_session_id}
         if generated_secret_keys:
             wizard_metadata["generated_secret_keys"] = generated_secret_keys
             wizard_metadata["secret_strategy"] = "runtime_generated"
         if draft_metadata and not draft_metadata.get("source"):
             draft_metadata["source"] = source
         source_ref = body.get("source_ref") or body.get("import_source") or {"source": source, "wizard": "services.create"}
+        if create_session_id and isinstance(source_ref, dict):
+            source_ref = {**source_ref, "create_session_id": create_session_id}
         if generated_secret_keys and isinstance(source_ref, dict):
             source_ref = {**source_ref, "generated_secret_keys": generated_secret_keys}
         return services.create({
@@ -453,13 +557,14 @@ class ServicesWizard:
             "filename": "docker-compose.yaml",
             "content": content,
             "domain": domain,
+            "domains": domain_entries,
             "port": port,
             "ssl_mode": ssl_mode,
             "test_run_id": body.get("test_run_id"),
             "source": source,
             "source_ref": source_ref,
             "draft_metadata": draft_metadata,
-            "domain_metadata": domain_selection,
+            "domain_metadata": primary_domain.get("metadata") or {},
             "wizard": wizard_metadata,
         }, env=env, validation=validation)
 

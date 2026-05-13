@@ -14,6 +14,8 @@ ssh_executor = wiz.model("struct/ssh_executor")
 shared = wiz.model("struct/macros_shared")
 MacroError = shared.MacroError
 macro_row = shared.macro_row
+macro_file_row = shared.macro_file_row
+normalize_script_text = shared.normalize_script_text
 normalize_timeout = shared.normalize_timeout
 trim_output = shared.trim_output
 SCOPE_NODE = shared.SCOPE_NODE
@@ -22,20 +24,54 @@ SCOPE_NODE = shared.SCOPE_NODE
 class MacroRunner:
     MacroError = MacroError
 
-    def _fetch(self, cursor, macro_id):
-        cursor.execute(
-            """
-            SELECT m.*, n.name AS node_name, n.host AS node_host
+    def _select_sql(self):
+        return """
+            SELECT m.*, n.name AS node_name, n.host AS node_host, COALESCE(f.files, '[]'::jsonb) AS files
             FROM shell_macros m
             LEFT JOIN nodes n ON n.id = m.node_id
-            WHERE m.id = %s
-            """,
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        'id', mf.id::text,
+                        'filename', mf.filename,
+                        'content_type', mf.content_type,
+                        'size_bytes', mf.size_bytes,
+                        'created_at', mf.created_at
+                    )
+                    ORDER BY lower(mf.filename), mf.created_at
+                ) AS files
+                FROM shell_macro_files mf
+                WHERE mf.macro_id = m.id
+            ) f ON true
+        """
+
+    def _fetch(self, cursor, macro_id):
+        cursor.execute(
+            self._select_sql() + " WHERE m.id = %s",
             (macro_id,),
         )
         row = cursor.fetchone()
         if row is None:
             raise MacroError(404, "매크로를 찾을 수 없습니다.", "MACRO_NOT_FOUND")
         return macro_row(row)
+
+    def _fetch_files(self, cursor, macro_id):
+        cursor.execute(
+            """
+            SELECT id, filename, content_type, size_bytes, content, created_at
+            FROM shell_macro_files
+            WHERE macro_id = %s
+            ORDER BY lower(filename), created_at
+            """,
+            (macro_id,),
+        )
+        return [
+            {
+                **macro_file_row(row),
+                "content": bytes(row["content"] or b""),
+            }
+            for row in cursor.fetchall()
+        ]
 
     def _parse_args(self, args_text):
         if args_text in (None, ""):
@@ -45,18 +81,22 @@ class MacroRunner:
         except ValueError:
             raise MacroError(400, "인자 형식이 올바르지 않습니다. 따옴표를 확인해주세요.", "INVALID_MACRO_ARGS")
 
-    def _remote_command(self, script, args):
-        encoded_script = shlex.quote(script)
+    def _remote_command(self, script, args, workdir=None):
+        encoded_script = shlex.quote(normalize_script_text(script))
         arg_tokens = " ".join(shlex.quote(arg) for arg in args)
+        encoded_workdir = shlex.quote(workdir or "")
         return [
             "sh",
             "-lc",
             (
                 "tmp=$(mktemp /tmp/docker-infra-macro.XXXXXX.sh) && "
+                f"workdir={encoded_workdir} && "
+                'cleanup(){ rm -f "$tmp"; if [ -n "$workdir" ]; then rm -rf -- "$workdir"; fi; }; '
+                "trap cleanup EXIT; "
                 f"printf '%s\\n' {encoded_script} > \"$tmp\" && "
                 "chmod 700 \"$tmp\" && "
-                f"/bin/bash \"$tmp\" {arg_tokens}; "
-                "rc=$?; rm -f \"$tmp\"; exit $rc"
+                'if [ -n "$workdir" ]; then cd "$workdir"; export DOCKER_INFRA_MACRO_DIR="$workdir" MACRO_FILES_DIR="$workdir"; fi && '
+                f"/bin/bash \"$tmp\" {arg_tokens}"
             ),
         ]
 
@@ -94,8 +134,12 @@ class MacroRunner:
             except Exception:
                 pass
 
-    def _run_process(self, operation_id, argv, timeout_seconds, env=None):
+    def _run_process(self, operation_id, argv, timeout_seconds, env=None, cwd=None, extra_env=None):
         started = time.monotonic()
+        process_env = None
+        if extra_env:
+            process_env = os.environ.copy()
+            process_env.update({key: str(value) for key, value in extra_env.items()})
         try:
             process = subprocess.Popen(
                 argv,
@@ -105,6 +149,8 @@ class MacroRunner:
                 bufsize=1,
                 preexec_fn=os.setsid,
                 close_fds=True,
+                cwd=cwd,
+                env=process_env,
             )
         except FileNotFoundError as exc:
             self._append_output(operation_id, str(exc), stream="stderr", env=env)
@@ -179,20 +225,65 @@ class MacroRunner:
         argv.extend([f"{username}@{node['host']}", shlex.join(command)])
         return argv
 
-    def _execute_local(self, operation_id, script, args, timeout_seconds, env=None):
+    def _operation_workdir_name(self, operation_id):
+        raw = str(operation_id or "run")
+        safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in raw)
+        return f"docker-infra-macro-{safe}"
+
+    def _append_file_transfer_summary(self, operation_id, macro_files, location, env=None):
+        if not macro_files:
+            return
+        names = ", ".join(item["filename"] for item in macro_files[:5])
+        if len(macro_files) > 5:
+            names += f" 외 {len(macro_files) - 5}개"
+        self._append_output(operation_id, f"Attached files copied to {location}: {names}", stream="system", env=env)
+
+    def _write_local_macro_files(self, workdir, macro_files):
+        base = Path(workdir)
+        for item in macro_files or []:
+            target = (base / item["filename"]).resolve()
+            if target.parent != base:
+                raise MacroError(400, "첨부 파일 이름이 올바르지 않습니다.", "MACRO_FILE_NAME_INVALID")
+            target.write_bytes(item.get("content") or b"")
+
+    def _write_remote_macro_files(self, operation_id, node, macro_files, env=None):
+        if not macro_files:
+            return None
+        workdir = f"/tmp/{self._operation_workdir_name(operation_id)}"
+        for item in macro_files:
+            target = f"{workdir}/{item['filename']}"
+            nodes_model.write_file_bytes(node["id"], target, item.get("content") or b"", env=env)
+        return workdir
+
+    def _execute_local(self, operation_id, script, args, timeout_seconds, macro_files=None, env=None):
         path = None
         try:
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sh", prefix="docker-infra-macro-", delete=False) as handle:
-                handle.write(script)
+                handle.write(normalize_script_text(script))
                 path = handle.name
             Path(path).chmod(0o700)
+            if macro_files:
+                with tempfile.TemporaryDirectory(prefix=f"{self._operation_workdir_name(operation_id)}-") as workdir:
+                    self._write_local_macro_files(workdir, macro_files)
+                    self._append_file_transfer_summary(operation_id, macro_files, workdir, env=env)
+                    return self._run_process(
+                        operation_id,
+                        ["/bin/bash", path, *args],
+                        timeout_seconds,
+                        env=env,
+                        cwd=workdir,
+                        extra_env={"DOCKER_INFRA_MACRO_DIR": workdir, "MACRO_FILES_DIR": workdir},
+                    )
             return self._run_process(operation_id, ["/bin/bash", path, *args], timeout_seconds, env=env)
         finally:
             if path and Path(path).exists():
                 Path(path).unlink(missing_ok=True)
 
-    def _execute_remote(self, operation_id, node, script, args, timeout_seconds, env=None):
-        command = self._remote_command(script, args)
+    def _execute_remote(self, operation_id, node, script, args, timeout_seconds, macro_files=None, env=None):
+        workdir = self._write_remote_macro_files(operation_id, node, macro_files or [], env=env)
+        if workdir:
+            self._append_file_transfer_summary(operation_id, macro_files or [], workdir, env=env)
+        command = self._remote_command(script, args, workdir=workdir)
         argv = self._remote_argv(node, command, timeout_seconds, env=env)
         return self._run_process(operation_id, argv, timeout_seconds, env=env)
 
@@ -201,6 +292,7 @@ class MacroRunner:
             "macro_id": macro["id"],
             "macro_name": macro["name"],
             "scope_type": macro["scope_type"],
+            "file_count": macro.get("file_count", 0),
             "node_id": node["id"],
             "node_name": node.get("name"),
             "status": result.get("status"),
@@ -225,12 +317,12 @@ class MacroRunner:
             env=env,
         )
 
-    def _execute_operation(self, operation_id, macro, node, args, timeout_seconds, env=None):
+    def _execute_operation(self, operation_id, macro, node, args, timeout_seconds, macro_files=None, env=None):
         try:
             if node["is_local_master"]:
-                result = self._execute_local(operation_id, macro["script"], args, timeout_seconds, env=env)
+                result = self._execute_local(operation_id, macro["script"], args, timeout_seconds, macro_files=macro_files, env=env)
             else:
-                result = self._execute_remote(operation_id, node, macro["script"], args, timeout_seconds, env=env)
+                result = self._execute_remote(operation_id, node, macro["script"], args, timeout_seconds, macro_files=macro_files, env=env)
         except Exception as exc:
             self._append_output(operation_id, str(exc), stream="stderr", env=env)
             result = {"status": "error", "exit_code": None, "duration_ms": 0, "timed_out": False}
@@ -251,6 +343,7 @@ class MacroRunner:
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 macro = self._fetch(cursor, macro_id)
+                macro_files = self._fetch_files(cursor, macro_id)
         if not macro["enabled"]:
             raise MacroError(409, "비활성화된 매크로는 실행할 수 없습니다.", "MACRO_DISABLED")
         if macro["scope_type"] == SCOPE_NODE and macro["node_id"] != str(node_id):
@@ -262,12 +355,18 @@ class MacroRunner:
             target_type="node",
             target_id=node_id,
             message="매크로 실행을 시작했습니다.",
-            requested_payload={"macro_id": macro_id, "node_id": node_id, "args": args},
+            requested_payload={
+                "macro_id": macro_id,
+                "node_id": node_id,
+                "args": args,
+                "files": [{key: item[key] for key in ("id", "filename", "content_type", "size_bytes", "created_at")} for item in macro_files],
+            },
             test_run_id=payload.get("test_run_id"),
             metadata={
                 "macro_name": macro["name"],
                 "macro_scope_type": macro["scope_type"],
                 "macro_node_id": macro["node_id"],
+                "macro_file_count": len(macro_files),
                 "node_name": node.get("name"),
                 "node_host": node.get("host"),
             },
@@ -280,7 +379,7 @@ class MacroRunner:
             stream="system",
             env=env,
         )
-        self._spawn_background(self._execute_operation, operation_id, macro, node, args, timeout_seconds, env)
+        self._spawn_background(self._execute_operation, operation_id, macro, node, args, timeout_seconds, macro_files, env)
         return operations_model.detail(operation_id, env=env)
 
 

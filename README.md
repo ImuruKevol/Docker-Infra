@@ -116,5 +116,6 @@ wiz_project_build
 
 - 전체 설계: `docs/docker-infra-design.md`
 - 런타임 기준: `docs/docker-infra-runtime.md`
+- 서비스 AI/Codex Agent 설계: `docs/service-ai-codex-agent-design.md`
 - 전체 TODO: `docs/docker-infra-development-todo.md`
 - 남은 TODO: `docs/docker-infra-remaining-todo.md`

@@ -8,6 +8,7 @@ export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
     public error = signal<string>('');
     public activeTab = signal<string>('general');
+    public activeAiTab = signal<string>('codex');
     public savingGeneral = signal<boolean>(false);
     public savingAi = signal<boolean>(false);
     public savingAiSection = signal<string>('');
@@ -17,6 +18,8 @@ export class Component implements OnInit, OnDestroy {
     public backupBusy = signal<boolean>(false);
     public refreshingAiProvider = signal<string>('');
     public refreshingAiResources = signal<boolean>(false);
+    public refreshingCodexStatus = signal<boolean>(false);
+    public testingCodex = signal<boolean>(false);
     public general: any = { browser_title: 'Docker Infra', favicon_url: AppearanceRuntime.assetRoute('favicon'), logo_url: AppearanceRuntime.assetRoute('logo') };
     public aiSettings: any = this.defaultAiSettings();
     public aiTokens: any = { openai: {}, gemini: {} };
@@ -24,6 +27,8 @@ export class Component implements OnInit, OnDestroy {
     public aiModelCache: any = this.defaultAiModelCache();
     public aiResources: any = { nodes: [], checked_at: null, probe: false };
     public aiSources: any = {};
+    public aiCodexStatus: any = {};
+    public aiCodexTestResult: any = null;
     public aiProviderErrors: any = {};
     public backupSystem: any = {};
     public backupPolicy: any = this.defaultBackupPolicy();
@@ -90,6 +95,11 @@ export class Component implements OnInit, OnDestroy {
 
     public setActiveTab(tab: string) {
         this.activeTab.set(tab);
+    }
+
+    public setActiveAiTab(tab: string) {
+        const allowed = this.aiSubTabItems().map((item: any) => item.key);
+        this.activeAiTab.set(allowed.includes(tab) ? tab : 'codex');
     }
 
     public async saveAiSettings() {
@@ -160,6 +170,59 @@ export class Component implements OnInit, OnDestroy {
             return;
         }
         await this.alert(data?.message || '등록 노드 AI 실행 설정을 저장할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async saveAiCodex() {
+        if (this.savingAiSection()) return;
+        this.savingAiSection.set('codex');
+        await this.service.render();
+        const codex = { ...(this.aiSettings.codex || {}), cli_mode: 'system' };
+        const { code, data } = await wiz.call('save_ai_section', { section: 'codex', codex });
+        this.savingAiSection.set('');
+        if (code === 200) {
+            this.syncAiPayload(data.ai_settings || {});
+            await this.alert('Codex 로그인 실행 설정을 저장했습니다.', 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || 'Codex 로그인 실행 설정을 저장할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async refreshAiCodexStatus() {
+        if (this.refreshingCodexStatus()) return;
+        this.refreshingCodexStatus.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call('ai_codex_status', { codex: { ...(this.aiSettings.codex || {}), cli_mode: 'system' } });
+        this.refreshingCodexStatus.set(false);
+        if (code === 200) {
+            this.aiCodexStatus = data.codex_status || {};
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || 'Codex 로그인 상태를 확인할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async testAiCodexLogin() {
+        if (this.testingCodex()) return;
+        this.testingCodex.set(true);
+        this.aiCodexTestResult = null;
+        await this.service.render();
+        const { code, data } = await wiz.call('ai_codex_test', {
+            codex: { ...(this.aiSettings.codex || {}), cli_mode: 'system' },
+            prompt: 'Docker Infra 시스템 설정에서 Codex 로그인 실행 테스트 중입니다.'
+        });
+        this.testingCodex.set(false);
+        if (code === 200) {
+            this.aiCodexTestResult = data.result || {};
+            this.aiCodexStatus = this.aiCodexTestResult.status || this.aiCodexStatus;
+            await this.alert('Codex 로그인 실행 테스트를 완료했습니다.', 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || 'Codex 로그인 실행 테스트에 실패했습니다.');
         await this.service.render();
     }
 
@@ -397,8 +460,59 @@ export class Component implements OnInit, OnDestroy {
         ];
     }
 
+    public aiSubTabItems() {
+        return [
+            { key: 'codex', label: 'Codex', icon: 'fa-terminal', enabled: this.aiSectionEnabled('codex'), summary: this.aiSectionSummary('codex') },
+            { key: 'openai', label: 'OpenAI GPT', icon: 'fa-bolt', enabled: this.aiSectionEnabled('openai'), summary: this.aiSectionSummary('openai') },
+            { key: 'gemini', label: 'Gemini', icon: 'fa-gem', enabled: this.aiSectionEnabled('gemini'), summary: this.aiSectionSummary('gemini') },
+            { key: 'ollama', label: 'Ollama', icon: 'fa-server', enabled: this.aiSectionEnabled('ollama'), summary: this.aiSectionSummary('ollama') },
+            { key: 'runtime', label: '등록 노드', icon: 'fa-microchip', enabled: this.aiSectionEnabled('runtime'), summary: this.aiSectionSummary('runtime') },
+        ];
+    }
+
+    public aiSectionEnabled(section: string) {
+        return Boolean(this.aiSettings?.[section]?.enabled);
+    }
+
+    public setAiSectionEnabled(section: string, value: boolean) {
+        if (section === 'runtime') {
+            this.setRuntimeEnabled(value);
+            return;
+        }
+        if (!this.aiSettings?.[section]) return;
+        this.aiSettings[section].enabled = Boolean(value);
+    }
+
+    public enabledAiSectionsCount() {
+        return this.aiSubTabItems().filter((item: any) => item.enabled).length;
+    }
+
+    public aiSectionSummary(section: string) {
+        if (!this.aiSectionEnabled(section)) return '사용 안 함';
+        if (section === 'codex') return `${this.codexLoginStatus()} · ${this.aiSettings.codex?.model || '-'} / ${this.aiSettings.codex?.reasoning_effort || '-'}`;
+        if (section === 'openai') return `${this.tokenStatus('openai')} · ${this.selectedModelLabel('openai')} · ${this.modelSortLabel(this.modelSortValue('openai'))}`;
+        if (section === 'gemini') return `${this.tokenStatus('gemini')} · ${this.selectedModelLabel('gemini')} · ${this.modelSortLabel(this.modelSortValue('gemini'))}`;
+        if (section === 'ollama') return `${this.aiSettings.ollama?.host || '-'}:${this.aiSettings.ollama?.port || '-'} · ${this.selectedModelLabel('ollama')}`;
+        if (section === 'runtime') return `${this.selectedRuntimeNodeLabel()} · ${this.aiSettings.runtime?.selected_model || '모델 미선택'}`;
+        return '';
+    }
+
+    public modelSortOptions() {
+        return [
+            { value: 'name_asc', label: '모델명 A-Z' },
+            { value: 'name_desc', label: '모델명 Z-A' },
+            { value: 'latest', label: '최근 생성/수정순' },
+            { value: 'oldest', label: '오래된 생성/수정순' },
+            { value: 'recommended', label: '권장 상태 우선' },
+        ];
+    }
+
+    public modelSortLabel(value: string) {
+        return this.modelSortOptions().find((item: any) => item.value === value)?.label || '모델명 A-Z';
+    }
+
     public providerModels(provider: string) {
-        return this.aiModelCache?.[provider]?.models || [];
+        return this.sortModels(this.aiModelCache?.[provider]?.models || [], this.modelSortValue(provider));
     }
 
     public modelLabel(model: any) {
@@ -432,6 +546,12 @@ export class Component implements OnInit, OnDestroy {
         const selected = String(this.aiSettings?.[provider]?.selected_model || '').replace(/^models\//, '');
         if (!selected) return null;
         return this.providerModels(provider).find((model: any) => model?.id === selected || model?.full_name === selected || model?.full_name === `models/${selected}`) || null;
+    }
+
+    public selectedModelLabel(provider: string) {
+        const model = this.selectedProviderModel(provider);
+        if (model) return this.modelLabel(model);
+        return this.aiSettings?.[provider]?.selected_model || '모델 미선택';
     }
 
     public modelDescription(model: any) {
@@ -504,8 +624,53 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public aiProviderLabel(provider: string) {
-        const labels: any = { openai: 'OpenAI', gemini: 'Gemini', ollama: 'Ollama' };
+        const labels: any = { codex: 'Codex', openai: 'OpenAI', gemini: 'Gemini', ollama: 'Ollama' };
         return labels[provider] || provider;
+    }
+
+    public codexLoginStatus() {
+        const login = this.aiCodexStatus?.login || {};
+        if (login.logged_in) return '로그인됨';
+        if (login.status === 'missing') return 'CLI 없음';
+        if (login.status === 'error') return '확인 오류';
+        return '미로그인';
+    }
+
+    public codexStatusClass() {
+        const login = this.aiCodexStatus?.login || {};
+        if (login.logged_in) return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
+        if (login.status === 'missing' || login.status === 'error') return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300';
+        return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+    }
+
+    public codexActiveCliLabel() {
+        const active = this.aiCodexStatus?.active || {};
+        if (!active.available) return '실행 파일 없음';
+        return '일반 Codex CLI';
+    }
+
+    public codexStatusRows() {
+        const active = this.aiCodexStatus?.active || {};
+        const login = this.aiCodexStatus?.login || {};
+        return [
+            { label: '활성 CLI', value: this.codexActiveCliLabel() },
+            { label: '실행 파일', value: active.executable || '-' },
+            { label: '버전', value: active.version || '-' },
+            { label: '로그인', value: login.message || this.codexLoginStatus() },
+        ];
+    }
+
+    public codexTestSummary() {
+        const result = this.aiCodexTestResult || {};
+        const metadata = result.metadata || {};
+        const text = String(result.text || '').trim();
+        if (!text && !metadata.model) return '';
+        return [
+            metadata.provider_label || 'Codex 로그인',
+            metadata.model || this.aiSettings.codex?.model,
+            metadata.reasoning_effort || this.aiSettings.codex?.reasoning_effort,
+            text ? text.slice(0, 160) : '',
+        ].filter(Boolean).join(' · ');
     }
 
     public aiProviderStatus(provider: string) {
@@ -545,6 +710,12 @@ export class Component implements OnInit, OnDestroy {
         return this.runtimeNodeItems().find((item: any) => String(item.node?.id || '') === nodeId) || null;
     }
 
+    public selectedRuntimeNodeLabel() {
+        const item = this.selectedRuntimeNodeItem();
+        if (!item) return '노드 미선택';
+        return item.node?.name || item.node?.host || '노드 미선택';
+    }
+
     public setRuntimeEnabled(value: boolean) {
         this.aiSettings.runtime.enabled = Boolean(value);
         this.aiSettings.runtime.mode = this.aiSettings.runtime.enabled ? 'registered_node' : 'cloud_api';
@@ -567,7 +738,7 @@ export class Component implements OnInit, OnDestroy {
         const models = item?.ollama?.models || [];
         const current = this.aiSettings.runtime.selected_model;
         if (!models.find((model: any) => model?.id === current)) {
-            this.aiSettings.runtime.selected_model = models[0]?.id || '';
+            this.aiSettings.runtime.selected_model = this.sortModels(models, this.modelSortValue('runtime'))[0]?.id || '';
         }
     }
 
@@ -585,7 +756,7 @@ export class Component implements OnInit, OnDestroy {
             badgeClass: ''
         };
         const item = this.selectedRuntimeNodeItem();
-        const models = item?.ollama?.models || [];
+        const models = this.sortModels(item?.ollama?.models || [], this.modelSortValue('runtime'));
         return [empty, ...models.map((model: any) => ({
             value: model.id,
             label: this.modelLabel(model),
@@ -681,6 +852,53 @@ export class Component implements OnInit, OnDestroy {
         return count.toLocaleString();
     }
 
+    private modelSortValue(provider: string) {
+        const value = String(this.aiSettings?.[provider]?.model_sort || 'name_asc');
+        return this.modelSortOptions().some((item: any) => item.value === value) ? value : 'name_asc';
+    }
+
+    private sortModels(models: any[], sort: string) {
+        const items = [...(models || [])];
+        const name = (model: any) => this.modelSortName(model);
+        const byNameAsc = (a: any, b: any) => name(a).localeCompare(name(b));
+        if (sort === 'name_desc') return items.sort((a: any, b: any) => name(b).localeCompare(name(a)));
+        if (sort === 'latest') return items.sort((a: any, b: any) => this.modelTimestamp(b) - this.modelTimestamp(a) || byNameAsc(a, b));
+        if (sort === 'oldest') return items.sort((a: any, b: any) => this.modelTimestamp(a) - this.modelTimestamp(b) || byNameAsc(a, b));
+        if (sort === 'recommended') {
+            return items.sort((a: any, b: any) => {
+                return this.modelStateRank(a) - this.modelStateRank(b)
+                    || this.modelEfficiencyRank(a) - this.modelEfficiencyRank(b)
+                    || byNameAsc(a, b);
+            });
+        }
+        return items.sort(byNameAsc);
+    }
+
+    private modelSortName(model: any) {
+        return String(model?.label || model?.id || model?.name || '').trim().toLowerCase();
+    }
+
+    private modelTimestamp(model: any) {
+        const raw = model?.modified_at ?? model?.created ?? model?.updated_at ?? model?.created_at;
+        if (typeof raw === 'number') return raw < 10000000000 ? raw * 1000 : raw;
+        const parsed = Date.parse(String(raw || ''));
+        return Number.isNaN(parsed) ? 0 : parsed;
+    }
+
+    private modelStateRank(model: any) {
+        const level = model?.state?.level || 'ok';
+        if (level === 'ok') return 0;
+        if (level === 'warning') return 1;
+        if (level === 'error') return 3;
+        return 2;
+    }
+
+    private modelEfficiencyRank(model: any) {
+        const level = model?.efficiency?.level || 'standard';
+        const ranks: any = { efficient: 0, balanced: 1, standard: 2, performance: 3, specialized: 4 };
+        return ranks[level] ?? 2;
+    }
+
     public backupPolicyLastRunLabel() {
         const value = this.backupPolicy?.last_run_at;
         if (!value) return '없음';
@@ -765,10 +983,11 @@ export class Component implements OnInit, OnDestroy {
 
     private defaultAiSettings() {
         return {
-            openai: { enabled: false, base_url: 'https://api.openai.com/v1', selected_model: '' },
-            gemini: { enabled: false, api_version: 'v1beta', selected_model: '' },
-            ollama: { enabled: false, scheme: 'http', host: '127.0.0.1', port: 11434, selected_model: '' },
-            runtime: { enabled: false, mode: 'cloud_api', target_node_id: '', node_ollama_port: 11434, prefer_gpu: true, selected_model: '' },
+            codex: { enabled: false, cli_mode: 'system', model: 'gpt-5.5', reasoning_effort: 'xhigh', codex_home: '' },
+            openai: { enabled: false, base_url: 'https://api.openai.com/v1', selected_model: '', model_sort: 'name_asc' },
+            gemini: { enabled: false, api_version: 'v1beta', selected_model: '', model_sort: 'name_asc' },
+            ollama: { enabled: false, scheme: 'http', host: '127.0.0.1', port: 11434, selected_model: '', model_sort: 'name_asc' },
+            runtime: { enabled: false, mode: 'cloud_api', target_node_id: '', node_ollama_port: 11434, prefer_gpu: true, selected_model: '', model_sort: 'name_asc' },
         };
     }
 
@@ -784,6 +1003,7 @@ export class Component implements OnInit, OnDestroy {
         const defaults = this.defaultAiSettings();
         const config = payload?.config || {};
         this.aiSettings = {
+            codex: { ...defaults.codex, ...(config.codex || {}) },
             openai: { ...defaults.openai, ...(config.openai || {}) },
             gemini: { ...defaults.gemini, ...(config.gemini || {}) },
             ollama: { ...defaults.ollama, ...(config.ollama || {}) },
@@ -793,6 +1013,7 @@ export class Component implements OnInit, OnDestroy {
         this.aiModelCache = { ...this.defaultAiModelCache(), ...(payload?.model_cache || {}) };
         this.aiResources = payload?.resources || this.aiResources;
         this.aiSources = payload?.sources || {};
+        this.aiCodexStatus = payload?.codex_status || this.aiCodexStatus || {};
     }
 
     private aiModelPayload(provider: string) {

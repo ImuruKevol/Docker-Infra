@@ -9,6 +9,7 @@ MAX_TIMEOUT_SECONDS = 1800
 MAX_CAPTURE_CHARS = 20000
 NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$")
+METRICS_COLLECTOR_AGENT_VERSION = "2026-05-13-node-local-rollup-v3"
 
 
 class LocalCommandError(Exception):
@@ -160,11 +161,17 @@ def _metrics_collector_ensure_command(params):
     if not (reporter_base_url.startswith("http://") or reporter_base_url.startswith("https://")):
         raise LocalCommandError(400, "reporter_base_url은 http(s) URL이어야 합니다.", "INVALID_METRICS_COLLECTOR_BASE_URL")
     interval_seconds = str((params or {}).get("interval_seconds") or 600).strip()
+    sample_interval_seconds = str((params or {}).get("sample_interval_seconds") or 1).strip()
     try:
-        interval = max(60, min(int(interval_seconds), 3600))
+        interval = max(600, min(int(interval_seconds), 3600))
     except Exception:
         raise LocalCommandError(400, "interval_seconds는 정수여야 합니다.", "INVALID_METRICS_COLLECTOR_INTERVAL")
-    timer_schedule = "OnCalendar=*:0/10\n" if interval == 600 else f"OnUnitActiveSec={interval}s\n"
+    try:
+        sample_interval = max(1, min(int(sample_interval_seconds), 60))
+    except Exception:
+        raise LocalCommandError(400, "sample_interval_seconds는 정수여야 합니다.", "INVALID_METRICS_COLLECTOR_SAMPLE_INTERVAL")
+    timeout = interval + 120
+    timer_schedule = f"OnUnitInactiveSec={sample_interval}s\n"
     paths = _metrics_collector_paths(params)
     script = (
         "set -eu\n"
@@ -189,6 +196,10 @@ def _metrics_collector_ensure_command(params):
         f"DOCKER_INFRA_REPORTER_TOKEN={shlex.quote(reporter_token)}\n"
         f"DOCKER_INFRA_REPORTER_BASE_URL={shlex.quote(reporter_base_url)}\n"
         f"DOCKER_INFRA_METRICS_STATE_FILE={shlex.quote(paths['state_file'])}\n"
+        f"DOCKER_INFRA_METRICS_INTERVAL_SECONDS={interval}\n"
+        f"DOCKER_INFRA_METRICS_WINDOW_SECONDS={interval}\n"
+        f"DOCKER_INFRA_METRICS_SAMPLE_SECONDS={sample_interval}\n"
+        f"DOCKER_INFRA_METRICS_AGENT_VERSION={shlex.quote(METRICS_COLLECTOR_AGENT_VERSION)}\n"
         "EOF\n"
         "cat > \"$TMP_SERVICE\" <<EOF\n"
         "[Unit]\n"
@@ -199,10 +210,11 @@ def _metrics_collector_ensure_command(params):
         "Type=oneshot\n"
         f"EnvironmentFile={paths['env_path']}\n"
         f"ExecStart={paths['script_path']}\n"
+        f"TimeoutStartSec={timeout}s\n"
         "EOF\n"
         "cat > \"$TMP_TIMER\" <<EOF\n"
         "[Unit]\n"
-        "Description=Run Docker Infra node metrics collector every 10 minutes\n\n"
+        f"Description=Run Docker Infra node metrics collector {sample_interval}s samples / {interval}s rollups\n\n"
         "[Timer]\n"
         "OnBootSec=1min\n"
         f"{timer_schedule}"
@@ -222,7 +234,7 @@ def _metrics_collector_ensure_command(params):
         "$SUDO systemctl stop \"$TIMER_NAME\" >/dev/null 2>&1 || true\n"
         "$SUDO systemctl enable \"$TIMER_NAME\"\n"
         "$SUDO systemctl start \"$TIMER_NAME\"\n"
-        "$SUDO systemctl start \"$SERVICE_NAME\"\n"
+        "$SUDO systemctl start --no-block \"$SERVICE_NAME\"\n"
         "$SUDO systemctl is-active --quiet \"$TIMER_NAME\"\n"
         "printf 'Metrics collector timer running\\n'\n"
         "$SUDO systemctl --no-pager --full status \"$TIMER_NAME\" | sed -n '1,12p'\n"
@@ -232,15 +244,41 @@ def _metrics_collector_ensure_command(params):
 
 def _metrics_collector_status_command(params):
     paths = _metrics_collector_paths(params)
+    expected_interval = str((params or {}).get("interval_seconds") or "").strip()
+    expected_sample_interval = str((params or {}).get("sample_interval_seconds") or "").strip()
+    expected_agent_version = str((params or {}).get("agent_version") or METRICS_COLLECTOR_AGENT_VERSION).strip()
     script = (
         "set -eu\n"
         "SUDO=''\n"
         "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
         f"TIMER_NAME={shlex.quote(paths['timer_name'])}\n"
         f"SERVICE_NAME={shlex.quote(paths['service_name'])}\n"
+        f"ENV_PATH={shlex.quote(paths['env_path'])}\n"
+        f"EXPECTED_INTERVAL={shlex.quote(expected_interval)}\n"
+        f"EXPECTED_SAMPLE_INTERVAL={shlex.quote(expected_sample_interval)}\n"
+        f"EXPECTED_AGENT_VERSION={shlex.quote(expected_agent_version)}\n"
         "$SUDO systemctl is-active --quiet \"$TIMER_NAME\"\n"
         "if $SUDO systemctl is-failed --quiet \"$SERVICE_NAME\"; then\n"
         "  $SUDO systemctl --no-pager --full status \"$SERVICE_NAME\" | sed -n '1,12p' || true\n"
+        "  exit 1\n"
+        "fi\n"
+        "if [ -n \"$EXPECTED_INTERVAL\" ]; then\n"
+        "  CURRENT_INTERVAL=$($SUDO awk -F= '$1==\"DOCKER_INFRA_METRICS_INTERVAL_SECONDS\" { gsub(/[\\\"'\\'' ]/, \"\", $2); print $2 }' \"$ENV_PATH\" 2>/dev/null | tail -n 1)\n"
+        "  if [ \"$CURRENT_INTERVAL\" != \"$EXPECTED_INTERVAL\" ]; then\n"
+        "    printf 'Metrics collector configuration drift: interval\\n'\n"
+        "    exit 1\n"
+        "  fi\n"
+        "fi\n"
+        "if [ -n \"$EXPECTED_SAMPLE_INTERVAL\" ]; then\n"
+        "  CURRENT_SAMPLE_INTERVAL=$($SUDO awk -F= '$1==\"DOCKER_INFRA_METRICS_SAMPLE_SECONDS\" { gsub(/[\\\"'\\'' ]/, \"\", $2); print $2 }' \"$ENV_PATH\" 2>/dev/null | tail -n 1)\n"
+        "  if [ \"$CURRENT_SAMPLE_INTERVAL\" != \"$EXPECTED_SAMPLE_INTERVAL\" ]; then\n"
+        "    printf 'Metrics collector configuration drift: sample interval\\n'\n"
+        "    exit 1\n"
+        "  fi\n"
+        "fi\n"
+        "CURRENT_AGENT_VERSION=$($SUDO awk -F= '$1==\"DOCKER_INFRA_METRICS_AGENT_VERSION\" { gsub(/[\\\"'\\'' ]/, \"\", $2); print $2 }' \"$ENV_PATH\" 2>/dev/null | tail -n 1)\n"
+        "if [ \"$CURRENT_AGENT_VERSION\" != \"$EXPECTED_AGENT_VERSION\" ]; then\n"
+        "  printf 'Metrics collector configuration drift: agent version\\n'\n"
         "  exit 1\n"
         "fi\n"
         "printf 'Metrics collector timer running\\n'\n"
@@ -309,7 +347,7 @@ def _backup_harbor_ps_command(params):
 def _service_stack_deploy_command(params):
     compose_path = _path_param(params, "compose_path")
     stack_name = _stack_name_param(params)
-    return ["docker", "stack", "deploy", "--with-registry-auth", "-c", compose_path, stack_name]
+    return ["docker", "stack", "deploy", "--with-registry-auth", "--prune", "-c", compose_path, stack_name]
 
 
 def _service_stack_remove_command(params):
@@ -551,6 +589,7 @@ class LocalCommandCatalog:
     MAX_CAPTURE_CHARS = MAX_CAPTURE_CHARS
     SYSTEM_METRICS_SCRIPT = SYSTEM_METRICS_SCRIPT
     NODE_METRICS_AGENT_SCRIPT = NODE_METRICS_AGENT_SCRIPT
+    METRICS_COLLECTOR_AGENT_VERSION = METRICS_COLLECTOR_AGENT_VERSION
     LocalCommandError = LocalCommandError
     COMMAND_SPECS = COMMAND_SPECS
     AI_RESOURCE_SCRIPT = AI_RESOURCE_SCRIPT

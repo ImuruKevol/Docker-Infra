@@ -1,0 +1,12 @@
+{
+    "id": "page.operations",
+    "mode": "page",
+    "title": "/operations",
+    "namespace": "operations",
+    "category": "infra",
+    "viewuri": "/operations",
+    "preview": "",
+    "controller": "user",
+    "layout": "layout.sidebar",
+    "template": "wiz-page-operations()"
+}

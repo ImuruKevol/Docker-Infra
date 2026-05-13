@@ -1,6 +1,9 @@
 MAX_CAPTURE_CHARS = 20000
 DEFAULT_TIMEOUT_SECONDS = 120
 MAX_TIMEOUT_SECONDS = 1800
+MAX_MACRO_FILES = 20
+MAX_MACRO_FILE_BYTES = 10 * 1024 * 1024
+MAX_MACRO_TOTAL_FILE_BYTES = 50 * 1024 * 1024
 SCOPE_GLOBAL = "global"
 SCOPE_NODE = "node"
 VALID_SCOPE_TYPES = {SCOPE_GLOBAL, SCOPE_NODE}
@@ -22,9 +25,40 @@ def row_value(row, key, default=None):
         return default
 
 
+def macro_file_row(row):
+    if row is None:
+        return None
+    return {
+        "id": str(row["id"]),
+        "filename": row["filename"],
+        "content_type": row_value(row, "content_type", "") or "",
+        "size_bytes": int(row_value(row, "size_bytes", 0) or 0),
+        "created_at": row_value(row, "created_at"),
+    }
+
+
+def normalize_macro_files(value):
+    rows = value or []
+    files = []
+    for item in rows:
+        if item is None:
+            continue
+        files.append(
+            {
+                "id": str(item.get("id") or ""),
+                "filename": item.get("filename") or "",
+                "content_type": item.get("content_type") or "",
+                "size_bytes": int(item.get("size_bytes") or 0),
+                "created_at": item.get("created_at"),
+            }
+        )
+    return [item for item in files if item["id"] and item["filename"]]
+
+
 def macro_row(row):
     if row is None:
         return None
+    files = normalize_macro_files(row_value(row, "files", []))
     return {
         "id": str(row["id"]),
         "name": row["name"],
@@ -37,6 +71,8 @@ def macro_row(row):
         "node_host": row_value(row, "node_host"),
         "test_run_id": row["test_run_id"],
         "metadata": row["metadata"] or {},
+        "files": files,
+        "file_count": len(files),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -47,6 +83,10 @@ def trim_output(value):
     if len(text) <= MAX_CAPTURE_CHARS:
         return text
     return text[:MAX_CAPTURE_CHARS] + "\n[truncated]"
+
+
+def normalize_script_text(value):
+    return str(value or "").replace("\r\n", "\n").replace("\r", "\n")
 
 
 def normalize_enabled(value):
@@ -80,9 +120,15 @@ class MacrosShared:
     MAX_CAPTURE_CHARS = MAX_CAPTURE_CHARS
     DEFAULT_TIMEOUT_SECONDS = DEFAULT_TIMEOUT_SECONDS
     MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_SECONDS
+    MAX_MACRO_FILES = MAX_MACRO_FILES
+    MAX_MACRO_FILE_BYTES = MAX_MACRO_FILE_BYTES
+    MAX_MACRO_TOTAL_FILE_BYTES = MAX_MACRO_TOTAL_FILE_BYTES
     row_value = staticmethod(row_value)
+    macro_file_row = staticmethod(macro_file_row)
+    normalize_macro_files = staticmethod(normalize_macro_files)
     macro_row = staticmethod(macro_row)
     trim_output = staticmethod(trim_output)
+    normalize_script_text = staticmethod(normalize_script_text)
     normalize_enabled = staticmethod(normalize_enabled)
     normalize_scope_type = staticmethod(normalize_scope_type)
     normalize_timeout = staticmethod(normalize_timeout)

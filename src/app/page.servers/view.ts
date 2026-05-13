@@ -3,7 +3,7 @@ import { Service } from '@wiz/libs/portal/season/service';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import Chart from 'chart.js/auto';
+import ApexCharts from 'apexcharts';
 
 export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
@@ -81,7 +81,8 @@ export class Component implements OnInit, OnDestroy {
     private terminalSocket: any = null;
     private terminalInstance: Terminal | null = null;
     private terminalFitAddon: FitAddon | null = null;
-    private resourceChartInstance: any = null;
+    private resourceChartInstances: any[] = [];
+    private resourceChartTitleObservers: MutationObserver[] = [];
     private resourceChartRenderTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(public service: Service) { }
@@ -131,6 +132,8 @@ export class Component implements OnInit, OnDestroy {
             description: '',
             script: '#!/usr/bin/env bash\n',
             enabled: true,
+            existing_files: [],
+            files: [],
         };
     }
 
@@ -536,6 +539,8 @@ export class Component implements OnInit, OnDestroy {
             description: macro?.description || '',
             script: macro?.script || '#!/usr/bin/env bash\n',
             enabled: macro?.enabled !== false,
+            existing_files: [...(macro?.files || [])],
+            files: [],
         };
         this.syncMacroEditorTheme();
         this.macroModalOpen.set(true);
@@ -554,6 +559,73 @@ export class Component implements OnInit, OnDestroy {
     public macroSubmitLabel() {
         if (this.busy()) return this.macroForm?.id ? '저장 중' : '등록 중';
         return this.macroForm?.id ? '저장' : '등록';
+    }
+
+    public existingMacroFiles() {
+        return this.macroForm?.existing_files || [];
+    }
+
+    public pendingMacroFiles() {
+        return this.macroForm?.files || [];
+    }
+
+    public macroFilesFor(macro: any) {
+        return macro?.files || [];
+    }
+
+    public macroFileCount(macro: any) {
+        const files = this.macroFilesFor(macro);
+        return Number(macro?.file_count ?? files.length ?? 0);
+    }
+
+    public macroFileSummary(macro: any) {
+        const count = this.macroFileCount(macro);
+        return count ? `첨부 ${count}개` : '첨부 없음';
+    }
+
+    public formatFileSize(value: any) {
+        const size = Number(value || 0);
+        if (size < 1024) return `${size} B`;
+        if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+        return `${(size / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    public async selectMacroFiles(event: Event) {
+        const input = event.target as HTMLInputElement;
+        const files = Array.from(input.files || []);
+        if (!files.length) return;
+        this.macroForm.files = [...this.pendingMacroFiles(), ...files];
+        input.value = '';
+        await this.service.render();
+    }
+
+    public async removeExistingMacroFile(fileId: string) {
+        this.macroForm.existing_files = this.existingMacroFiles().filter((item: any) => item.id !== fileId);
+        await this.service.render();
+    }
+
+    public async removePendingMacroFile(index: number) {
+        this.macroForm.files = this.pendingMacroFiles().filter((_: any, itemIndex: number) => itemIndex !== index);
+        await this.service.render();
+    }
+
+    private keepMacroFileIds() {
+        return this.existingMacroFiles().map((item: any) => item.id).filter((id: string) => !!id);
+    }
+
+    private async saveMacroRequest(payload: any) {
+        const formData = new FormData();
+        Object.entries(payload || {}).forEach(([key, value]) => {
+            if (value === undefined || value === null) return;
+            formData.append(key, String(value));
+        });
+        formData.append('keep_file_ids', JSON.stringify(this.keepMacroFileIds()));
+        for (const file of this.pendingMacroFiles()) {
+            formData.append('files', file, file.name);
+        }
+        const response = await fetch('/wiz/api/page.servers/save_macro', { method: 'POST', body: formData });
+        const json = await response.json();
+        return { code: json?.code || response.status, data: json?.data || json };
     }
 
     public async loadMacros(nodeId: string | null = this.selected()?.id) {
@@ -600,7 +672,7 @@ export class Component implements OnInit, OnDestroy {
         }
 
         this.busy.set(true);
-        const { code, data } = await wiz.call("save_macro", {
+        const { code, data } = await this.saveMacroRequest({
             id: this.macroForm?.id || undefined,
             node_id: this.selected()?.id,
             name,
@@ -610,6 +682,7 @@ export class Component implements OnInit, OnDestroy {
         });
         if (code === 200) {
             this.macroModalOpen.set(false);
+            this.selectedMacroId.set(data?.macro?.id || this.selectedMacroId());
             this.resetMacroForm();
             await this.loadMacros(this.selected()?.id);
         } else {
@@ -703,9 +776,9 @@ export class Component implements OnInit, OnDestroy {
         return this.macros().map((macro: any) => ({
             value: macro.id,
             label: macro.name,
-            description: macro.description || (macro.scope_type === 'node'
+            description: `${macro.description || (macro.scope_type === 'node'
                 ? '이 서버에서만 실행할 수 있는 매크로'
-                : '여러 서버에서 공통으로 실행하는 전역 매크로'),
+                : '여러 서버에서 공통으로 실행하는 전역 매크로')}${this.macroFileCount(macro) ? ` · ${this.macroFileSummary(macro)}` : ''}`,
             badge: macro.enabled === false ? '비활성화' : this.macroScopeLabel(macro),
             badgeClass: macro.enabled === false ? this.statusClass('warning') : this.macroScopeClass(macro),
             disabled: false,
@@ -1184,79 +1257,207 @@ export class Component implements OnInit, OnDestroy {
         return this.isDarkMode() ? 'rgba(63,63,70,0.9)' : 'rgba(228,228,231,0.95)';
     }
 
-    private resourceChartConfig(rows: any[]) {
-        const labels = rows.map((row: any) => this.formatChartTime(row?.reported_at));
-        const pointRadius = rows.length > 120 ? 0 : 2;
+    private chartStatValue(row: any, key: string, stat: string) {
+        const statKey = `${key}_${stat}`;
+        const statValue = Number(row?.[statKey]);
+        if (!Number.isNaN(statValue)) return Math.max(0, Math.min(100, statValue));
+        return this.chartValue(row, key);
+    }
+
+    private chartDateFromValue(value: any) {
+        if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+        if (typeof value === 'number') {
+            const date = new Date(value);
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+        const raw = String(value || '').trim();
+        if (!raw) return null;
+        if (/^\d+$/.test(raw)) {
+            const date = new Date(Number(raw));
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+        const hasTimezone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(raw);
+        const looksLikeDateTime = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(raw);
+        const normalized = looksLikeDateTime && !hasTimezone ? `${raw.replace(' ', 'T')}Z` : raw;
+        const date = new Date(normalized);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    private formatChartAxisTime(value: any) {
+        const date = this.chartDateFromValue(value);
+        if (!date) return String(value || '');
+        return new Intl.DateTimeFormat('ko-KR', {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        }).format(date);
+    }
+
+    private formatChartTooltipTime(value: any) {
+        const date = this.chartDateFromValue(value);
+        if (!date) return String(value || '');
+        return new Intl.DateTimeFormat('ko-KR', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZoneName: 'short',
+        }).format(date);
+    }
+
+    private formatChartTooltipPercent(value: any) {
+        if (Array.isArray(value)) {
+            return `${value.map((item) => Number(item || 0).toFixed(1)).join(' - ')}%`;
+        }
+        return `${Number(value || 0).toFixed(1)}%`;
+    }
+
+    private chartTooltipTime(value: any, options: any) {
+        const seriesX = options?.seriesX || options?.w?.globals?.seriesX || [];
+        const seriesIndex = Number(options?.seriesIndex ?? 0);
+        const dataPointIndex = Number(options?.dataPointIndex ?? -1);
+        const raw = seriesX?.[seriesIndex]?.[dataPointIndex] ?? value;
+        return this.formatChartTooltipTime(raw);
+    }
+
+    private chartTimestamp(row: any) {
+        const date = this.chartDateFromValue(row?.reported_at);
+        return date ? date.getTime() : String(row?.reported_at || '');
+    }
+
+    private apexBaseOptions(height: number = 250) {
         return {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [
-                    {
-                        label: 'CPU',
-                        data: rows.map((row: any) => this.chartValue(row, 'cpu_percent')),
-                        borderColor: '#0ea5e9',
-                        backgroundColor: 'rgba(14,165,233,0.12)',
-                        tension: 0.25,
-                        pointRadius,
-                        pointHoverRadius: 4,
-                    },
-                    {
-                        label: 'Memory',
-                        data: rows.map((row: any) => this.chartValue(row, 'memory_used_percent')),
-                        borderColor: '#10b981',
-                        backgroundColor: 'rgba(16,185,129,0.12)',
-                        tension: 0.25,
-                        pointRadius,
-                        pointHoverRadius: 4,
-                    },
-                    {
-                        label: 'Storage',
-                        data: rows.map((row: any) => this.chartValue(row, 'storage_used_percent')),
-                        borderColor: '#f59e0b',
-                        backgroundColor: 'rgba(245,158,11,0.12)',
-                        tension: 0.25,
-                        pointRadius,
-                        pointHoverRadius: 4,
-                    },
-                ],
+            chart: {
+                height,
+                toolbar: { show: false },
+                zoom: { enabled: false },
+                animations: { enabled: false },
+                background: 'transparent',
             },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: { color: this.chartTextColor(), usePointStyle: true, boxWidth: 8 },
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: (context: any) => `${context.dataset.label}: ${Number(context.parsed.y || 0).toFixed(1)}%`,
-                        },
-                    },
+            theme: { mode: this.isDarkMode() ? 'dark' : 'light' },
+            dataLabels: { enabled: false },
+            legend: { labels: { colors: this.chartTextColor() } },
+            grid: { borderColor: this.chartGridColor(), strokeDashArray: 3 },
+            xaxis: {
+                type: 'datetime',
+                labels: {
+                    datetimeUTC: false,
+                    style: { colors: this.chartTextColor() },
+                    formatter: (value: any, timestamp: number) => this.formatChartAxisTime(timestamp || value),
                 },
-                scales: {
-                    x: {
-                        ticks: { color: this.chartTextColor(), maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
-                        grid: { color: this.chartGridColor() },
-                    },
-                    y: {
-                        min: 0,
-                        max: 100,
-                        ticks: { color: this.chartTextColor(), callback: (value: any) => `${value}%` },
-                        grid: { color: this.chartGridColor() },
-                    },
-                },
+                axisBorder: { color: this.chartGridColor() },
+                axisTicks: { color: this.chartGridColor() },
+            },
+            yaxis: {
+                min: 0,
+                max: 100,
+                labels: { style: { colors: this.chartTextColor() }, formatter: (value: number) => `${value.toFixed(0)}%` },
+            },
+            tooltip: {
+                theme: this.isDarkMode() ? 'dark' : 'light',
+                x: { formatter: (value: any, options: any) => this.chartTooltipTime(value, options) },
+                y: { formatter: (value: any) => this.formatChartTooltipPercent(value) },
             },
         };
     }
 
+    private cpuChartOptions(rows: any[], height: number = 250) {
+        return {
+            ...this.apexBaseOptions(height),
+            chart: { ...this.apexBaseOptions(height).chart, type: 'rangeArea' },
+            colors: ['rgba(14,165,233,0.22)', '#0ea5e9'],
+            stroke: { curve: 'smooth', width: [0, 2] },
+            fill: { opacity: [0.22, 1] },
+            series: [
+                {
+                    name: 'Min/Max',
+                    type: 'rangeArea',
+                    data: rows.map((row: any) => ({ x: this.chartTimestamp(row), y: [this.chartStatValue(row, 'cpu_percent', 'min'), this.chartStatValue(row, 'cpu_percent', 'max')] })),
+                },
+                {
+                    name: 'Average',
+                    type: 'line',
+                    data: rows.map((row: any) => ({ x: this.chartTimestamp(row), y: this.chartStatValue(row, 'cpu_percent', 'avg') })),
+                },
+            ],
+        };
+    }
+
+    private memoryChartOptions(rows: any[], height: number = 250) {
+        return {
+            ...this.apexBaseOptions(height),
+            chart: { ...this.apexBaseOptions(height).chart, type: 'rangeArea' },
+            colors: ['#bbf7d0', '#10b981'],
+            stroke: { curve: 'smooth', width: [0, 2] },
+            fill: { opacity: [0.22, 1] },
+            series: [
+                {
+                    name: 'Min/Max',
+                    type: 'rangeArea',
+                    data: rows.map((row: any) => ({ x: this.chartTimestamp(row), y: [this.chartStatValue(row, 'memory_used_percent', 'min'), this.chartStatValue(row, 'memory_used_percent', 'max')] })),
+                },
+                {
+                    name: 'Average',
+                    type: 'line',
+                    data: rows.map((row: any) => ({ x: this.chartTimestamp(row), y: this.chartStatValue(row, 'memory_used_percent', 'avg') })),
+                },
+            ],
+        };
+    }
+
+    private storageChartOptions(rows: any[], height: number = 250) {
+        return {
+            ...this.apexBaseOptions(height),
+            chart: { ...this.apexBaseOptions(height).chart, type: 'line' },
+            colors: ['#f59e0b'],
+            stroke: { curve: 'smooth', width: 2 },
+            series: [
+                { name: 'Storage Used', data: rows.map((row: any) => ({ x: this.chartTimestamp(row), y: this.chartStatValue(row, 'storage_used_percent', 'avg') })) },
+            ],
+        };
+    }
+
+    private chartOptions(rows: any[], metric: string, height: number = 250) {
+        if (metric === 'memory') return this.memoryChartOptions(rows, height);
+        if (metric === 'storage') return this.storageChartOptions(rows, height);
+        return this.cpuChartOptions(rows, height);
+    }
+
+    private stripApexChartTitles(element: HTMLElement) {
+        element.querySelectorAll('[title]').forEach((node: Element) => node.removeAttribute('title'));
+        element.querySelectorAll('title').forEach((node: Element) => node.remove());
+    }
+
+    private watchApexChartTitles(element: HTMLElement) {
+        this.stripApexChartTitles(element);
+        if (typeof MutationObserver === 'undefined') return;
+        const observer = new MutationObserver(() => this.stripApexChartTitles(element));
+        observer.observe(element, { subtree: true, childList: true, attributes: true, attributeFilter: ['title'] });
+        this.resourceChartTitleObservers.push(observer);
+    }
+
+    private disconnectChartTitleObservers() {
+        this.resourceChartTitleObservers.forEach((observer: MutationObserver) => observer.disconnect());
+        this.resourceChartTitleObservers = [];
+    }
+
+    private createApexChart(element: HTMLElement, rows: any[], metric: string, height: number = 250) {
+        const chart = new ApexCharts(element, this.chartOptions(rows, metric, height) as any);
+        const rendered = chart.render();
+        this.watchApexChartTitles(element);
+        Promise.resolve(rendered).then(() => this.stripApexChartTitles(element));
+        return chart;
+    }
+
     private destroyResourceChart() {
-        if (!this.resourceChartInstance) return;
-        this.resourceChartInstance.destroy();
-        this.resourceChartInstance = null;
+        this.disconnectChartTitleObservers();
+        this.resourceChartInstances.forEach((chart: any) => chart.destroy());
+        this.resourceChartInstances = [];
     }
 
     private cancelResourceChartRender() {
@@ -1273,17 +1474,19 @@ export class Component implements OnInit, OnDestroy {
         }, 0);
     }
 
-    private resourceChartCanvasElement() {
-        return document.querySelector('[data-resource-chart-canvas="server"]') as HTMLCanvasElement | null;
+    private resourceChartElements() {
+        return Array.from(document.querySelectorAll('[data-resource-chart]')) as HTMLElement[];
     }
 
     private renderResourceChart() {
-        const canvas = this.resourceChartCanvasElement();
-        if (!canvas || !this.resourceChartOpen()) return;
+        if (!this.resourceChartOpen()) return;
         const rows = this.resourceRows();
         this.destroyResourceChart();
         if (!rows.length) return;
-        this.resourceChartInstance = new Chart(canvas, this.resourceChartConfig(rows) as any);
+        this.resourceChartElements().forEach((element: HTMLElement) => {
+            const metric = String(element.getAttribute('data-resource-chart') || 'cpu');
+            this.resourceChartInstances.push(this.createApexChart(element, rows, metric));
+        });
     }
 
     public isEditing() {
@@ -1513,14 +1716,25 @@ export class Component implements OnInit, OnDestroy {
 
     public resourceHistorySummaryText() {
         const count = this.resourceHistory()?.count || this.resourceRows().length || 0;
+        const sourceCount = this.resourceHistory()?.source_count ?? this.resourceHistory()?.sample_count ?? count;
         if (!count) return '선택한 기간에 기록이 없습니다.';
-        return `${count}개 기록`;
+        return `${count}개 구간 · ${sourceCount || 0}개 샘플`;
     }
 
     public latestResourcePercent(key: string) {
         const rows = this.resourceRows();
         if (!rows.length) return '-';
-        return this.percent(rows[rows.length - 1]?.[key]);
+        return this.percent(rows[rows.length - 1]?.[`${key}_last`] ?? rows[rows.length - 1]?.[key]);
+    }
+
+    public resourceStatSummary(key: string) {
+        const rows = this.resourceRows();
+        if (!rows.length) return '-';
+        const row = rows[rows.length - 1] || {};
+        const avg = this.percent(row[`${key}_avg`] ?? row[key]);
+        const min = this.percent(row[`${key}_min`] ?? row[key]);
+        const max = this.percent(row[`${key}_max`] ?? row[key]);
+        return `평균 ${avg} · ${min} ~ ${max}`;
     }
 
     public formatChartTime(value: any) {

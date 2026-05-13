@@ -19,8 +19,11 @@ STATUS_MODEL = ROOT / "src" / "model" / "struct" / "services_status.py"
 FLOW_MODEL = ROOT / "src" / "model" / "struct" / "services_flow.py"
 WIZARD_MODEL = ROOT / "src" / "model" / "struct" / "services_wizard.py"
 AI_ASSISTANT_MODEL = ROOT / "src" / "model" / "struct" / "ai_assistant.py"
+CODEX_RUNTIME_MODEL = ROOT / "src" / "model" / "struct" / "codex_runtime.py"
+DOCKER_INFRA_MCP = ROOT / "tools" / "docker_infra_mcp.py"
 PORTS_MODEL = ROOT / "src" / "model" / "struct" / "services_ports.py"
 DEPLOY_MODEL = ROOT / "src" / "model" / "struct" / "services_deploy.py"
+LOCAL_COMMAND_MODEL = ROOT / "src" / "model" / "struct" / "local_command_catalog.py"
 OPERATIONS_MODEL = ROOT / "src" / "model" / "struct" / "operations.py"
 DEPLOY_TARGETS_MODEL = ROOT / "src" / "model" / "struct" / "services_deploy_targets.py"
 PLACEMENT_MODEL = ROOT / "src" / "model" / "struct" / "services_placement.py"
@@ -43,6 +46,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         wizard = WIZARD_MODEL.read_text(encoding="utf-8")
         ports = PORTS_MODEL.read_text(encoding="utf-8")
         deploy = DEPLOY_MODEL.read_text(encoding="utf-8")
+        local_commands = LOCAL_COMMAND_MODEL.read_text(encoding="utf-8")
         deploy_targets = DEPLOY_TARGETS_MODEL.read_text(encoding="utf-8")
         placement = PLACEMENT_MODEL.read_text(encoding="utf-8")
         nginx = NGINX_MODEL.read_text(encoding="utf-8")
@@ -118,6 +122,10 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         template = CREATE_TEMPLATE.read_text(encoding="utf-8")
         wizard = WIZARD_MODEL.read_text(encoding="utf-8")
         assistant = AI_ASSISTANT_MODEL.read_text(encoding="utf-8")
+        codex_runtime = CODEX_RUNTIME_MODEL.read_text(encoding="utf-8")
+        mcp = DOCKER_INFRA_MCP.read_text(encoding="utf-8")
+        deploy = DEPLOY_MODEL.read_text(encoding="utf-8")
+        local_commands = LOCAL_COMMAND_MODEL.read_text(encoding="utf-8")
 
         self.assertIn("def prepare_compose_draft():", api)
         self.assertIn("prepare_manual", api)
@@ -137,6 +145,38 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("versionDraftText", services_view)
         self.assertIn("versionSourceLabel(version)", services_template)
         self.assertIn("generated_secret_keys", assistant)
+        for token in ["_complete_service_multiphase", "_service_plan_system_prompt", "_inspect_service_plan", "_service_review_system_prompt", "docker_infra_inspection", "repair_runtime", "runtime_diagnostics", "form.domains", "_assert_ai_runtime_compose_contract", "AI_RUNTIME_COMPOSE_CONTRACT_FAILED", "Do not use *_FILE"]:
+            self.assertIn(token, assistant)
+        for token in ["_runtime_issue_signals", "_client_failed_operations", "_merge_runtime_operations", "client_runtime_issues", "terminal_actions", "container_action", "operator_message", "service_status", "failed_operations", "stack_replicas", "containers_stopped", "stream_runtime_repair", "runtime_actions", "terminal_action_results", "_execute_runtime_actions", "start_runtime_verification", "_runtime_verification_worker", "_wait_runtime_ready", "_runtime_snapshot_blocked", "_runtime_snapshot_key", "AI_VERIFY_UNCHANGED_BLOCKED_ATTEMPTS", "동일한 상태 확인 로그", "다음 검증 시도", "verify_runtime", "service.ai.verify"]:
+            self.assertIn(token, assistant)
+        for token in ["runtimeIssueSnapshot", "client_runtime_issues", "runtimeIssueOperations", "runtimeAiIntent", "runtimeAiAllowContainerActions", "allow_container_terminal_actions", "allow_ssh_command", "submitRuntimeAiRepair", "start_runtime_ai_verification", "activeBackgroundOperation", "service.ai.verify", "editOperatorComment", "operator_comment", "doneSeen", "완료 이벤트 없이 종료"]:
+            self.assertIn(token, services_view)
+        for token in ["infra_context", "docker_image_check", "server_port_check", "container_logs", "container_action", "service_stack_status", "dns_lookup", "tcp_connect_check", "http_probe", "server_collect", "ssh_command"]:
+            self.assertIn(token, codex_runtime)
+            self.assertIn(token, mcp)
+        self.assertIn("create_session_id", wizard)
+        self.assertIn("_existing_create_session", wizard)
+        self.assertIn("createSessionId", view)
+        self.assertIn("createdServiceId", view)
+        for token in ["_active_deploy_operation", "deduplicated"]:
+            self.assertIn(token, deploy)
+        self.assertIn("--prune", local_commands)
+        for token in ["_candidate_codex_binaries", "_build_codex_binary", "_source_newer_than", "CODEX_BUILD_CHECK_INTERVAL_SECONDS", "DOCKER_INFRA_CODEX_AUTO_BUILD", "codex-build.lock"]:
+            self.assertIn(token, codex_runtime)
+        self.assertIn("domains", wizard)
+        self.assertIn("domains", (ROOT / "src" / "model" / "struct" / "services_update.py").read_text(encoding="utf-8"))
+        self.assertIn("ai_runtime_repair", SERVICES_API.read_text(encoding="utf-8"))
+        self.assertIn("stream_runtime_ai_repair", SERVICES_API.read_text(encoding="utf-8"))
+        self.assertIn("start_runtime_ai_verification", SERVICES_API.read_text(encoding="utf-8"))
+        self.assertIn("start_ai_verification", deploy)
+        self.assertNotIn("start_ai_verification: true", view)
+        self.assertNotIn("start_ai_verification: true", SERVICES_VIEW.read_text(encoding="utf-8"))
+        self.assertIn("start_runtime_ai_verification", SERVICES_VIEW.read_text(encoding="utf-8"))
+        self.assertIn("runRuntimeAiRepair", SERVICES_VIEW.read_text(encoding="utf-8"))
+        self.assertIn("AI 검사/수정", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertIn("AI 자동 조치 허용", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertIn("백그라운드 작업 진행 중", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertIn("추가 코멘트", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         for token in ["template_detail", "selectedTemplateId", "templateLoading", "templateSelectorItems", "template_id"]:
             self.assertNotIn(token, api)
             self.assertNotIn(token, view)
@@ -152,7 +192,11 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("services_model.update_wizard", api)
         self.assertIn("public openEditModal", view)
         self.assertIn("public async saveEditService", view)
+        self.assertIn("editOperatorComment", view)
+        self.assertIn("operator_comment", view)
+        self.assertIn("operator_comment", update)
         self.assertIn("서비스 수정", template)
+        self.assertIn("추가 코멘트", template)
         self.assertIn("ServiceUpdateMixin", services)
         for token in ["def update_wizard", "compose_versions", "service_domains", "SERVICE_PREFLIGHT_BLOCKED"]:
             self.assertIn(token, update)
@@ -171,12 +215,22 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("public async deleteSelectedService", view)
         self.assertIn("서비스 삭제", template)
         self.assertIn("ServiceDeleteMixin", services)
-        for token in ["def delete", "_managed_nginx_delete_path", "_remove_volumes", "service.stack.remove", "service.stack.volumes.remove", "proxy.nginx.configtest", "proxy.nginx.reload"]:
+        for token in ["def delete", "_managed_nginx_delete_path", "_remove_volumes", "_remove_dns_records", "delete_service_dns_records", "SERVICE_DNS_RECORD_REMOVE_FAILED", "service.stack.remove", "service.stack.volumes.remove", "proxy.nginx.configtest", "proxy.nginx.reload"]:
             self.assertIn(token, delete_model)
         self.assertIn("service.stack.remove", commands)
         self.assertIn("service.stack.volumes.remove", commands)
         self.assertIn("service.stack.remove", config)
         self.assertIn("service.stack.volumes.remove", config)
+
+    def test_service_delete_removes_cloudflare_dns_records(self):
+        delete_model = (ROOT / "src" / "model" / "struct" / "services_delete.py").read_text(encoding="utf-8")
+        domains = DOMAINS_MODEL.read_text(encoding="utf-8")
+
+        self.assertIn("domains_model.delete_service_dns_records", delete_model)
+        self.assertIn("def delete_service_dns_records", domains)
+        self.assertIn("domain.record.delete_service", domains)
+        self.assertIn("SERVICE_DNS_RECORD_DELETE_FAILED", domains)
+        self.assertIn("Managed by Docker Infra", domains)
 
     def test_service_rollback_contract_is_wired(self):
         api = SERVICES_API.read_text(encoding="utf-8")
@@ -208,6 +262,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("operations_model.detail", api)
         self.assertIn("public async openOperationModal", view)
         self.assertIn("startOperationPolling", view)
+        self.assertIn("pending", view)
         self.assertIn("operationOutput", view)
         self.assertIn("처리 로그", template)
         self.assertIn("operationModalOpen", template)

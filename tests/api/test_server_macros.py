@@ -17,7 +17,7 @@ class ServerMacrosStaticContractTest(unittest.TestCase):
 
         for token in ["매크로", "웹 터미널", "nu-monaco-editor", "servers-terminal-host", "wiz-component-search-select"]:
             self.assertIn(token, servers_view)
-        for token in ["전역 매크로", "nu-monaco-editor"]:
+        for token in ["전역 매크로", "nu-monaco-editor", "첨부 파일", "selectMacroFiles($event)"]:
             self.assertIn(token, macros_view)
         for token in ["data-search-select-input", "valueChange.emit", "filteredItems()"]:
             self.assertIn(token, search_select_view if token == "data-search-select-input" else Path("/root/docker-infra/project/main/src/app/component.search.select/view.ts").read_text(encoding="utf-8"))
@@ -28,8 +28,13 @@ class ServerMacrosStaticContractTest(unittest.TestCase):
         for token in ["def create(self, wiz, data, io):", "def ptyinput(self, wiz, data):", "def resize(self, wiz, data):", "def close(self, wiz, data, io):"]:
             self.assertIn(token, servers_socket)
         macros_store = Path("/root/docker-infra/project/main/src/model/struct/macros_store.py").read_text(encoding="utf-8")
-        for token in ["scope_type", "available_for_node", "node_id"]:
+        for token in ["scope_type", "available_for_node", "node_id", "shell_macro_files", "keep_file_ids"]:
             self.assertIn(token, macros_store)
+        macros_runner = Path("/root/docker-infra/project/main/src/model/struct/macros_runner.py").read_text(encoding="utf-8")
+        for token in ["DOCKER_INFRA_MACRO_DIR", "write_file_bytes", "_fetch_files", "normalize_script_text"]:
+            self.assertIn(token, macros_runner)
+        macros_shared = Path("/root/docker-infra/project/main/src/model/struct/macros_shared.py").read_text(encoding="utf-8")
+        self.assertIn('replace("\\r\\n", "\\n").replace("\\r", "\\n")', macros_shared)
 
 
 class ServerMacrosLiveFlowTest(unittest.TestCase):
@@ -65,30 +70,33 @@ class ServerMacrosLiveFlowTest(unittest.TestCase):
 
             create_global = self.client.post(
                 "/wiz/api/page.macros/save_macro",
-                json={
+                data={
                     "name": global_name,
                     "description": "global test macro",
-                    "script": "#!/usr/bin/env bash\necho global:$1\n",
+                    "script": "#!/usr/bin/env bash\ncat global-payload.txt\necho global:$1\n",
                     "enabled": True,
                     "test_run_id": self.client.test_run_id,
                 },
+                files=[("files", ("global-payload.txt", b"global-file\n", "text/plain"))],
                 validate=False,
             )
             self.assertEqual(create_global.status_code, 200, create_global.text[:500])
             created_global = create_global.json()["data"]["macro"]
             created_global_id = created_global["id"]
             self.assertEqual(created_global["scope_type"], "global")
+            self.assertEqual(created_global["file_count"], 1)
 
             create_node = self.client.post(
                 "/wiz/api/page.servers/save_macro",
-                json={
+                data={
                     "node_id": local["id"],
                     "name": node_name,
                     "description": "node test macro",
-                    "script": "#!/usr/bin/env bash\necho node:$1\n",
+                    "script": "#!/usr/bin/env bash\ncat node-payload.txt\necho node:$1\n",
                     "enabled": True,
                     "test_run_id": self.client.test_run_id,
                 },
+                files=[("files", ("node-payload.txt", b"node-file\n", "text/plain"))],
                 validate=False,
             )
             self.assertEqual(create_node.status_code, 200, create_node.text[:500])
@@ -96,6 +104,7 @@ class ServerMacrosLiveFlowTest(unittest.TestCase):
             created_node_id = created_node["id"]
             self.assertEqual(created_node["scope_type"], "node")
             self.assertEqual(created_node["node_id"], local["id"])
+            self.assertEqual(created_node["file_count"], 1)
 
             listed_global = self.client.post("/wiz/api/page.macros/load", json={}, validate=False)
             self.assertEqual(listed_global.status_code, 200, listed_global.text[:500])
@@ -122,6 +131,7 @@ class ServerMacrosLiveFlowTest(unittest.TestCase):
             self.assertEqual(run_global.status_code, 200, run_global.text[:500])
             global_operation = self.wait_operation(run_global.json()["data"]["operation"]["id"])
             self.assertEqual(global_operation["status"], "succeeded")
+            self.assertTrue(any("global-file" in (entry.get("message") or "") for entry in global_operation["output"]))
             self.assertTrue(any("global:hello" in (entry.get("message") or "") for entry in global_operation["output"]))
 
             run_node = self.client.post(
@@ -133,6 +143,7 @@ class ServerMacrosLiveFlowTest(unittest.TestCase):
             self.assertEqual(run_node.status_code, 200, run_node.text[:500])
             node_operation = self.wait_operation(run_node.json()["data"]["operation"]["id"])
             self.assertEqual(node_operation["status"], "succeeded")
+            self.assertTrue(any("node-file" in (entry.get("message") or "") for entry in node_operation["output"]))
             self.assertTrue(any("node:world" in (entry.get("message") or "") for entry in node_operation["output"]))
         finally:
             if created_node_id:

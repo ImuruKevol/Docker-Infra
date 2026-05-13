@@ -5,7 +5,8 @@
     "e2e:install": "playwright install chromium"
   },
   "dependencies": {
-    "@angular/cli": "^21.0.0"
+    "@angular/cli": "^21.0.0",
+    "apexcharts": "^5.11.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1"

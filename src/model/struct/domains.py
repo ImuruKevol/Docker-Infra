@@ -13,6 +13,9 @@ zone_select_sql = cloudflare.zone_select_sql
 normalize_zone = cloudflare.normalize_zone
 record_payload = cloudflare.record_payload
 
+SERVICE_DNS_COMMENT = "Managed by Docker Infra"
+SERVICE_DNS_RECORD_TYPES = {"A", "AAAA"}
+
 
 class Domains(cloudflare):
     DomainError = DomainError
@@ -99,15 +102,16 @@ class Domains(cloudflare):
                     })
                 return rows
 
-    def _find_zone_for_domain(self, cursor, domain, zone_config_id=None, env=None):
+    def _find_zone_for_domain(self, cursor, domain, zone_config_id=None, env=None, service_only=True):
         domain = str(domain or "").strip().lower()
         if zone_config_id:
             try:
                 return self._fetch_zone(cursor, zone_config_id, env=env)
             except DomainError:
                 pass
+        clause = "WHERE enabled = true AND usable_for_service = true" if service_only else ""
         cursor.execute(
-            f"{zone_select_sql()} WHERE enabled = true AND usable_for_service = true ORDER BY length(domain) DESC",
+            f"{zone_select_sql()} {clause} ORDER BY length(domain) DESC",
             (secret_key(env),),
         )
         for row in cursor.fetchall():
@@ -115,6 +119,34 @@ class Domains(cloudflare):
             if domain == zone_domain or domain.endswith(f".{zone_domain}"):
                 return row
         return None
+
+    def _service_dns_record_ids(self, metadata):
+        metadata = dict(metadata or {})
+        values = []
+        for key in ["dns_record_id", "cloudflare_record_id"]:
+            if metadata.get(key):
+                values.append(metadata.get(key))
+        for item in metadata.get("dns_records") or []:
+            if isinstance(item, dict):
+                values.append(item.get("record_id") or item.get("cloudflare_record_id") or item.get("id"))
+        return {str(value).strip() for value in values if str(value or "").strip()}
+
+    def _service_dns_record_matches(self, record, expected_content="", record_ids=None):
+        record_ids = record_ids or set()
+        record_id = str(record.get("id") or record.get("cloudflare_record_id") or "").strip()
+        if record_id and record_id in record_ids:
+            return True
+        record_type = str(record.get("type") or record.get("record_type") or "").strip().upper()
+        if record_type not in SERVICE_DNS_RECORD_TYPES:
+            return False
+        comment = str(record.get("comment") or "").strip()
+        if comment == SERVICE_DNS_COMMENT:
+            return True
+        metadata = dict(record.get("metadata") or {})
+        raw = metadata.get("raw") if isinstance(metadata.get("raw"), dict) else {}
+        if str(raw.get("comment") or "").strip() == SERVICE_DNS_COMMENT:
+            return True
+        return bool(expected_content) and str(record.get("content") or "").strip() == expected_content
 
     def ensure_service_dns_record(self, domain, zone_config_id=None, content=None, proxied=False, env=None):
         domain = str(domain or "").strip().lower()
@@ -142,7 +174,7 @@ class Domains(cloudflare):
             "content": content,
             "ttl": 1,
             "proxied": bool(proxied),
-            "comment": "Managed by Docker Infra",
+            "comment": SERVICE_DNS_COMMENT,
         }
         action = "created"
         record_id = ""
@@ -170,11 +202,114 @@ class Domains(cloudflare):
             "status": "ok",
             "action": action,
             "domain": domain,
+            "record_id": record_id,
             "record_type": record_type,
             "content": content,
             "proxied": bool(proxied),
+            "zone_id": str(zone["id"]),
             "zone": zone_payload,
         }
+
+    def delete_service_dns_records(self, service_domains, env=None):
+        rows = service_domains if isinstance(service_domains, list) else [service_domains]
+        expected_content = str(config.advertise_address(env) or "").strip()
+        deleted = []
+        skipped = []
+        failures = []
+        sync_zone_ids = set()
+
+        for row in rows:
+            row = dict(row or {})
+            domain = str(row.get("domain") or "").strip().lower()
+            metadata = dict(row.get("metadata") or {})
+            if not domain:
+                skipped.append({"service_domain_id": str(row.get("id") or ""), "reason": "domain_missing"})
+                continue
+
+            try:
+                with connect(env=env) as connection:
+                    with connection.cursor() as cursor:
+                        zone = self._find_zone_for_domain(
+                            cursor,
+                            domain,
+                            zone_config_id=metadata.get("dns_zone_id") or metadata.get("zone_id"),
+                            env=env,
+                            service_only=False,
+                        )
+                if not zone:
+                    skipped.append({"domain": domain, "reason": "zone_not_configured"})
+                    continue
+                if not zone.get("api_token_value"):
+                    skipped.append({"domain": domain, "zone": zone["domain"], "reason": "zone_token_missing"})
+                    continue
+
+                records = self.cf_request(
+                    zone.get("api_token_value"),
+                    "GET",
+                    f"/zones/{zone['zone_id']}/dns_records",
+                    query={"name": domain, "page": 1, "per_page": 100},
+                )
+                record_ids = self._service_dns_record_ids(metadata)
+                targets = [
+                    record for record in records
+                    if self._service_dns_record_matches(record, expected_content=expected_content, record_ids=record_ids)
+                ]
+                if not targets:
+                    skipped.append({"domain": domain, "zone": zone["domain"], "reason": "record_not_found"})
+                    continue
+
+                for record in targets:
+                    record_id = str(record.get("id") or "").strip()
+                    if not record_id:
+                        continue
+                    try:
+                        self.cf_request(zone.get("api_token_value"), "DELETE", f"/zones/{zone['zone_id']}/dns_records/{record_id}")
+                    except DomainError as exc:
+                        if int(getattr(exc, "status_code", 0) or 0) != 404:
+                            raise
+                    deleted.append({
+                        "service_domain_id": str(row.get("id") or ""),
+                        "domain": domain,
+                        "zone_id": str(zone["id"]),
+                        "zone": zone["domain"],
+                        "record_id": record_id,
+                        "record_type": record.get("type"),
+                        "content": record.get("content"),
+                    })
+                    sync_zone_ids.add(str(zone["id"]))
+            except DomainError as exc:
+                failures.append({
+                    "domain": domain,
+                    "message": exc.message,
+                    "error_code": exc.error_code,
+                    **exc.extra,
+                })
+
+        sync_errors = []
+        for zone_id in sorted(sync_zone_ids):
+            try:
+                self.sync_zone(zone_id, env=env)
+            except DomainError as exc:
+                sync_errors.append({"zone_id": zone_id, "message": exc.message, "error_code": exc.error_code})
+
+        result = {"deleted": deleted, "skipped": skipped, "sync_errors": sync_errors}
+        if failures:
+            result["failures"] = failures
+        self._record_domain_operation(
+            "domain.record.delete_service",
+            payload={"domains": [str((row or {}).get("domain") or "") for row in rows]},
+            result=result,
+            status="failed" if failures else "succeeded",
+            env=env,
+        )
+        if failures:
+            raise DomainError(
+                409,
+                "서비스 DNS 레코드를 삭제할 수 없습니다.",
+                "SERVICE_DNS_RECORD_DELETE_FAILED",
+                **result,
+            )
+        return {"status": "ok", **result}
 
     def load(self, env=None):
         with connect(env=env) as connection:

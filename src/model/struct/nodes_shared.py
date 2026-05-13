@@ -94,10 +94,16 @@ def parse_reported_at(value):
     if value in (None, ""):
         return datetime.datetime.now(datetime.timezone.utc)
     if isinstance(value, datetime.datetime):
-        return value
+        parsed = value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed.astimezone(datetime.timezone.utc)
     if isinstance(value, str):
         try:
-            return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+            return parsed.astimezone(datetime.timezone.utc)
         except ValueError:
             raise NodeError(400, "reported_at 형식이 올바르지 않습니다.", "INVALID_REPORTED_AT")
     raise NodeError(400, "reported_at 형식이 올바르지 않습니다.", "INVALID_REPORTED_AT")

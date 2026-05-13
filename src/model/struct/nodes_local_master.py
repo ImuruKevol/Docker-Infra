@@ -13,6 +13,7 @@ _container_summary = shared.container_summary
 _swarm_from_docker_info = shared.swarm_from_docker_info
 _node_status_from_swarm = shared.node_status_from_swarm
 _parse_reported_at = shared.parse_reported_at
+METRIC_DEDUPLICATE_WINDOW_SECONDS = 10
 
 
 class NodeLocalMasterMixin:
@@ -30,12 +31,19 @@ class NodeLocalMasterMixin:
             SELECT *
             FROM node_metrics
             WHERE node_id = %s
-              AND reported_at >= %s::timestamptz - interval '60 seconds'
-              AND reported_at <= %s::timestamptz + interval '60 seconds'
+              AND reported_at >= %s::timestamptz - (%s::int * interval '1 second')
+              AND reported_at <= %s::timestamptz + (%s::int * interval '1 second')
             ORDER BY ABS(EXTRACT(EPOCH FROM (reported_at - %s::timestamptz))) ASC, created_at DESC
             LIMIT 1
             """,
-            (node_id, reported_at, reported_at, reported_at),
+            (
+                node_id,
+                reported_at,
+                METRIC_DEDUPLICATE_WINDOW_SECONDS,
+                reported_at,
+                METRIC_DEDUPLICATE_WINDOW_SECONDS,
+                reported_at,
+            ),
         )
         existing = cursor.fetchone()
         if existing is not None:

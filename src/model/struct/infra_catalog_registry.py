@@ -12,6 +12,36 @@ backup_system = wiz.model("struct/backup_system")
 metric_history = wiz.model("struct/nodes_metric_history")
 
 
+OPERATION_LABELS = {
+    "service.deploy": "서비스 배포",
+    "service.rollback": "서비스 되돌리기",
+    "service.delete": "서비스 삭제",
+    "service.action": "서비스 제어",
+    "service.image.backup": "서비스 이미지 백업",
+    "service.image.snapshot": "컨테이너 스냅샷",
+    "macro.run": "매크로 실행",
+    "container.action": "컨테이너 제어",
+    "domain.zone.save": "도메인 저장",
+    "domain.zone.delete": "도메인 삭제",
+    "domain.record.ensure_service": "서비스 DNS 적용",
+    "domain.record.delete_service": "서비스 DNS 삭제",
+    "backup.harbor.enable": "백업 시스템 시작",
+    "backup.harbor.stop": "백업 시스템 중지",
+    "backup.harbor.disable": "백업 시스템 비활성화",
+    "backup.harbor.restart": "백업 시스템 재시작",
+    "backup.harbor.reset": "백업 시스템 초기화",
+    "node.monitoring.collector.ensure": "모니터링 구성",
+    "node.monitoring.collector.repair": "모니터링 복구",
+}
+
+ACTION_LABELS = {
+    "start": "시작",
+    "stop": "중지",
+    "restart": "재시작",
+    "delete": "삭제",
+}
+
+
 def _serialize(value):
     if isinstance(value, (datetime.datetime, datetime.date)):
         return value.isoformat()
@@ -34,6 +64,10 @@ def _rows(cursor, query, params=None):
 def _count(cursor, table):
     cursor.execute(f"SELECT count(*) AS count FROM {table}")
     return int(cursor.fetchone()["count"])
+
+
+def _dict(value):
+    return dict(value) if isinstance(value, dict) else {}
 
 
 class InfraCatalog:
@@ -75,6 +109,343 @@ class InfraCatalog:
         )
         return items
 
+    def backup_status(self):
+        backup = backup_system.status()
+        return {
+            "enabled": bool(backup.get("enabled")),
+            "status": backup.get("status") or "disabled",
+            "harbor_url": backup.get("harbor_url") or "",
+            "secret_configured": bool(backup.get("secret_configured")),
+            "installed": bool(backup.get("installed")),
+        }
+
+    def domain_usage(self):
+        with connect() as connection:
+            with connection.cursor() as cursor:
+                registered_domain_count = _count(cursor, "cloudflare_zones")
+                registered_domains = _rows(
+                    cursor,
+                    """
+                    SELECT
+                        z.id::text AS id,
+                        z.domain,
+                        z.enabled,
+                        z.usable_for_service,
+                        z.last_sync_status,
+                        z.last_sync_at,
+                        z.record_count,
+                        COALESCE(links.service_count, 0) AS service_count,
+                        COALESCE(links.binding_count, 0) AS binding_count,
+                        COALESCE(links.host_count, 0) AS host_count,
+                        links.latest_linked_at,
+                        COALESCE(links.service_names, ARRAY[]::text[]) AS service_names
+                    FROM cloudflare_zones z
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            count(DISTINCT sd.service_id) AS service_count,
+                            count(sd.id) AS binding_count,
+                            count(DISTINCT sd.domain) AS host_count,
+                            max(sd.updated_at) AS latest_linked_at,
+                            array_remove(array_agg(DISTINCT COALESCE(s.name, s.namespace)), NULL) AS service_names
+                        FROM service_domains sd
+                        LEFT JOIN services s ON s.id = sd.service_id
+                        WHERE lower(sd.domain) = lower(z.domain)
+                           OR lower(sd.domain) LIKE lower('%%.' || z.domain)
+                    ) links ON true
+                    ORDER BY z.domain ASC
+                    LIMIT 80
+                    """,
+                )
+                if registered_domain_count > 0 and not registered_domains:
+                    registered_domains = _rows(
+                        cursor,
+                        """
+                        SELECT
+                            z.id::text AS id,
+                            z.domain,
+                            z.enabled,
+                            z.usable_for_service,
+                            z.last_sync_status,
+                            z.last_sync_at,
+                            z.record_count,
+                            0 AS service_count,
+                            0 AS binding_count,
+                            0 AS host_count,
+                            NULL AS latest_linked_at,
+                            ARRAY[]::text[] AS service_names
+                        FROM cloudflare_zones z
+                        ORDER BY z.domain ASC
+                        LIMIT 80
+                        """,
+                    )
+                cursor.execute(
+                    """
+                    SELECT count(*) AS count
+                    FROM cloudflare_zones z
+                    WHERE EXISTS (
+                        SELECT 1
+                        FROM service_domains sd
+                        WHERE lower(sd.domain) = lower(z.domain)
+                           OR lower(sd.domain) LIKE lower('%%.' || z.domain)
+                    )
+                    """
+                )
+                linked_domain_count = int(cursor.fetchone()["count"])
+                cursor.execute(
+                    """
+                    SELECT count(DISTINCT sd.service_id) AS count
+                    FROM service_domains sd
+                    """
+                )
+                linked_service_count = int(cursor.fetchone()["count"])
+                cursor.execute(
+                    """
+                    SELECT count(DISTINCT sd.domain) AS count
+                    FROM service_domains sd
+                    """
+                )
+                service_domain_count = int(cursor.fetchone()["count"])
+                unmatched_service_domains = _rows(
+                    cursor,
+                    """
+                    SELECT
+                        min(sd.id::text) AS id,
+                        sd.domain,
+                        true AS enabled,
+                        true AS usable_for_service,
+                        'registered' AS last_sync_status,
+                        max(sd.updated_at) AS last_sync_at,
+                        0 AS record_count,
+                        count(DISTINCT sd.service_id) AS service_count,
+                        count(sd.id) AS binding_count,
+                        count(DISTINCT sd.domain) AS host_count,
+                        max(sd.updated_at) AS latest_linked_at,
+                        array_remove(array_agg(DISTINCT COALESCE(s.name, s.namespace)), NULL) AS service_names
+                    FROM service_domains sd
+                    LEFT JOIN services s ON s.id = sd.service_id
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM cloudflare_zones z
+                        WHERE lower(sd.domain) = lower(z.domain)
+                           OR lower(sd.domain) LIKE lower('%%.' || z.domain)
+                    )
+                    GROUP BY sd.domain
+                    ORDER BY sd.domain ASC
+                    LIMIT 80
+                    """,
+                )
+
+        domains = [*registered_domains, *unmatched_service_domains]
+        for row in domains:
+            row["service_count"] = int(row.get("service_count") or 0)
+            row["binding_count"] = int(row.get("binding_count") or 0)
+            row["host_count"] = int(row.get("host_count") or 0)
+            row["record_count"] = int(row.get("record_count") or 0)
+            row["service_names"] = [name for name in (row.get("service_names") or []) if name]
+
+        return {
+            "domains": domains,
+            "summary": {
+                "domain_count": len(domains),
+                "linked_service_count": linked_service_count,
+                "used_domain_count": len([row for row in domains if int(row.get("service_count") or 0) > 0]),
+                "unregistered_domain_count": 0,
+            },
+        }
+
+    def _operation_rows(self, cursor, filters=None, limit=80, include_output=False):
+        filters = filters or {}
+        clauses = []
+        params = []
+        status = str(filters.get("status") or "").strip()
+        operation_type = str(filters.get("type") or "").strip()
+        target_type = str(filters.get("target_type") or "").strip()
+        query = str(filters.get("query") or "").strip()
+        operation_id = str(filters.get("id") or "").strip()
+        if operation_id:
+            clauses.append("op.id::text = %s")
+            params.append(operation_id)
+        if status:
+            clauses.append("op.status = %s")
+            params.append(status)
+        if operation_type:
+            clauses.append("op.type = %s")
+            params.append(operation_type)
+        if target_type:
+            clauses.append("op.target_type = %s")
+            params.append(target_type)
+        if query:
+            needle = f"%{query}%"
+            clauses.append(
+                """
+                (
+                    op.type ILIKE %s
+                    OR op.message ILIKE %s
+                    OR op.target_id ILIKE %s
+                    OR s.name ILIKE %s
+                    OR s.namespace ILIKE %s
+                    OR target_node.name ILIKE %s
+                    OR target_node.host ILIKE %s
+                    OR payload_node.name ILIKE %s
+                    OR payload_node.host ILIKE %s
+                    OR metadata_node.name ILIKE %s
+                    OR metadata_node.host ILIKE %s
+                )
+                """
+            )
+            params.extend([needle] * 11)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        output_column = "op.output," if include_output else ""
+        cursor.execute(
+            f"""
+            SELECT
+                op.id,
+                op.type,
+                op.target_type,
+                op.target_id,
+                op.status,
+                op.message,
+                op.requested_payload,
+                op.result_payload,
+                op.metadata,
+                {output_column}
+                op.test_run_id,
+                op.started_at,
+                op.finished_at,
+                op.created_at,
+                op.updated_at,
+                jsonb_array_length(COALESCE(op.output, '[]'::jsonb)) AS output_count,
+                s.name AS service_name,
+                s.namespace AS service_namespace,
+                s.status AS service_status,
+                COALESCE(target_node.name, payload_node.name, metadata_node.name) AS node_name,
+                COALESCE(target_node.host, payload_node.host, metadata_node.host) AS node_host,
+                output_node.node AS output_node
+            FROM operation_logs op
+            LEFT JOIN services s ON s.id::text = NULLIF(COALESCE(
+                CASE WHEN op.target_type = 'service' THEN op.target_id ELSE NULL END,
+                op.metadata->>'service_id',
+                op.requested_payload->>'service_id',
+                op.result_payload->>'service_id'
+            ), '')
+            LEFT JOIN nodes target_node ON op.target_type = 'node' AND target_node.id::text = op.target_id
+            LEFT JOIN nodes payload_node ON payload_node.id::text = NULLIF(op.requested_payload->>'node_id', '')
+            LEFT JOIN nodes metadata_node ON metadata_node.id::text = NULLIF(COALESCE(op.metadata->>'node_id', op.metadata->>'macro_node_id'), '')
+            LEFT JOIN LATERAL (
+                SELECT item->'metadata'->'node' AS node
+                FROM jsonb_array_elements(COALESCE(op.output, '[]'::jsonb)) WITH ORDINALITY AS out(item, ord)
+                WHERE item->'metadata' ? 'node'
+                ORDER BY ord DESC
+                LIMIT 1
+            ) output_node ON true
+            {where}
+            ORDER BY op.created_at DESC
+            LIMIT %s
+            """,
+            [*params, max(1, min(int(limit or 80), 200))],
+        )
+        return [self._normalize_operation(_serialize(dict(row))) for row in cursor.fetchall()]
+
+    def _operation_server(self, operation):
+        metadata = _dict(operation.get("metadata"))
+        result = _dict(operation.get("result_payload"))
+        output_node = _dict(operation.get("output_node"))
+        name = (
+            output_node.get("name")
+            or metadata.get("node_name")
+            or result.get("node_name")
+            or operation.get("node_name")
+        )
+        host = (
+            output_node.get("host")
+            or metadata.get("node_host")
+            or result.get("node_host")
+            or operation.get("node_host")
+        )
+        if not name and not host and operation.get("target_type") == "nodes":
+            return {"name": "전체 서버", "host": "", "label": "전체 서버"}
+        if not name and not host and operation.get("target_type") == "backup_system":
+            return {"name": "로컬 마스터", "host": "", "label": "로컬 마스터"}
+        if not name and not host:
+            return {"name": "", "host": "", "label": "-"}
+        label = name or host
+        if name and host and name != host:
+            label = f"{name} · {host}"
+        return {"name": name or "", "host": host or "", "label": label}
+
+    def _operation_target_label(self, operation, server):
+        if operation.get("service_name") or operation.get("service_namespace"):
+            name = operation.get("service_name") or operation.get("service_namespace")
+            namespace = operation.get("service_namespace")
+            return f"{name} · {namespace}" if namespace and namespace != name else name
+        if operation.get("target_type") == "node":
+            return server.get("label") or "서버"
+        if operation.get("target_type") == "backup_system":
+            return "서비스 백업 시스템"
+        if operation.get("target_type") == "domain":
+            return operation.get("target_id") or "도메인"
+        target_type = operation.get("target_type") or ""
+        target_id = operation.get("target_id") or ""
+        if target_type and target_id:
+            return f"{target_type} · {target_id}"
+        return target_type or target_id or "-"
+
+    def _operation_action_text(self, operation, target_label):
+        operation_type = operation.get("type") or ""
+        label = OPERATION_LABELS.get(operation_type) or operation_type or "작업"
+        metadata = _dict(operation.get("metadata"))
+        request = _dict(operation.get("requested_payload"))
+        result = _dict(operation.get("result_payload"))
+        if operation_type == "macro.run":
+            name = metadata.get("macro_name") or result.get("macro_name") or request.get("macro_id") or "-"
+            return f"매크로 실행: {name}"
+        if operation_type == "service.deploy":
+            return f"서비스 배포: {target_label}"
+        if operation_type == "service.action":
+            action = ACTION_LABELS.get(str(request.get("action") or ""), request.get("action") or "제어")
+            service = request.get("service_namespace") or target_label
+            return f"서비스 {action}: {service}"
+        if operation_type == "container.action":
+            action = ACTION_LABELS.get(str(request.get("action") or ""), request.get("action") or "제어")
+            container_id = str(request.get("container_id") or "")
+            return f"컨테이너 {action}: {container_id[:12] or '-'}"
+        if operation_type.startswith("backup.harbor."):
+            return label
+        if operation_type.startswith("domain."):
+            domain = request.get("domain") or result.get("domain") or target_label
+            return f"{label}: {domain}"
+        if operation.get("message"):
+            return operation["message"]
+        return f"{label}: {target_label}" if target_label != "-" else label
+
+    def _normalize_operation(self, operation):
+        server = self._operation_server(operation)
+        target_label = self._operation_target_label(operation, server)
+        operation["operation_label"] = OPERATION_LABELS.get(operation.get("type")) or operation.get("type") or "-"
+        operation["server"] = server
+        operation["target_label"] = target_label
+        operation["action_text"] = self._operation_action_text(operation, target_label)
+        operation["output_count"] = int(operation.get("output_count") or 0)
+        return operation
+
+    def operation_logs(self, filters=None, limit=80):
+        with connect() as connection:
+            with connection.cursor() as cursor:
+                operations = self._operation_rows(cursor, filters=filters, limit=limit)
+                cursor.execute("SELECT status, count(*) AS count FROM operation_logs GROUP BY status ORDER BY status")
+                status_counts = {row["status"]: int(row["count"]) for row in cursor.fetchall()}
+        return {"operations": operations, "status_counts": status_counts}
+
+    def operation_detail(self, operation_id):
+        if not operation_id:
+            raise ValueError("operation_id is required")
+        with connect() as connection:
+            with connection.cursor() as cursor:
+                rows = self._operation_rows(cursor, filters={"id": operation_id}, limit=1, include_output=True)
+        if not rows:
+            raise KeyError(operation_id)
+        return rows[0]
+
     def _node_metric_rows_for_chart(self, cursor, chart_range):
         params = []
         where = []
@@ -111,15 +482,7 @@ class InfraCatalog:
         counts = self.counts()
         with connect() as connection:
             with connection.cursor() as cursor:
-                recent_operations = _rows(
-                    cursor,
-                    """
-                    SELECT id, type, status, message, created_at, finished_at
-                    FROM operation_logs
-                    ORDER BY created_at DESC
-                    LIMIT 6
-                    """,
-                )
+                recent_operations = self._operation_rows(cursor, limit=6)
                 nodes = _rows(
                     cursor,
                     """
@@ -184,10 +547,8 @@ class InfraCatalog:
                     """
                 )
                 operation_statuses = {row["status"]: int(row["count"]) for row in cursor.fetchall()}
-                db_metric_rows = None
-                if (not resource_chart.get("rows")) or any(not chart.get("rows") for chart in node_resource_charts):
-                    db_metric_rows = self._node_metric_rows_for_chart(cursor, resource_chart)
-                if not resource_chart.get("rows") and db_metric_rows:
+                db_metric_rows = self._node_metric_rows_for_chart(cursor, resource_chart)
+                if db_metric_rows:
                     db_resource_chart = metric_history.dashboard_chart_from_metrics(
                         db_metric_rows,
                         start_date=resource_chart.get("start_date"),
@@ -208,7 +569,7 @@ class InfraCatalog:
                     )
                     db_node_charts_by_id = {str(chart.get("node_id")): chart for chart in db_node_charts if chart.get("rows")}
                     node_resource_charts = [
-                        db_node_charts_by_id.get(str(chart.get("node_id")), chart) if not chart.get("rows") else chart
+                        db_node_charts_by_id.get(str(chart.get("node_id")), chart)
                         for chart in node_resource_charts
                     ]
                     for chart in node_resource_charts:
@@ -225,6 +586,8 @@ class InfraCatalog:
             "recent_operations": recent_operations,
             "operation_statuses": operation_statuses,
             "integrations": self.integrations(),
+            "backup_system": self.backup_status(),
+            "domain_usage": self.domain_usage(),
         }
 
     def services(self):

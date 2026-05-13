@@ -5,12 +5,24 @@ from pathlib import Path
 
 config = wiz.config("docker_infra")
 
+RESOURCE_CHART_BUCKET_MINUTES = 10
+RESOURCE_METRIC_KEYS = ("cpu_percent", "memory_used_percent", "storage_used_percent")
+MEMORY_STACK_KEYS = ("memory_used_percent", "memory_cache_percent", "memory_free_percent")
+MEMORY_COMPONENT_STAT_KEYS = ("memory_cache_percent", "memory_free_percent")
+RESOURCE_STAT_NAMES = ("min", "max", "last", "avg")
+RESOURCE_STAT_FIELDS = [f"{metric}_{stat}" for metric in RESOURCE_METRIC_KEYS for stat in RESOURCE_STAT_NAMES]
+MEMORY_COMPONENT_STAT_FIELDS = [f"{metric}_{stat}" for metric in MEMORY_COMPONENT_STAT_KEYS for stat in RESOURCE_STAT_NAMES]
+
 HEADER = [
     "reported_at",
     "node_id",
     "cpu_percent",
     "memory_used_percent",
     "memory_used_bytes",
+    "memory_cache_percent",
+    "memory_cache_bytes",
+    "memory_free_percent",
+    "memory_free_bytes",
     "memory_total_bytes",
     "storage_used_percent",
     "storage_used_bytes",
@@ -18,10 +30,13 @@ HEADER = [
     "containers_total",
     "containers_running",
     "containers_stopped",
+    *RESOURCE_STAT_FIELDS,
+    *MEMORY_COMPONENT_STAT_FIELDS,
+    "sample_count",
     "source",
 ]
 
-DEDUPLICATE_WINDOW_SECONDS = 60
+DEDUPLICATE_WINDOW_SECONDS = 10
 
 
 class MetricHistoryError(Exception):
@@ -51,11 +66,97 @@ def _as_int(value, fallback=0):
         return fallback
 
 
+def _percent(value, fallback=0.0):
+    return max(0.0, min(100.0, _as_float(value, fallback)))
+
+
+def _stat_payload(metadata, metric_key):
+    if not isinstance(metadata, dict):
+        return {}
+    window = metadata.get("resource_window") or metadata.get("resource_stats") or {}
+    if not isinstance(window, dict):
+        return {}
+    payload = window.get(metric_key) or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _metric_stats(value, direct=None, nested=None, metadata=None, metric_key=None, nested_prefix="used_percent"):
+    fallback = _percent(value)
+    direct = direct if isinstance(direct, dict) else {}
+    nested = nested if isinstance(nested, dict) else {}
+    payload = _stat_payload(metadata, metric_key) if metric_key else {}
+    stats = {}
+    for stat in RESOURCE_STAT_NAMES:
+        candidates = [
+            direct.get(f"{metric_key}_{stat}") if metric_key else None,
+            direct.get(stat),
+            nested.get(f"{nested_prefix}_{stat}"),
+            payload.get(stat),
+        ]
+        raw = next((item for item in candidates if item not in (None, "")), None)
+        if raw is None:
+            raw = fallback
+        stats[stat] = _percent(raw, fallback)
+    if stats["min"] > stats["max"]:
+        stats["min"], stats["max"] = stats["max"], stats["min"]
+    stats["last"] = max(stats["min"], min(stats["max"], stats["last"]))
+    stats["avg"] = max(stats["min"], min(stats["max"], stats["avg"]))
+    return stats
+
+
+def _stats_fields(metric_key, stats):
+    return {f"{metric_key}_{stat}": round(_percent(stats.get(stat)), 2) for stat in RESOURCE_STAT_NAMES}
+
+
+def _row_metric_stats(row, metric_key):
+    return _metric_stats(
+        row.get(metric_key),
+        direct=row,
+        metadata=row.get("metadata") or {},
+        metric_key=metric_key,
+    )
+
+
+def _sample_count(row):
+    row = row if isinstance(row, dict) else {}
+    if row.get("sample_count") not in (None, ""):
+        return max(1, _as_int(row.get("sample_count"), 1))
+    metadata = row.get("metadata") or {}
+    if isinstance(metadata, dict) and metadata.get("sample_count") not in (None, ""):
+        return max(1, _as_int(metadata.get("sample_count"), 1))
+    window = row.get("resource_window") or row.get("resource_stats") or {}
+    if isinstance(window, dict) and window.get("sample_count") not in (None, ""):
+        return max(1, _as_int(window.get("sample_count"), 1))
+    if isinstance(metadata, dict):
+        window = metadata.get("resource_window") or metadata.get("resource_stats") or {}
+        if isinstance(window, dict) and window.get("sample_count") not in (None, ""):
+            return max(1, _as_int(window.get("sample_count"), 1))
+    return 1
+
+
+def _memory_percent(memory, key, byte_key=None):
+    memory = memory if isinstance(memory, dict) else {}
+    if memory.get(key) not in (None, ""):
+        return _percent(memory.get(key))
+    total = _as_float(memory.get("total"))
+    raw_bytes = _as_float(memory.get(byte_key or key.replace("_percent", "")))
+    if total <= 0:
+        return 0.0
+    return _percent(raw_bytes * 100.0 / total)
+
+
 def _iso(value=None):
     if value is None:
         return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
     if isinstance(value, datetime.datetime):
-        return value.isoformat().replace("+00:00", "Z")
+        parsed = value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    if isinstance(value, str):
+        parsed = _parse_reported_at(value)
+        if parsed is not None:
+            return parsed.isoformat().replace("+00:00", "Z")
     return str(value)
 
 
@@ -184,7 +285,7 @@ def _range_bounds(start_date=None, end_date=None, start_at=None, end_at=None):
     return start, end, None, None
 
 
-def _bucket_time(value, minutes=5):
+def _bucket_time(value, minutes=RESOURCE_CHART_BUCKET_MINUTES):
     parsed = _parse_reported_at(value)
     if parsed is None:
         return str(value or "")
@@ -230,21 +331,50 @@ class NodesMetricHistory:
         containers = metric.get("containers") or {}
         summary = _container_summary(containers)
         metadata = metric.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        cpu_stats = _metric_stats(metric.get("cpu_percent"), direct=metric, metadata=metadata, metric_key="cpu_percent")
+        memory_stats = _metric_stats(memory.get("used_percent"), nested=memory, metadata=metadata, metric_key="memory_used_percent")
+        memory_cache_stats = _metric_stats(
+            _memory_percent(memory, "cache_percent", byte_key="cache"),
+            nested=memory,
+            metadata=metadata,
+            metric_key="memory_cache_percent",
+            nested_prefix="cache_percent",
+        )
+        memory_free_stats = _metric_stats(
+            _memory_percent(memory, "free_percent", byte_key="free"),
+            nested=memory,
+            metadata=metadata,
+            metric_key="memory_free_percent",
+            nested_prefix="free_percent",
+        )
+        storage_stats = _metric_stats(storage.get("used_percent"), nested=storage, metadata=metadata, metric_key="storage_used_percent")
         path = self.path_for(node_id, reported_at=reported_at, env=env)
         path.parent.mkdir(parents=True, exist_ok=True)
         row = {
             "reported_at": _iso(reported_at),
             "node_id": str(node_id or ""),
-            "cpu_percent": _as_float(metric.get("cpu_percent")),
-            "memory_used_percent": _as_float(memory.get("used_percent")),
+            "cpu_percent": cpu_stats["last"],
+            "memory_used_percent": memory_stats["last"],
             "memory_used_bytes": _as_int(memory.get("used")),
+            "memory_cache_percent": memory_cache_stats["last"],
+            "memory_cache_bytes": _as_int(memory.get("cache")),
+            "memory_free_percent": memory_free_stats["last"],
+            "memory_free_bytes": _as_int(memory.get("free")),
             "memory_total_bytes": _as_int(memory.get("total")),
-            "storage_used_percent": _as_float(storage.get("used_percent")),
+            "storage_used_percent": storage_stats["last"],
             "storage_used_bytes": _as_int(storage.get("used")),
             "storage_total_bytes": _as_int(storage.get("total")),
             "containers_total": summary["total"],
             "containers_running": summary["running"],
             "containers_stopped": summary["stopped"],
+            **_stats_fields("cpu_percent", cpu_stats),
+            **_stats_fields("memory_used_percent", memory_stats),
+            **_stats_fields("storage_used_percent", storage_stats),
+            **_stats_fields("memory_cache_percent", memory_cache_stats),
+            **_stats_fields("memory_free_percent", memory_free_stats),
+            "sample_count": _sample_count(metadata),
             "source": source or metadata.get("source") or "",
         }
         existing_rows = self._read_rows(path)
@@ -265,12 +395,9 @@ class NodesMetricHistory:
             self._write_rows(path, existing_rows)
             return {"path": str(path), "row": row, "deduplicated": True}
 
-        write_header = not path.exists() or path.stat().st_size == 0
-        with path.open("a", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=HEADER)
-            if write_header:
-                writer.writeheader()
-            writer.writerow(row)
+        existing_rows.append(row)
+        existing_rows.sort(key=lambda item: item.get("reported_at") or "")
+        self._write_rows(path, existing_rows)
         return {"path": str(path), "row": row, "deduplicated": False}
 
     def append_db_row(self, row, source=None, env=None):
@@ -314,19 +441,38 @@ class NodesMetricHistory:
         return datetime.date.today().isoformat()
 
     def _normalize_row(self, row):
+        row = row or {}
+        cpu_stats = _row_metric_stats(row, "cpu_percent")
+        memory_stats = _row_metric_stats(row, "memory_used_percent")
+        memory_cache_stats = _row_metric_stats(row, "memory_cache_percent")
+        memory_free_value = row.get("memory_free_percent")
+        if memory_free_value in (None, ""):
+            memory_free_value = max(0.0, 100.0 - memory_stats["last"] - memory_cache_stats["last"])
+        memory_free_stats = _metric_stats(memory_free_value, direct=row, metadata=row.get("metadata") or {}, metric_key="memory_free_percent")
+        storage_stats = _row_metric_stats(row, "storage_used_percent")
         return {
             "reported_at": row.get("reported_at") or "",
             "node_id": row.get("node_id") or "",
-            "cpu_percent": _as_float(row.get("cpu_percent")),
-            "memory_used_percent": _as_float(row.get("memory_used_percent")),
+            "cpu_percent": cpu_stats["last"],
+            "memory_used_percent": memory_stats["last"],
             "memory_used_bytes": _as_int(row.get("memory_used_bytes")),
+            "memory_cache_percent": memory_cache_stats["last"],
+            "memory_cache_bytes": _as_int(row.get("memory_cache_bytes")),
+            "memory_free_percent": memory_free_stats["last"],
+            "memory_free_bytes": _as_int(row.get("memory_free_bytes")),
             "memory_total_bytes": _as_int(row.get("memory_total_bytes")),
-            "storage_used_percent": _as_float(row.get("storage_used_percent")),
+            "storage_used_percent": storage_stats["last"],
             "storage_used_bytes": _as_int(row.get("storage_used_bytes")),
             "storage_total_bytes": _as_int(row.get("storage_total_bytes")),
             "containers_total": _as_int(row.get("containers_total")),
             "containers_running": _as_int(row.get("containers_running")),
             "containers_stopped": _as_int(row.get("containers_stopped")),
+            **_stats_fields("cpu_percent", cpu_stats),
+            **_stats_fields("memory_used_percent", memory_stats),
+            **_stats_fields("storage_used_percent", storage_stats),
+            **_stats_fields("memory_cache_percent", memory_cache_stats),
+            **_stats_fields("memory_free_percent", memory_free_stats),
+            "sample_count": _sample_count(row),
             "source": row.get("source") or "",
         }
 
@@ -335,20 +481,50 @@ class NodesMetricHistory:
         memory = row.get("memory") or {}
         storage = row.get("storage") or {}
         summary = _container_summary(row.get("containers") or {})
+        metadata = row.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        cpu_stats = _metric_stats(row.get("cpu_percent"), direct=row, metadata=metadata, metric_key="cpu_percent")
+        memory_stats = _metric_stats(memory.get("used_percent"), nested=memory, metadata=metadata, metric_key="memory_used_percent")
+        memory_cache_stats = _metric_stats(
+            _memory_percent(memory, "cache_percent", byte_key="cache"),
+            nested=memory,
+            metadata=metadata,
+            metric_key="memory_cache_percent",
+            nested_prefix="cache_percent",
+        )
+        memory_free_stats = _metric_stats(
+            _memory_percent(memory, "free_percent", byte_key="free"),
+            nested=memory,
+            metadata=metadata,
+            metric_key="memory_free_percent",
+            nested_prefix="free_percent",
+        )
+        storage_stats = _metric_stats(storage.get("used_percent"), nested=storage, metadata=metadata, metric_key="storage_used_percent")
         return {
             "reported_at": _iso(row.get("reported_at")),
             "node_id": str(row.get("node_id") or ""),
-            "cpu_percent": _as_float(row.get("cpu_percent")),
-            "memory_used_percent": _as_float(memory.get("used_percent")),
+            "cpu_percent": cpu_stats["last"],
+            "memory_used_percent": memory_stats["last"],
             "memory_used_bytes": _as_int(memory.get("used")),
+            "memory_cache_percent": memory_cache_stats["last"],
+            "memory_cache_bytes": _as_int(memory.get("cache")),
+            "memory_free_percent": memory_free_stats["last"],
+            "memory_free_bytes": _as_int(memory.get("free")),
             "memory_total_bytes": _as_int(memory.get("total")),
-            "storage_used_percent": _as_float(storage.get("used_percent")),
+            "storage_used_percent": storage_stats["last"],
             "storage_used_bytes": _as_int(storage.get("used")),
             "storage_total_bytes": _as_int(storage.get("total")),
             "containers_total": summary["total"],
             "containers_running": summary["running"],
             "containers_stopped": summary["stopped"],
-            "source": (row.get("metadata") or {}).get("source") or row.get("source") or "database",
+            **_stats_fields("cpu_percent", cpu_stats),
+            **_stats_fields("memory_used_percent", memory_stats),
+            **_stats_fields("storage_used_percent", storage_stats),
+            **_stats_fields("memory_cache_percent", memory_cache_stats),
+            **_stats_fields("memory_free_percent", memory_free_stats),
+            "sample_count": _sample_count(metadata),
+            "source": metadata.get("source") or row.get("source") or "database",
         }
 
     def _read_rows(self, path):
@@ -370,12 +546,27 @@ class NodesMetricHistory:
         if not rows:
             return {}
         latest = rows[-1]
+        def average(metric_key):
+            return round(sum(_row_metric_stats(row, metric_key)["avg"] for row in rows) / len(rows), 2)
+
+        def minimum(metric_key):
+            return round(min(_row_metric_stats(row, metric_key)["min"] for row in rows), 2)
+
+        def maximum(metric_key):
+            return round(max(_row_metric_stats(row, metric_key)["max"] for row in rows), 2)
+
         return {
             "latest": latest,
             "count": len(rows),
-            "avg_cpu_percent": round(sum(_as_float(row.get("cpu_percent")) for row in rows) / len(rows), 2),
-            "avg_memory_used_percent": round(sum(_as_float(row.get("memory_used_percent")) for row in rows) / len(rows), 2),
-            "avg_storage_used_percent": round(sum(_as_float(row.get("storage_used_percent")) for row in rows) / len(rows), 2),
+            "avg_cpu_percent": average("cpu_percent"),
+            "avg_memory_used_percent": average("memory_used_percent"),
+            "avg_storage_used_percent": average("storage_used_percent"),
+            "min_cpu_percent": minimum("cpu_percent"),
+            "max_cpu_percent": maximum("cpu_percent"),
+            "min_memory_used_percent": minimum("memory_used_percent"),
+            "max_memory_used_percent": maximum("memory_used_percent"),
+            "min_storage_used_percent": minimum("storage_used_percent"),
+            "max_storage_used_percent": maximum("storage_used_percent"),
         }
 
     def query(self, node_id=None, start_date=None, end_date=None, start_at=None, end_at=None, limit=1440, env=None):
@@ -413,38 +604,113 @@ class NodesMetricHistory:
     def _dashboard_chart_payload(self, data, rows, limit=288, source="csv", node_id=None):
         buckets = {}
         for row in rows or []:
-            key = _bucket_time(row.get("reported_at"))
+            key = _bucket_time(row.get("reported_at"), minutes=RESOURCE_CHART_BUCKET_MINUTES)
             if not key:
                 continue
-            bucket = buckets.setdefault(key, {"reported_at": key, "nodes": set(), "count": 0, "cpu": 0.0, "memory": 0.0, "storage": 0.0, "containers_total": 0.0, "containers_running": 0.0})
-            bucket["nodes"].add(row.get("node_id"))
+            node_key = str(row.get("node_id") or node_id or "unknown")
+            bucket = buckets.setdefault(key, {"reported_at": key, "nodes": {}, "count": 0, "sample_count": 0})
+            node_bucket = bucket["nodes"].setdefault(node_key, {
+                "metrics": {
+                    metric_key: {
+                        "min": None,
+                        "max": None,
+                        "avg_sum": 0.0,
+                        "avg_weight": 0,
+                        "last": None,
+                        "last_at": None,
+                    }
+                    for metric_key in RESOURCE_METRIC_KEYS
+                },
+                "count": 0,
+                "sample_count": 0,
+                "containers_total_sum": 0.0,
+                "containers_running_sum": 0.0,
+                "memory_components": {key: {"sum": 0.0, "weight": 0} for key in MEMORY_STACK_KEYS},
+            })
+            reported_at = row.get("reported_at")
+            reported_dt = _parse_reported_at(reported_at)
+            weight = _sample_count(row)
             bucket["count"] += 1
-            bucket["cpu"] += _as_float(row.get("cpu_percent"))
-            bucket["memory"] += _as_float(row.get("memory_used_percent"))
-            bucket["storage"] += _as_float(row.get("storage_used_percent"))
-            bucket["containers_total"] += _as_float(row.get("containers_total"))
-            bucket["containers_running"] += _as_float(row.get("containers_running"))
+            bucket["sample_count"] += weight
+            node_bucket["count"] += 1
+            node_bucket["sample_count"] += weight
+            node_bucket["containers_total_sum"] += _as_float(row.get("containers_total"))
+            node_bucket["containers_running_sum"] += _as_float(row.get("containers_running"))
+            for component_key in MEMORY_STACK_KEYS:
+                stats = _row_metric_stats(row, component_key)
+                component = node_bucket["memory_components"][component_key]
+                component["sum"] += stats["avg"] * weight
+                component["weight"] += weight
+            for metric_key in RESOURCE_METRIC_KEYS:
+                stats = _row_metric_stats(row, metric_key)
+                metric = node_bucket["metrics"][metric_key]
+                metric["min"] = stats["min"] if metric["min"] is None else min(metric["min"], stats["min"])
+                metric["max"] = stats["max"] if metric["max"] is None else max(metric["max"], stats["max"])
+                metric["avg_sum"] += stats["avg"] * weight
+                metric["avg_weight"] += weight
+                if metric["last_at"] is None or (reported_dt is not None and reported_dt >= metric["last_at"]):
+                    metric["last"] = stats["last"]
+                    metric["last_at"] = reported_dt
 
         chart_rows = []
         for key in sorted(buckets):
             bucket = buckets[key]
-            count = max(1, bucket["count"])
-            chart_rows.append({
+            node_values = []
+            for node_key, node_bucket in bucket["nodes"].items():
+                metric_values = {}
+                for metric_key, metric in node_bucket["metrics"].items():
+                    avg_weight = max(1, metric["avg_weight"])
+                    avg = metric["avg_sum"] / avg_weight
+                    metric_values[metric_key] = {
+                        "min": _percent(metric["min"], avg),
+                        "max": _percent(metric["max"], avg),
+                        "avg": _percent(avg),
+                        "last": _percent(metric["last"], avg),
+                    }
+                count = max(1, node_bucket["count"])
+                node_values.append({
+                    "node_id": node_key,
+                    "metrics": metric_values,
+                    "memory_components": {
+                        key: component["sum"] / max(1, component["weight"])
+                        for key, component in node_bucket["memory_components"].items()
+                    },
+                    "containers_total": node_bucket["containers_total_sum"] / count,
+                    "containers_running": node_bucket["containers_running_sum"] / count,
+                })
+            if not node_values:
+                continue
+            chart_row = {
                 "reported_at": bucket["reported_at"],
-                "node_count": len([node for node in bucket["nodes"] if node]),
-                "sample_count": bucket["count"],
-                "cpu_percent": round(bucket["cpu"] / count, 2),
-                "memory_used_percent": round(bucket["memory"] / count, 2),
-                "storage_used_percent": round(bucket["storage"] / count, 2),
-                "containers_total": round(bucket["containers_total"] / count, 2),
-                "containers_running": round(bucket["containers_running"] / count, 2),
-            })
+                "node_count": len([item for item in node_values if item.get("node_id") != "unknown"]),
+                "sample_count": bucket["sample_count"],
+                "source_row_count": bucket["count"],
+                "containers_total": round(sum(item["containers_total"] for item in node_values) / len(node_values), 2),
+                "containers_running": round(sum(item["containers_running"] for item in node_values) / len(node_values), 2),
+            }
+            for metric_key in RESOURCE_METRIC_KEYS:
+                metric_items = [item["metrics"][metric_key] for item in node_values]
+                stats = {
+                    "min": min(item["min"] for item in metric_items),
+                    "max": max(item["max"] for item in metric_items),
+                    "avg": sum(item["avg"] for item in metric_items) / len(metric_items),
+                    "last": sum(item["last"] for item in metric_items) / len(metric_items),
+                }
+                chart_row[metric_key] = round(stats["avg"], 2)
+                chart_row.update(_stats_fields(metric_key, stats))
+            for component_key in MEMORY_STACK_KEYS:
+                chart_row[component_key] = round(
+                    sum(item["memory_components"].get(component_key, 0.0) for item in node_values) / len(node_values),
+                    2,
+                )
+            chart_rows.append(chart_row)
         row_limit = _limit_value(limit, default=288, maximum=10000)
         if len(chart_rows) > row_limit:
             chart_rows = chart_rows[-row_limit:]
         return {
             **{key: data.get(key) for key in ["root", "start_date", "end_date", "start_at", "end_at"]},
             "node_id": str(node_id) if node_id else None,
+            "bucket_minutes": RESOURCE_CHART_BUCKET_MINUTES,
             "count": len(chart_rows),
             "rows": chart_rows,
             "summary": self._summary(chart_rows),
@@ -459,15 +725,26 @@ class NodesMetricHistory:
         data = self.query(node_id=None, start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at, limit=10000, env=env)
         return self._dashboard_chart_payload(data, data.get("rows") or [], limit=limit, source="csv")
 
-    def dashboard_node_charts(self, node_ids, start_date=None, end_date=None, start_at=None, end_at=None, limit=288, env=None):
+    def node_chart(self, node_id, start_date=None, end_date=None, start_at=None, end_at=None, limit=288, env=None):
         if not start_date and not end_date and not start_at and not end_at:
             end_at = datetime.datetime.now(datetime.timezone.utc)
             start_at = end_at - datetime.timedelta(hours=24)
-        charts = []
-        for node_id in node_ids or []:
-            data = self.query(node_id=node_id, start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at, limit=10000, env=env)
-            charts.append(self._dashboard_chart_payload(data, data.get("rows") or [], limit=limit, source="csv", node_id=node_id))
-        return charts
+        data = self.query(node_id=node_id, start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at, limit=10000, env=env)
+        return self._dashboard_chart_payload(data, data.get("rows") or [], limit=limit, source="csv", node_id=node_id)
+
+    def dashboard_node_charts(self, node_ids, start_date=None, end_date=None, start_at=None, end_at=None, limit=288, env=None):
+        return [
+            self.node_chart(
+                node_id,
+                start_date=start_date,
+                end_date=end_date,
+                start_at=start_at,
+                end_at=end_at,
+                limit=limit,
+                env=env,
+            )
+            for node_id in (node_ids or [])
+        ]
 
     def dashboard_chart_from_metrics(self, rows, start_date=None, end_date=None, start_at=None, end_at=None, limit=288, env=None, node_id=None):
         if not start_date and not end_date and not start_at and not end_at:

@@ -36,6 +36,10 @@ class Struct:
         return self._load("ai_assistant")
 
     @property
+    def codex_runtime(self):
+        return self._load("codex_runtime")
+
+    @property
     def compose_validator(self):
         return self._load("compose_validator")
 

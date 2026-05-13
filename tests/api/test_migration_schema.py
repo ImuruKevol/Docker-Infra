@@ -19,6 +19,7 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
             "node_credentials",
             "node_metrics",
             "shell_macros",
+            "shell_macro_files",
             "operation_logs",
             "backup_system_settings",
             "operator_auth",

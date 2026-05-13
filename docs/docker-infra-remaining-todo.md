@@ -192,9 +192,13 @@
 
 - [x] 템플릿/기본 구성 기능 제거
 - [x] AI 초안, Compose 직접 작성, 서버 Compose 가져오기를 서비스 생성 진입점으로 정리
+- [x] 서비스 AI에 전달할 입력, 권한 scope, MCP allowlist 설계 고정
+- [x] 서비스 AI 생성 재시도 중복 방지를 위한 생성 세션/배포 operation/stack prune 기준 반영
 - [x] Compose 초안 적용 시 wizard form으로 자동 매핑
 - [x] `/templates` 화면, 메뉴, 모델, DB 테이블 제거
 - [ ] AI 초안 결과의 운영 메모 저장 위치 결정
+- [x] 명시적으로 시작한 AI 검사/수정을 백그라운드 검증 operation으로 전환
+- [x] DNS/IP/port/HTTP probe 결과를 다시 AI에 넘겨 최종 검증하는 루프 구현
 - [ ] 직접 작성 Compose payload 기반 API 테스트 추가
 - [x] 기본 생성 흐름에서 서비스 ID/container name 같은 불필요한 운영자 입력 제거 방향 반영
 

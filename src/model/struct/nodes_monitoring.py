@@ -9,6 +9,7 @@ config = wiz.config("docker_infra")
 connect = wiz.model("db/postgres").connect
 nodes = wiz.model("struct/nodes")
 operations = wiz.model("struct/operations")
+local_command_catalog = wiz.model("struct/local_command_catalog")
 
 EXPORTER_CONTAINER = "docker-infra-node-exporter"
 EXPORTER_SERVICE = "docker-infra-node-exporter.service"
@@ -118,16 +119,19 @@ class NodesMonitoring:
 
     def _collector_params(self, node_id, reporter_token, payload=None, env=None):
         interval = config.node_metric_collection_interval_seconds(env)
+        sample_interval = config.node_metric_sample_interval_seconds(env)
         return {
             "node_id": node_id,
             "reporter_token": reporter_token,
             "reporter_base_url": self._reporter_base_url(payload, env=env),
             "interval_seconds": interval,
+            "sample_interval_seconds": sample_interval,
             "service_name": COLLECTOR_SERVICE,
             "timer_name": COLLECTOR_TIMER,
             "script_path": COLLECTOR_SCRIPT,
             "env_path": COLLECTOR_ENV,
             "state_file": COLLECTOR_STATE_FILE,
+            "agent_version": local_command_catalog.METRICS_COLLECTOR_AGENT_VERSION,
         }
 
     def _collector_script(self, params):
@@ -137,11 +141,21 @@ class NodesMonitoring:
             params,
         )[2]
 
-    def _collector_status_script(self):
+    def _collector_status_params(self, env=None):
+        return {
+            "service_name": COLLECTOR_SERVICE,
+            "timer_name": COLLECTOR_TIMER,
+            "env_path": COLLECTOR_ENV,
+            "interval_seconds": config.node_metric_collection_interval_seconds(env),
+            "sample_interval_seconds": config.node_metric_sample_interval_seconds(env),
+            "agent_version": local_command_catalog.METRICS_COLLECTOR_AGENT_VERSION,
+        }
+
+    def _collector_status_script(self, env=None):
         return nodes.local_executor._argv(
             "monitoring.metrics_collector.status",
             nodes.local_executor._command_spec("monitoring.metrics_collector.status"),
-            {"service_name": COLLECTOR_SERVICE, "timer_name": COLLECTOR_TIMER},
+            self._collector_status_params(env=env),
         )[2]
 
     def _run_collector_ensure(self, node, reporter_token, payload=None, env=None):
@@ -164,13 +178,13 @@ class NodesMonitoring:
         if node.get("is_local_master") or node.get("role") == "local_master" or node.get("name") == "local-master":
             return nodes.local_executor.run(
                 "monitoring.metrics_collector.status",
-                params={"service_name": COLLECTOR_SERVICE, "timer_name": COLLECTOR_TIMER},
+                params=self._collector_status_params(env=env),
                 timeout_seconds=20,
                 env=env,
             )
         return nodes._run_ssh_command(
             node,
-            ["sh", "-lc", self._collector_status_script()],
+            ["sh", "-lc", self._collector_status_script(env=env)],
             timeout_seconds=20,
             env=env,
         )
@@ -195,6 +209,7 @@ class NodesMonitoring:
                         "service": COLLECTOR_SERVICE,
                         "timer": COLLECTOR_TIMER,
                         "interval_seconds": config.node_metric_collection_interval_seconds(env),
+                        "sample_interval_seconds": config.node_metric_sample_interval_seconds(env),
                     },
                     "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
                 }

@@ -9,6 +9,7 @@ shared = wiz.model("struct/nodes_shared")
 metric_history = wiz.model("struct/nodes_metric_history")
 token_hash = auth.token_hash
 REPORTER_TOKEN_TYPE = shared.REPORTER_TOKEN_TYPE
+METRIC_DEDUPLICATE_WINDOW_SECONDS = 10
 NodeError = shared.NodeError
 _node_to_dict = shared.node_to_dict
 _reporter_to_public = shared.reporter_to_public
@@ -51,12 +52,19 @@ class NodeReporterMixin:
             SELECT *
             FROM node_metrics
             WHERE node_id = %s
-              AND reported_at >= %s::timestamptz - interval '60 seconds'
-              AND reported_at <= %s::timestamptz + interval '60 seconds'
+              AND reported_at >= %s::timestamptz - (%s::int * interval '1 second')
+              AND reported_at <= %s::timestamptz + (%s::int * interval '1 second')
             ORDER BY ABS(EXTRACT(EPOCH FROM (reported_at - %s::timestamptz))) ASC, created_at DESC
             LIMIT 1
             """,
-            (node["id"], reported_at, reported_at, reported_at),
+            (
+                node["id"],
+                reported_at,
+                METRIC_DEDUPLICATE_WINDOW_SECONDS,
+                reported_at,
+                METRIC_DEDUPLICATE_WINDOW_SECONDS,
+                reported_at,
+            ),
         )
         existing = cursor.fetchone()
         if existing is not None:

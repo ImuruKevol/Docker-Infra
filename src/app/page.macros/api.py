@@ -5,6 +5,14 @@ def _error_payload(exc, default_code=500, default_error="UNEXPECTED_ERROR"):
     return default_code, {"message": str(exc), "error_code": default_error}
 
 
+def _macro_request():
+    from flask import request
+
+    if request.form or request.files:
+        return request.form.to_dict(flat=True), request.files.getlist("files")
+    return wiz.request.query(), []
+
+
 def load():
     macros_model = wiz.model("struct").macros
     code = 200
@@ -34,7 +42,7 @@ def load():
 
 def save_macro():
     macros_model = wiz.model("struct").macros
-    body = wiz.request.query()
+    body, files = _macro_request()
     code = 200
     payload = {}
 
@@ -44,7 +52,7 @@ def save_macro():
                 **body,
                 "scope_type": macros_model.SCOPE_GLOBAL,
                 "node_id": None,
-            })
+            }, file_storages=files)
         }
     except macros_model.MacroError as exc:
         code = exc.status_code

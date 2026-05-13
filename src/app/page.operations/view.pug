@@ -1,0 +1,101 @@
+header(class="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95")
+    div(class="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between")
+        div
+            div(class="flex items-center gap-2 text-xs font-medium text-zinc-500 dark:text-zinc-400")
+                i(class="fa-solid fa-clock-rotate-left")
+                span Operation Logs
+            h1(class="mt-1 text-xl font-semibold text-zinc-950 dark:text-zinc-50") 작업 로그
+        div(class="flex items-center gap-2")
+            button(type="button", (click)="load()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                i(class="fa-solid fa-rotate-right")
+                span 새로고침
+
+main(class="space-y-5 px-5 py-5")
+    div(*ngIf="loading()", class="h-32 rounded-md border border-zinc-200 bg-white p-5 text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400") 작업 로그를 불러오는 중입니다.
+    div(*ngIf="error()", class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300") {{error()}}
+
+    section(*ngIf="!loading()", class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+        div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 xl:flex-row xl:items-end xl:justify-between")
+            div
+                h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 전체 작업 로그
+                p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") 최근 작업의 실행 서버, 대상, 상태, 출력 로그를 조회합니다.
+            div(class="flex flex-col gap-2 md:flex-row md:items-end")
+                label(class="block min-w-64")
+                    span(class="mb-1 block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 검색
+                    input(type="search", [ngModel]="query()", (ngModelChange)="query.set($event)", (keyup.enter)="applyFilters()", placeholder="작업, 서버, 서비스 검색", class="h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                label(class="block")
+                    span(class="mb-1 block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 개수
+                    select([ngModel]="limit()", (ngModelChange)="limit.set($event)", class="h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        option([ngValue]="50") 50
+                        option([ngValue]="80") 80
+                        option([ngValue]="120") 120
+                        option([ngValue]="200") 200
+                button(type="button", (click)="applyFilters()", class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                    i(class="fa-solid fa-magnifying-glass")
+                    span 조회
+        div(class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+            div(class="flex gap-1 overflow-x-auto rounded-md border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-800 dark:bg-zinc-950")
+                button(*ngFor="let item of statusFilters", type="button", (click)="selectStatus(item.value)", class="inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs font-semibold transition", [ngClass]="statusButtonClass(item.value)")
+                    span {{item.label}}
+                    span(class="rounded bg-black/5 px-1.5 py-0.5 text-[10px] dark:bg-white/10") {{statusCount(item.value)}}
+        div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+            button(*ngFor="let operation of operations()", type="button", (click)="openOperation(operation)", class="block w-full px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-950")
+                div(class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between")
+                    div(class="min-w-0")
+                        div(class="flex flex-wrap items-center gap-2")
+                            span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(operation.status)") {{statusLabel(operation.status)}}
+                            h3(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{operationSummary(operation)}}
+                        p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400") {{operationServerText(operation)}} · {{operationTargetText(operation)}}
+                        p(*ngIf="operation.message", class="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{operation.message}}
+                    div(class="grid shrink-0 grid-cols-3 gap-2 text-right text-xs lg:min-w-80")
+                        div
+                            p(class="font-semibold text-zinc-500 dark:text-zinc-400") 생성
+                            p(class="mt-1 text-zinc-800 dark:text-zinc-200") {{formatDate(operation.created_at)}}
+                        div
+                            p(class="font-semibold text-zinc-500 dark:text-zinc-400") 소요
+                            p(class="mt-1 text-zinc-800 dark:text-zinc-200") {{operationDurationText(operation)}}
+                        div
+                            p(class="font-semibold text-zinc-500 dark:text-zinc-400") 출력
+                            p(class="mt-1 text-zinc-800 dark:text-zinc-200") {{outputCountText(operation)}}
+            div(*ngIf="operations().length === 0", class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400") 조회된 작업 로그가 없습니다.
+
+div(*ngIf="detailOpen()", class="fixed inset-0 z-50 flex items-center justify-center px-4 py-6")
+    div(class="absolute inset-0 bg-zinc-950/55", (click)="closeDetail()")
+    section(class="relative flex max-h-[90vh] w-full max-w-5xl flex-col rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
+        div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            div(class="min-w-0")
+                h2(class="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50") {{operationSummary(selectedOperation())}}
+                p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400") {{operationServerText(selectedOperation())}} · {{operationTargetText(selectedOperation())}} · {{formatDate(selectedOperation()?.created_at)}}
+            button(type="button", (click)="closeDetail()", class="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                i(class="fa-solid fa-xmark")
+        div(class="grid grid-cols-2 gap-3 border-b border-zinc-200 px-5 py-3 text-xs dark:border-zinc-800 md:grid-cols-5")
+            div
+                p(class="font-semibold text-zinc-500 dark:text-zinc-400") 상태
+                p(class="mt-1 text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{statusLabel(selectedOperation()?.status)}}
+            div
+                p(class="font-semibold text-zinc-500 dark:text-zinc-400") 서버
+                p(class="mt-1 truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{operationServerText(selectedOperation())}}
+            div
+                p(class="font-semibold text-zinc-500 dark:text-zinc-400") 대상
+                p(class="mt-1 truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{operationTargetText(selectedOperation())}}
+            div
+                p(class="font-semibold text-zinc-500 dark:text-zinc-400") 시작
+                p(class="mt-1 text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{formatDate(selectedOperation()?.started_at || selectedOperation()?.created_at)}}
+            div
+                p(class="font-semibold text-zinc-500 dark:text-zinc-400") 종료
+                p(class="mt-1 text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{formatDate(selectedOperation()?.finished_at)}}
+        div(class="min-h-0 flex-1 overflow-auto bg-zinc-950 px-4 py-3 font-mono text-xs")
+            div(*ngIf="detailBusy()", class="pb-3 text-zinc-400")
+                i(class="fa-solid fa-spinner fa-spin mr-1")
+                | 로그를 갱신하는 중입니다.
+            div(*ngIf="operationOutput().length === 0", class="py-8 text-center text-zinc-400") 아직 기록된 출력이 없습니다.
+            div(*ngFor="let item of operationOutput()", class="mb-2")
+                div(class="mb-1 flex items-center gap-2 text-[11px] text-zinc-500")
+                    span {{item.created_at ? formatDate(item.created_at) : '-'}}
+                    span {{item.metadata?.step || item.stream || 'log'}}
+                pre(class="whitespace-pre-wrap break-words", [ngClass]="operationStreamClass(item.stream)") {{item.message}}
+        div(class="flex items-center justify-between gap-3 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            p(class="text-xs text-zinc-500 dark:text-zinc-400") 실행 중인 작업은 2초마다 자동 갱신됩니다.
+            button(type="button", (click)="refreshDetail()", [disabled]="detailBusy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                i(class="fa-solid", [ngClass]="detailBusy() ? 'fa-spinner fa-spin' : 'fa-rotate-right'")
+                span 새로고침

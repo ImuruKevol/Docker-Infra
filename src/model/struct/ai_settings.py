@@ -74,15 +74,24 @@ GEMINI_PRICING_HINTS = [
 ]
 
 DEFAULT_CONFIG = {
+    "codex": {
+        "enabled": False,
+        "cli_mode": "system",
+        "model": "gpt-5.5",
+        "reasoning_effort": "xhigh",
+        "codex_home": "",
+    },
     "openai": {
         "enabled": False,
         "base_url": "https://api.openai.com/v1",
         "selected_model": "",
+        "model_sort": "name_asc",
     },
     "gemini": {
         "enabled": False,
         "api_version": "v1beta",
         "selected_model": "",
+        "model_sort": "name_asc",
     },
     "ollama": {
         "enabled": False,
@@ -90,6 +99,7 @@ DEFAULT_CONFIG = {
         "host": "127.0.0.1",
         "port": 11434,
         "selected_model": "",
+        "model_sort": "name_asc",
     },
     "runtime": {
         "enabled": False,
@@ -98,6 +108,7 @@ DEFAULT_CONFIG = {
         "node_ollama_port": 11434,
         "prefer_gpu": True,
         "selected_model": "",
+        "model_sort": "name_asc",
     },
 }
 
@@ -139,6 +150,20 @@ def _str(value, default=""):
     if value is None:
         return default
     return str(value).strip()
+
+
+def _reasoning_effort(value):
+    effort = _str(value, DEFAULT_CONFIG["codex"]["reasoning_effort"]).lower()
+    if effort not in {"low", "medium", "high", "xhigh"}:
+        return DEFAULT_CONFIG["codex"]["reasoning_effort"]
+    return effort
+
+
+def _model_sort(value):
+    value = _str(value, "name_asc")
+    if value not in {"name_asc", "name_desc", "latest", "oldest", "recommended"}:
+        return "name_asc"
+    return value
 
 
 def _deep_merge(base, value):
@@ -317,10 +342,19 @@ class AISettings:
 
     def _normalize_config(self, value):
         config = _deep_merge(DEFAULT_CONFIG, value if isinstance(value, dict) else {})
+        cli_mode = DEFAULT_CONFIG["codex"]["cli_mode"]
+        config["codex"] = {
+            "enabled": _as_bool(config["codex"].get("enabled")),
+            "cli_mode": cli_mode,
+            "model": _str(config["codex"].get("model"), DEFAULT_CONFIG["codex"]["model"]) or DEFAULT_CONFIG["codex"]["model"],
+            "reasoning_effort": _reasoning_effort(config["codex"].get("reasoning_effort")),
+            "codex_home": _str(config["codex"].get("codex_home")),
+        }
         config["openai"] = {
             "enabled": _as_bool(config["openai"].get("enabled")),
             "base_url": _str(config["openai"].get("base_url"), DEFAULT_CONFIG["openai"]["base_url"]).rstrip("/") or DEFAULT_CONFIG["openai"]["base_url"],
             "selected_model": _str(config["openai"].get("selected_model")),
+            "model_sort": _model_sort(config["openai"].get("model_sort")),
         }
         api_version = _str(config["gemini"].get("api_version"), "v1beta")
         if api_version not in {"v1", "v1beta"}:
@@ -329,6 +363,7 @@ class AISettings:
             "enabled": _as_bool(config["gemini"].get("enabled")),
             "api_version": api_version,
             "selected_model": _str(config["gemini"].get("selected_model")).replace("models/", "", 1),
+            "model_sort": _model_sort(config["gemini"].get("model_sort")),
         }
         scheme = "https" if _str(config["ollama"].get("scheme"), "http") == "https" else "http"
         scheme, host = _normalize_host(scheme, config["ollama"].get("host"))
@@ -338,6 +373,7 @@ class AISettings:
             "host": host or DEFAULT_CONFIG["ollama"]["host"],
             "port": _as_port(config["ollama"].get("port"), DEFAULT_CONFIG["ollama"]["port"]),
             "selected_model": _str(config["ollama"].get("selected_model")),
+            "model_sort": _model_sort(config["ollama"].get("model_sort")),
         }
         mode = _str(config["runtime"].get("mode"), "cloud_api")
         if mode not in {"cloud_api", "external_ollama", "local_server", "registered_node"}:
@@ -349,8 +385,10 @@ class AISettings:
             "node_ollama_port": _as_port(config["runtime"].get("node_ollama_port"), DEFAULT_CONFIG["runtime"]["node_ollama_port"]),
             "prefer_gpu": _as_bool(config["runtime"].get("prefer_gpu"), default=True),
             "selected_model": _str(config["runtime"].get("selected_model")),
+            "model_sort": _model_sort(config["runtime"].get("model_sort")),
         }
         return {
+            "codex": config["codex"],
             "openai": config["openai"],
             "gemini": config["gemini"],
             "ollama": config["ollama"],
@@ -465,7 +503,7 @@ class AISettings:
     def save_section(self, payload=None, env=None):
         body = dict(payload or {})
         section = _str(body.get("section")).lower()
-        if section not in {"openai", "gemini", "ollama", "runtime"}:
+        if section not in {"codex", "openai", "gemini", "ollama", "runtime"}:
             raise AISettingsError(400, "지원하지 않는 AI 설정 섹션입니다.", "AI_SETTING_SECTION_NOT_SUPPORTED")
 
         current = self._normalize_config(self._saved_config(env=env))

@@ -59,6 +59,33 @@ class ServiceDeployMixin:
         stack_name = service.get("stack_name") or service.get("namespace")
         return service, compose_path, stack_name
 
+    def _active_deploy_operation(self, service, env=None):
+        service_id = str(service.get("id") or "")
+        namespace = str(service.get("namespace") or "")
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM operation_logs
+                    WHERE type = 'service.deploy'
+                      AND status IN ('pending', 'running')
+                      AND (
+                        requested_payload->>'service_id' = %s
+                        OR metadata->>'service_id' = %s
+                        OR requested_payload->>'namespace' = %s
+                        OR metadata->>'namespace' = %s
+                      )
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (service_id, service_id, namespace, namespace),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return operations.detail(row["id"], env=env)
+
     def _deploy_background_worker(self, payload, operation_id, env=None):
         try:
             body = dict(payload or {})
@@ -88,6 +115,10 @@ class ServiceDeployMixin:
     def deploy_background(self, payload, env=None):
         payload = dict(payload or {})
         service, compose_path, stack_name = self._prepare_deploy(payload, env=env)
+        if payload.get("force_new_operation") is not True:
+            active = self._active_deploy_operation(service, env=env)
+            if active:
+                return {"accepted": True, "service": service, "operation": active, "deduplicated": True}
         operation = self._create_deploy_operation(
             service,
             stack_name,
@@ -377,14 +408,48 @@ class ServiceDeployMixin:
                 env=env,
             )
 
+        ai_verification = None
+        if payload.get("start_ai_verification") is True:
+            try:
+                ai_assistant = wiz.model("struct/ai_assistant")
+                ai_verification = ai_assistant.start_runtime_verification(
+                    {
+                        "service_id": service_id,
+                        "source_operation_id": operation_id,
+                        "model_ref": payload.get("model_ref") or "auto",
+                        "intent": payload.get("ai_verification_intent") or payload.get("intent") or "",
+                        "client_runtime_issues": payload.get("client_runtime_issues") if isinstance(payload.get("client_runtime_issues"), dict) else {},
+                        "allow_container_terminal_actions": payload.get("allow_container_terminal_actions") is not False,
+                        "allow_ssh_command": payload.get("allow_ssh_command") is not False,
+                        "apply": payload.get("ai_verify_apply") is not False,
+                        "deploy": payload.get("ai_verify_deploy") is not False,
+                    },
+                    env=env,
+                )
+                operations.append_output(
+                    operation_id,
+                    "AI 백그라운드 검증을 시작했습니다.",
+                    stream="system",
+                    metadata={"step": "ai verification", "operation": ai_verification.get("operation")},
+                    env=env,
+                )
+            except Exception as exc:
+                operations.append_output(
+                    operation_id,
+                    "AI 백그라운드 검증을 시작할 수 없습니다: %s" % exc,
+                    stream="stderr",
+                    metadata={"step": "ai verification", "error": str(exc)},
+                    env=env,
+                )
+
         operation = operations.transition(
             operation_id,
             "succeeded",
             message="서비스 배포를 완료했습니다.",
-            result_payload={"service_id": service_id, "stack_name": stack_name, "runtime_status": runtime_status},
+            result_payload={"service_id": service_id, "stack_name": stack_name, "runtime_status": runtime_status, "ai_verification": ai_verification},
             env=env,
         )
-        return {"service": service, "operation": operation, "runtime_status": runtime_status}
+        return {"service": service, "operation": operation, "runtime_status": runtime_status, "ai_verification": ai_verification}
 
 
 Model = ServiceDeployMixin

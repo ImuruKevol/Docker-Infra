@@ -17,6 +17,7 @@ DEFAULT_BACKUP_HARBOR_HTTPS_PORT = "5443"
 DEFAULT_BACKUP_HARBOR_VERSION = "v2.15.0"
 DEFAULT_NODE_EXPORTER_IMAGE = "quay.io/prometheus/node-exporter:v1.8.2"
 DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS = "600"
+DEFAULT_NODE_METRIC_SAMPLE_INTERVAL_SECONDS = "1"
 CONFIG_ENV_NAME = "config.env"
 LOCAL_EXECUTOR_ALLOWLIST_ENV = "DOCKER_INFRA_LOCAL_EXECUTOR_ALLOWLIST"
 DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
@@ -193,6 +194,15 @@ def node_metric_collection_interval_seconds(env=None):
     except (TypeError, ValueError):
         seconds = int(DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS)
     return max(600, min(seconds, 3600))
+
+
+def node_metric_sample_interval_seconds(env=None):
+    value = runtime_env(env).get("DOCKER_INFRA_NODE_METRIC_SAMPLE_INTERVAL_SECONDS") or DEFAULT_NODE_METRIC_SAMPLE_INTERVAL_SECONDS
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = int(DEFAULT_NODE_METRIC_SAMPLE_INTERVAL_SECONDS)
+    return max(1, min(seconds, 60))
 
 
 def reporter_base_url(env=None):

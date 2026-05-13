@@ -43,6 +43,8 @@ export class Component implements OnInit {
     public preflightSignature = '';
     public preflightReady = false;
     public preflightOk = false;
+    public createSessionId = `svc-create-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    public createdServiceId = '';
 
     constructor(public service: Service) { }
 
@@ -693,15 +695,20 @@ export class Component implements OnInit {
         this.syncDomain();
         this.ensureDomainTarget();
         const source = this.importSource() ? 'server_compose_import' : (this.draftSource() || 'manual_compose');
+        const draftMetadata = { ...(this.draftMetadata || {}), create_session_id: this.createSessionId };
+        const sourceRef = this.importSource()
+            ? { ...this.importSource(), create_session_id: this.createSessionId }
+            : { source, wizard: 'services.create', create_session_id: this.createSessionId };
         return {
             ...this.form,
             base_content: this.baseContent,
             generated_secret_keys: this.generatedSecretKeys,
-            draft_metadata: this.draftMetadata,
+            draft_metadata: draftMetadata,
             components: this.components,
+            create_session_id: this.createSessionId,
             source,
             import_source: this.importSource(),
-            source_ref: this.importSource() || { source, wizard: 'services.create' },
+            source_ref: sourceRef,
         };
     }
 
@@ -826,6 +833,20 @@ export class Component implements OnInit {
     }
 
     public async save(deploy: boolean = false) {
+        if (this.busy()) return;
+        if (this.createdServiceId) {
+            if (deploy) {
+                const deployResult = await wiz.call('deploy_service_background', {
+                    service_id: this.createdServiceId,
+                });
+                if (![200, 202].includes(deployResult.code)) {
+                    await this.alert(deployResult.data?.message || '서비스 배포를 시작할 수 없습니다.');
+                    return;
+                }
+            }
+            this.service.href(`/services?service_id=${encodeURIComponent(this.createdServiceId)}`);
+            return;
+        }
         for (const item of [1, 2, 3] as StepId[]) {
             if (!(await this.validateStep(item))) {
                 this.step.set(item);
@@ -844,8 +865,11 @@ export class Component implements OnInit {
             return;
         }
         const serviceId = data.result?.service?.id;
+        if (serviceId) this.createdServiceId = serviceId;
         if (deploy && serviceId) {
-            const deployResult = await wiz.call('deploy_service_background', { service_id: serviceId });
+            const deployResult = await wiz.call('deploy_service_background', {
+                service_id: serviceId,
+            });
             this.busy.set(false);
             if (![200, 202].includes(deployResult.code)) {
                 await this.alert(deployResult.data?.message || '서비스 배포에 실패했습니다.');

@@ -103,6 +103,7 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
         filename = payload.get("filename") or "docker-compose.yaml"
         content = payload.get("content")
         domain = (payload.get("domain") or "").strip()
+        domains = payload.get("domains") if isinstance(payload.get("domains"), list) else []
         port = _safe_int(payload.get("port"), 80)
         proxy_type = "nginx"
         ssl_mode = payload.get("ssl_mode") or "none"
@@ -125,6 +126,8 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
         source_ref = payload.get("source_ref")
         draft_metadata = payload.get("draft_metadata") if isinstance(payload.get("draft_metadata"), dict) else {}
         domain_metadata = {"source": "ui_wizard", **dict(payload.get("domain_metadata") or {})}
+        if not domains and domain:
+            domains = [{"domain": domain, "port": port, "ssl_mode": ssl_mode, "metadata": domain_metadata}]
 
         if not content:
             content = self.default_compose(
@@ -212,25 +215,37 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
                 )
                 service = _row(cursor.fetchone())
 
+                domain_rows = []
                 domain_row = None
-                if domain:
+                for index, item in enumerate(domains):
+                    item_domain = str((item or {}).get("domain") or "").strip().lower()
+                    if not item_domain:
+                        continue
+                    item_port = _safe_int((item or {}).get("port"), port)
+                    item_ssl_mode = (item or {}).get("ssl_mode") or ssl_mode
+                    item_metadata = {"source": "ui_wizard", **dict((item or {}).get("metadata") or {})}
                     cursor.execute(
                         """
                         INSERT INTO service_domains(service_id, domain, port, proxy_type, ssl_mode, test_run_id, metadata)
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (service_id, domain)
+                        DO UPDATE SET port = EXCLUDED.port, proxy_type = EXCLUDED.proxy_type, ssl_mode = EXCLUDED.ssl_mode, metadata = EXCLUDED.metadata, updated_at = now()
                         RETURNING *
                         """,
                         (
                             service["id"],
-                            domain,
-                            port,
+                            item_domain,
+                            item_port,
                             proxy_type,
-                            ssl_mode,
+                            item_ssl_mode,
                             test_run_id,
-                            Jsonb(domain_metadata),
+                            Jsonb(item_metadata),
                         ),
                     )
-                    domain_row = _row(cursor.fetchone())
+                    row = _row(cursor.fetchone())
+                    domain_rows.append(row)
+                    if index == 0:
+                        domain_row = row
 
                 cursor.execute(
                     """
@@ -264,6 +279,7 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
         return {
             "service": service,
             "domain": domain_row,
+            "domains": domain_rows,
             "compose_version": version,
             "image_backups": image_rows,
             "validation": validation,

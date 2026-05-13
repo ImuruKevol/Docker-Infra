@@ -10,6 +10,7 @@ export class Component implements OnInit {
         { link: '/services', label: 'nav.services', icon: 'fa-layer-group' },
         { link: '/macros', label: 'nav.macros', icon: 'fa-bolt' },
         { link: '/domains', label: 'nav.domains', icon: 'fa-globe' },
+        { link: '/operations', label: '작업 로그', icon: 'fa-clock-rotate-left' },
         { link: '/images', label: 'nav.images', icon: 'fa-cubes' },
         { link: '/system', label: 'nav.system', icon: 'fa-gear' },
         { link: '/tools', label: 'nav.tools', icon: 'fa-toolbox' },

@@ -18,6 +18,12 @@ def _error_payload(exc, default_code=500, default_error="UNEXPECTED_ERROR"):
     return default_code, {"message": str(exc), "error_code": default_error}
 
 
+def _macro_request():
+    if request.form or request.files:
+        return request.form.to_dict(flat=True), request.files.getlist("files")
+    return wiz.request.query(), []
+
+
 def _with_monitoring_state(payload, monitoring):
     payload = payload or {}
     payload["monitoring"] = monitoring.state()
@@ -336,7 +342,7 @@ def refresh_metrics():
 
 
 def resource_history():
-    history_model = wiz.model("struct").nodes_metric_history
+    history_model = wiz.model("struct/nodes_metric_history")
     body = wiz.request.query()
     node_id = body.get("node_id")
     if not node_id:
@@ -346,14 +352,20 @@ def resource_history():
     code = 200
     payload = {}
     try:
-        payload = history_model.query(
-            node_id=node_id,
-            start_date=body.get("start_date"),
-            end_date=body.get("end_date"),
-            start_at=body.get("start_at"),
-            end_at=body.get("end_at"),
-            limit=body.get("limit") or 1440,
-        )
+        chart_args = {
+            "node_id": node_id,
+            "start_date": body.get("start_date"),
+            "end_date": body.get("end_date"),
+            "start_at": body.get("start_at"),
+            "end_at": body.get("end_at"),
+            "limit": body.get("limit") or 1440,
+        }
+        if hasattr(history_model, "node_chart"):
+            payload = history_model.node_chart(**chart_args)
+        else:
+            payload = history_model.query(**chart_args)
+            payload["source"] = payload.get("source") or "csv"
+            payload["source_count"] = payload.get("source_count") or payload.get("count", 0)
     except Exception as exc:
         code, payload = _error_payload(exc)
 
@@ -361,7 +373,7 @@ def resource_history():
 
 
 def delete_resource_history():
-    history_model = wiz.model("struct").nodes_metric_history
+    history_model = wiz.model("struct/nodes_metric_history")
     body = wiz.request.query()
     node_id = body.get("node_id")
     if not node_id:
@@ -575,7 +587,7 @@ def list_macros():
 
 def save_macro():
     macros_model = wiz.model("struct").macros
-    body = wiz.request.query()
+    body, files = _macro_request()
     code = 200
     payload = {}
 
@@ -585,7 +597,7 @@ def save_macro():
                 **body,
                 "scope_type": macros_model.SCOPE_NODE,
                 "node_id": body.get("node_id"),
-            })
+            }, file_storages=files)
         }
     except macros_model.MacroError as exc:
         code = exc.status_code

@@ -180,6 +180,8 @@ Done:
 
 - 템플릿/기본 구성 개념을 제거하고 서비스 생성의 시작점을 AI 초안, Compose 직접 작성, 서버 Compose 가져오기로 정리
 - AI 초안은 완성 Compose, wizard form, 구성요소, 경고, 운영 메모를 반환
+- AI에 전달할 context, 허용 scope, MCP allowlist를 서비스 AI/Codex Agent 설계로 고정
+- 배포 후 검증에 필요한 DNS/TCP/HTTP probe MCP와 중복 생성/배포 방지 기준을 서비스 AI 설계에 반영
 - 직접 작성 또는 가져온 Compose는 동일한 `components_from_content` 경로로 wizard form에 반영
 - DB, Redis 같은 내부 구성은 외부 공개 port 없이 Compose 내부 네트워크로만 연결
 - 서비스 ID, container name 같은 운영자에게 불필요한 입력은 기본 생성 흐름에서 제거
@@ -188,6 +190,8 @@ Done:
 필요한 TODO:
 
 - AI가 반환한 운영 메모를 서비스 상세 또는 compose version metadata에 저장할지 결정
+- [Done] 명시적으로 시작한 AI 검사/수정을 `service.ai.verify` 백그라운드 operation으로 전환하고, 컨테이너 안정화와 도메인/IP/port/HTTP probe 후 AI를 재호출하는 검증 루프 구현
+- `service.ai.verify` 진행 상태는 서비스 상세의 백그라운드 작업 배너와 처리 로그 polling으로 조회
 - AI 초안 생성의 live/API 테스트를 추가
 - 직접 작성 Compose payload로 서비스 생성 API 테스트 추가
 

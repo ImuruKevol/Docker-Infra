@@ -30,12 +30,32 @@ if [ "$valid_prev" = "1" ] && [ "$total" -gt "$prev_total" ]; then
 else
   cpu_percent="0.0"
 fi
-mem_total=$(awk '/MemTotal:/ {printf "%.0f", $2 * 1024}' /proc/meminfo)
-mem_available=$(awk '/MemAvailable:/ {printf "%.0f", $2 * 1024}' /proc/meminfo)
-mem_used=$((mem_total - mem_available))
-mem_percent=$(awk -v used="$mem_used" -v total="$mem_total" 'BEGIN { if (total <= 0) print "0.0"; else printf "%.2f", (used * 100 / total) }')
+mem_values=$(awk '
+  /MemTotal:/ { total = $2 * 1024 }
+  /MemFree:/ { free = $2 * 1024 }
+  /MemAvailable:/ { available = $2 * 1024 }
+  /^Buffers:/ { buffers = $2 * 1024 }
+  /^Cached:/ { cached = $2 * 1024 }
+  /^SReclaimable:/ { sreclaimable = $2 * 1024 }
+  /^Shmem:/ { shmem = $2 * 1024 }
+  END {
+    cache = buffers + cached + sreclaimable - shmem
+    if (cache < 0) cache = 0
+    used = total - free - cache
+    if (used < 0) used = 0
+    if (total <= 0) total = 0
+    used_percent = total > 0 ? used * 100 / total : 0
+    cache_percent = total > 0 ? cache * 100 / total : 0
+    free_percent = total > 0 ? free * 100 / total : 0
+    available_percent = total > 0 ? available * 100 / total : 0
+    printf "%.0f %.0f %.0f %.0f %.0f %.2f %.2f %.2f %.2f", total, used, cache, free, available, used_percent, cache_percent, free_percent, available_percent
+  }
+' /proc/meminfo)
+read mem_total mem_used mem_cache mem_free mem_available mem_percent mem_cache_percent mem_free_percent mem_available_percent <<EOF
+$mem_values
+EOF
 storage_json=$(df -Pk / | awk 'NR==2 { gsub("%", "", $5); printf "\"total\":%d,\"used\":%d,\"available\":%d,\"used_percent\":%.2f", $2 * 1024, $3 * 1024, $4 * 1024, $5 }')
-printf '{"cpu_percent":%s,"memory":{"total":%s,"used":%s,"available":%s,"used_percent":%s},"storage":{%s}}\n' "$cpu_percent" "$mem_total" "$mem_used" "$mem_available" "$mem_percent" "$storage_json"
+printf '{"cpu_percent":%s,"memory":{"total":%s,"used":%s,"cache":%s,"free":%s,"available":%s,"used_percent":%s,"cache_percent":%s,"free_percent":%s,"available_percent":%s},"storage":{%s}}\n' "$cpu_percent" "$mem_total" "$mem_used" "$mem_cache" "$mem_free" "$mem_available" "$mem_percent" "$mem_cache_percent" "$mem_free_percent" "$mem_available_percent" "$storage_json"
 """
 
 NODE_METRICS_AGENT_SCRIPT = r"""#!/usr/bin/env python3
@@ -43,6 +63,7 @@ import datetime
 import json
 import os
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
@@ -105,12 +126,19 @@ def memory():
                 values[parts[0].rstrip(":")] = int(parts[1]) * 1024
     total = values.get("MemTotal", 0)
     available = values.get("MemAvailable", 0)
-    used = max(0, total - available)
+    free = values.get("MemFree", 0)
+    cache = max(0, values.get("Buffers", 0) + values.get("Cached", 0) + values.get("SReclaimable", 0) - values.get("Shmem", 0))
+    used = max(0, total - free - cache)
     return {
         "total": total,
         "used": used,
+        "cache": cache,
+        "free": free,
         "available": available,
         "used_percent": round(used * 100.0 / total, 2) if total else 0.0,
+        "cache_percent": round(cache * 100.0 / total, 2) if total else 0.0,
+        "free_percent": round(free * 100.0 / total, 2) if total else 0.0,
+        "available_percent": round(available * 100.0 / total, 2) if total else 0.0,
     }
 
 
@@ -179,18 +207,84 @@ def post_metric(payload):
         return response.status
 
 
+def env_int(name, default, minimum, maximum):
+    try:
+        value = int(os.environ.get(name) or default)
+    except Exception:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def stat(values):
+    numbers = [float(value or 0.0) for value in values]
+    if not numbers:
+        numbers = [0.0]
+    return {
+        "min": round(min(numbers), 2),
+        "max": round(max(numbers), 2),
+        "last": round(numbers[-1], 2),
+        "avg": round(sum(numbers) / len(numbers), 2),
+    }
+
+
+def metric_sample():
+    return {
+        "reported_at": utcnow(),
+        "cpu_percent": cpu_percent(),
+        "memory": memory(),
+    }
+
+
+def collect_window(window_seconds, sample_seconds):
+    samples = []
+    deadline = time.monotonic() + window_seconds
+    while True:
+        samples.append(metric_sample())
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(sample_seconds, remaining))
+    return samples
+
+
 def main():
     node_id = os.environ.get("DOCKER_INFRA_NODE_ID", "")
     if not node_id:
         raise RuntimeError("DOCKER_INFRA_NODE_ID is required")
+    interval_seconds = env_int("DOCKER_INFRA_METRICS_INTERVAL_SECONDS", 600, 600, 3600)
+    window_seconds = env_int("DOCKER_INFRA_METRICS_WINDOW_SECONDS", interval_seconds, 600, 3600)
+    sample_seconds = env_int("DOCKER_INFRA_METRICS_SAMPLE_SECONDS", 1, 1, 60)
+    samples = collect_window(window_seconds, sample_seconds)
+    last = samples[-1]
+    mem = last["memory"]
+    disk = storage()
     payload = {
         "node_id": node_id,
-        "reported_at": utcnow(),
-        "cpu_percent": cpu_percent(),
-        "memory": memory(),
-        "storage": storage(),
+        "reported_at": last["reported_at"],
+        "cpu_percent": last["cpu_percent"],
+        "memory": mem,
+        "storage": disk,
         "containers": container_payload(),
-        "metadata": {"source": "systemd_collector"},
+        "metadata": {
+            "source": "systemd_collector",
+            "agent_version": os.environ.get("DOCKER_INFRA_METRICS_AGENT_VERSION", ""),
+            "interval_seconds": interval_seconds,
+            "window_seconds": window_seconds,
+            "sample_interval_seconds": sample_seconds,
+            "sample_count": len(samples),
+            "resource_window": {
+                "sample_count": len(samples),
+                "started_at": samples[0]["reported_at"],
+                "ended_at": last["reported_at"],
+                "window_seconds": window_seconds,
+                "sample_interval_seconds": sample_seconds,
+                "cpu_percent": stat([sample["cpu_percent"] for sample in samples]),
+                "memory_used_percent": stat([sample["memory"].get("used_percent") for sample in samples]),
+                "memory_cache_percent": stat([sample["memory"].get("cache_percent") for sample in samples]),
+                "memory_free_percent": stat([sample["memory"].get("free_percent") for sample in samples]),
+                "storage_used_percent": stat([disk.get("used_percent")]),
+            },
+        },
     }
     status = post_metric(payload)
     print(f"reported node metrics: status={status}")

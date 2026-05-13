@@ -213,6 +213,18 @@ main(class="space-y-5 px-5 py-5")
                                         wiz-component-search-select([items]="macroSelectorItems()", [value]="selectedMacroId()", (valueChange)="selectMacro($event)", [placeholder]="'실행할 매크로를 선택하세요'", [searchPlaceholder]="'이름 또는 설명으로 검색'", [emptyText]="'실행할 수 있는 매크로가 없습니다.'", [disabled]="macroLoading()")
                                     div(*ngIf="macroError()", class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300") {{macroError()}}
                                     div(*ngIf="!selectedMacro() && !macroLoading()", class="rounded-md border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400") 실행할 매크로를 선택하세요.
+                                    div(*ngIf="selectedMacro()", class="rounded-md border border-zinc-200 dark:border-zinc-800")
+                                        div(class="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                            span(class="text-xs font-semibold text-zinc-600 dark:text-zinc-300") 첨부 파일
+                                            span(class="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300")
+                                                i(class="fa-solid fa-paperclip")
+                                                span {{macroFileSummary(selectedMacro())}}
+                                        div(*ngIf="macroFilesFor(selectedMacro()).length === 0", class="px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400") 첨부 파일 없음
+                                        div(*ngFor="let file of macroFilesFor(selectedMacro())", class="flex items-center justify-between gap-3 border-t border-zinc-100 px-3 py-2 first:border-t-0 dark:border-zinc-800")
+                                            div(class="min-w-0 text-xs text-zinc-700 dark:text-zinc-200")
+                                                i(class="fa-solid fa-file mr-2 text-zinc-400")
+                                                span {{file.filename}}
+                                            span(class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400") {{formatFileSize(file.size_bytes)}}
                                     div(class="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto]")
                                         div(class="space-y-3")
                                             label(class="flex items-center gap-2 rounded-md border border-zinc-200 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:text-zinc-200")
@@ -249,6 +261,9 @@ main(class="space-y-5 px-5 py-5")
                                             div(class="flex flex-wrap items-center gap-2")
                                                 p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{macro.name}}
                                                 span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="macro.enabled ? statusClass('ok') : statusClass('warning')") {{macro.enabled ? '사용 가능' : '비활성화'}}
+                                                span(*ngIf="macroFileCount(macro)", class="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300")
+                                                    i(class="fa-solid fa-paperclip")
+                                                    span {{macroFileCount(macro)}}
                                             p(*ngIf="macro.description", class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{macro.description}}
                                         div(class="flex items-center gap-2")
                                             button(type="button", (click)="openEditMacro(macro)", [disabled]="busy()", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
@@ -312,19 +327,36 @@ div(*ngIf="resourceChartOpen()", class="fixed inset-0 z-40 flex items-center jus
                 div(class="rounded-md border border-sky-200 bg-sky-50 px-3 py-3 dark:border-sky-900/70 dark:bg-sky-950/40")
                     p(class="text-xs font-semibold text-sky-700 dark:text-sky-300") CPU
                     p(class="mt-1 text-2xl font-semibold text-zinc-950 dark:text-zinc-50") {{latestResourcePercent('cpu_percent')}}
+                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{resourceStatSummary('cpu_percent')}}
                 div(class="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-3 dark:border-emerald-900/70 dark:bg-emerald-950/40")
                     p(class="text-xs font-semibold text-emerald-700 dark:text-emerald-300") Memory
                     p(class="mt-1 text-2xl font-semibold text-zinc-950 dark:text-zinc-50") {{latestResourcePercent('memory_used_percent')}}
+                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{resourceStatSummary('memory_used_percent')}}
                 div(class="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 dark:border-amber-900/70 dark:bg-amber-950/40")
                     p(class="text-xs font-semibold text-amber-700 dark:text-amber-300") Storage
                     p(class="mt-1 text-2xl font-semibold text-zinc-950 dark:text-zinc-50") {{latestResourcePercent('storage_used_percent')}}
+                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{resourceStatSummary('storage_used_percent')}}
             div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
                 div(*ngIf="resourceHistoryBusy() && resourceRows().length === 0", class="flex h-80 items-center justify-center gap-2 text-sm text-zinc-500 dark:text-zinc-400")
                     i(class="fa-solid fa-spinner fa-spin")
                     span 자원 기록을 불러오는 중입니다.
                 div(*ngIf="!resourceHistoryBusy() && resourceRows().length === 0", class="flex h-80 items-center justify-center text-sm text-zinc-500 dark:text-zinc-400") 선택한 기간에 표시할 기록이 없습니다.
-                div(*ngIf="resourceRows().length > 0", class="h-80")
-                    canvas(data-resource-chart-canvas="server", class="block h-full w-full")
+                div(*ngIf="resourceRows().length > 0", class="divide-y divide-zinc-200 dark:divide-zinc-800")
+                    div(class="pb-5")
+                        div(class="flex items-center justify-between gap-3")
+                            p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") CPU
+                            p(class="text-xs text-zinc-500 dark:text-zinc-400") 평균 + min/max 범위
+                        div(data-resource-chart="cpu", class="mt-2 h-72")
+                    div(class="py-5")
+                        div(class="flex items-center justify-between gap-3")
+                            p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") Memory
+                            p(class="text-xs text-zinc-500 dark:text-zinc-400") 평균 + min/max 범위
+                        div(data-resource-chart="memory", class="mt-2 h-72")
+                    div(class="pt-5")
+                        div(class="flex items-center justify-between gap-3")
+                            p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") Storage
+                            p(class="text-xs text-zinc-500 dark:text-zinc-400") 사용률
+                        div(data-resource-chart="storage", class="mt-2 h-72")
 
 div(*ngIf="serverModalOpen()", class="fixed inset-0 z-40 flex items-center justify-center px-4 py-6")
     div(class="absolute inset-0 bg-zinc-950/50", (click)="closeServerModal()")
@@ -431,9 +463,28 @@ div(*ngIf="macroModalOpen()", class="fixed inset-0 z-40 flex items-center justif
                 label(class="flex items-center gap-2 rounded-md border border-zinc-200 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:text-zinc-200")
                     input(type="checkbox", [(ngModel)]="macroForm.enabled", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
                     span 저장 후 바로 실행할 수 있도록 사용 상태로 둡니다.
-                div(class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400")
-                    p 인자는 실행 시마다 따로 입력합니다.
-                    p(class="mt-1") 스크립트 안에서는 `$1`, `$2`, `$@` 형태로 받을 수 있습니다.
+                div(class="rounded-md border border-zinc-200 dark:border-zinc-800")
+                    div(class="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                        span(class="text-xs font-semibold text-zinc-600 dark:text-zinc-300") 첨부 파일
+                        input(#macroFileInput="", type="file", multiple, class="hidden", (change)="selectMacroFiles($event)")
+                        button(type="button", (click)="macroFileInput.click()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                            i(class="fa-solid fa-upload")
+                            span 추가
+                    div(*ngIf="existingMacroFiles().length === 0 && pendingMacroFiles().length === 0", class="px-3 py-4 text-xs text-zinc-500 dark:text-zinc-400") 첨부 파일 없음
+                    div(*ngFor="let file of existingMacroFiles()", class="flex items-center justify-between gap-2 border-t border-zinc-100 px-3 py-2 first:border-t-0 dark:border-zinc-800")
+                        div(class="min-w-0 text-xs text-zinc-700 dark:text-zinc-200")
+                            i(class="fa-solid fa-file mr-2 text-zinc-400")
+                            span {{file.filename}}
+                            span(class="ml-2 text-zinc-400") {{formatFileSize(file.size_bytes)}}
+                        button(type="button", (click)="removeExistingMacroFile(file.id)", [disabled]="busy()", class="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                            i(class="fa-solid fa-xmark")
+                    div(*ngFor="let file of pendingMacroFiles(); let i = index", class="flex items-center justify-between gap-2 border-t border-zinc-100 px-3 py-2 first:border-t-0 dark:border-zinc-800")
+                        div(class="min-w-0 text-xs text-sky-700 dark:text-sky-300")
+                            i(class="fa-solid fa-file-arrow-up mr-2")
+                            span {{file.name}}
+                            span(class="ml-2 text-zinc-400") {{formatFileSize(file.size)}}
+                        button(type="button", (click)="removePendingMacroFile(i)", [disabled]="busy()", class="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                            i(class="fa-solid fa-xmark")
             div(class="rounded-md border border-zinc-200 dark:border-zinc-800")
                 nu-monaco-editor([(ngModel)]="macroForm.script", [options]="macroEditorOptions", height="420px")
         div(class="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")

@@ -42,35 +42,69 @@ class ServiceUpdateMixin:
         return ssl_mode, metadata
 
     def _replace_domain(self, cursor, service_id, payload, env=None):
-        domain = str(payload.get("domain") or "").strip().lower()
-        port = _safe_int(payload.get("port") or payload.get("domain_target_port"), 80)
-        cursor.execute("DELETE FROM service_domains WHERE service_id = %s AND lower(domain) <> lower(%s)", (service_id, domain or ""))
-        if not domain:
+        domain_rows = self._domain_rows_from_payload(payload, env=env)
+        if not domain_rows:
             cursor.execute("DELETE FROM service_domains WHERE service_id = %s", (service_id,))
             return None
-        ssl_mode, metadata = self._domain_payload(payload, domain, port, env=env)
-        cursor.execute("SELECT * FROM service_domains WHERE service_id = %s AND lower(domain) = lower(%s)", (service_id, domain))
-        current = cursor.fetchone()
-        if current:
-            cursor.execute(
-                """
-                UPDATE service_domains
-                SET port = %s, proxy_type = 'nginx', ssl_mode = %s, metadata = %s, updated_at = now()
-                WHERE id = %s
-                RETURNING *
-                """,
-                (port, ssl_mode, Jsonb(metadata), current["id"]),
-            )
-        else:
+        keep = [item["domain"] for item in domain_rows]
+        cursor.execute("DELETE FROM service_domains WHERE service_id = %s AND NOT (lower(domain) = ANY(%s))", (service_id, keep))
+        saved = []
+        for item in domain_rows:
+            domain = item["domain"]
+            port = item["port"]
+            ssl_mode = item["ssl_mode"]
+            metadata = item["metadata"]
             cursor.execute(
                 """
                 INSERT INTO service_domains(service_id, domain, port, proxy_type, ssl_mode, test_run_id, metadata)
                 VALUES (%s, %s, %s, 'nginx', %s, %s, %s)
+                ON CONFLICT (service_id, domain)
+                DO UPDATE SET port = EXCLUDED.port, proxy_type = 'nginx', ssl_mode = EXCLUDED.ssl_mode, metadata = EXCLUDED.metadata, updated_at = now()
                 RETURNING *
                 """,
                 (service_id, domain, port, ssl_mode, payload.get("test_run_id"), Jsonb(metadata)),
             )
-        return _row(cursor.fetchone())
+            saved.append(_row(cursor.fetchone()))
+        return saved[0] if saved else None
+
+    def _domain_rows_from_payload(self, payload, env=None):
+        payload = payload or {}
+        raw_domains = payload.get("domains") if isinstance(payload.get("domains"), list) else []
+        rows = []
+        for item in raw_domains:
+            if not isinstance(item, dict):
+                continue
+            domain = str(item.get("domain") or "").strip().lower()
+            if not domain:
+                continue
+            port = _safe_int(item.get("port") or item.get("domain_target_port") or item.get("target_port") or payload.get("domain_target_port"), 80)
+            metadata = dict(item.get("metadata") or {})
+            metadata.update({
+                "source": metadata.get("source") or "service_update",
+                "compose_service": item.get("compose_service") or item.get("service_key") or metadata.get("compose_service"),
+                "target_port": port,
+                "published_port": _safe_int(item.get("published_port") or metadata.get("published_port") or port, port),
+            })
+            zone_id = item.get("zone_id") or payload.get("zone_id") or metadata.get("zone_id")
+            if zone_id:
+                metadata["zone_id"] = zone_id
+            ssl_mode = item.get("ssl_mode")
+            if not ssl_mode:
+                ssl_mode, metadata = self._domain_payload({**payload, "domain_metadata": metadata, "zone_id": zone_id}, domain, port, env=env)
+            rows.append({"domain": domain, "port": port, "ssl_mode": ssl_mode, "metadata": metadata})
+        if not rows and str(payload.get("domain") or "").strip():
+            domain = str(payload.get("domain") or "").strip().lower()
+            port = _safe_int(payload.get("port") or payload.get("domain_target_port"), 80)
+            ssl_mode, metadata = self._domain_payload(payload, domain, port, env=env)
+            rows.append({"domain": domain, "port": port, "ssl_mode": ssl_mode, "metadata": metadata})
+        deduped = []
+        seen = set()
+        for item in rows:
+            if item["domain"] in seen:
+                continue
+            seen.add(item["domain"])
+            deduped.append(item)
+        return deduped
 
     def update_wizard(self, payload, env=None):
         payload = payload or {}
@@ -113,6 +147,12 @@ class ServiceUpdateMixin:
             "last_update": {"history_id": history_id, "source": "service_update"},
             "wizard": payload.get("wizard") or {"components": payload.get("components") or [], "domain_mode": payload.get("domain_mode")},
         })
+        if payload.get("operator_comment") is not None:
+            operator_comment = str(payload.get("operator_comment") or "").strip()
+            if operator_comment:
+                metadata["operator_comment"] = operator_comment
+            else:
+                metadata.pop("operator_comment", None)
 
         with connect(env=env) as connection:
             with connection.cursor() as cursor:

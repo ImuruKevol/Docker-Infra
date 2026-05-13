@@ -135,3 +135,40 @@
 | 2026-05-12 | 133 | AI 서비스 생성 스트림 heartbeat 전달 누락 수정 | [상세](devlog/2026-05-12/133-ai-service-stream-heartbeat-forwarding.md) |
 | 2026-05-12 | 134 | AI 이미지 태그 자동 보정과 서비스 생성 preflight 중복 호출 방지 | [상세](devlog/2026-05-12/134-ai-image-resolution-preflight-cache.md) |
 | 2026-05-12 | 135 | 서비스 수정 모달 섹션형 레이아웃으로 재구성 | [상세](devlog/2026-05-12/135-service-edit-modal-section-layout.md) |
+| 2026-05-12 | 136 | Codex 기반 AI 실행 게이트웨이와 Docker Infra MCP 추가 | [상세](devlog/2026-05-12/136-codex-ai-gateway-mcp.md) |
+| 2026-05-12 | 137 | 서비스 생성/수정 AI를 수정된 Codex CLI 직접 실행 플로우로 전환 | [상세](devlog/2026-05-12/137-codex-cli-direct-ai-runtime.md) |
+| 2026-05-12 | 138 | Codex CLI debug 빌드와 로컬 Responses smoke 테스트로 실행 리스크 보완 | [상세](devlog/2026-05-12/138-codex-cli-build-smoke.md) |
+| 2026-05-12 | 139 | 서비스 삭제 시 Cloudflare DNS 레코드 정리 추가 | [상세](devlog/2026-05-12/139-service-delete-cloudflare-dns-cleanup.md) |
+| 2026-05-12 | 140 | AI 서비스 생성/수정 2단계 보정 플로우와 Docker Infra MCP 상태 조회 도구 보강 | [상세](devlog/2026-05-12/140-ai-multiphase-codex-mcp-inspection.md) |
+| 2026-05-12 | 141 | 다중 도메인 AI 생성과 배포 후 AI 런타임 복구 플로우 추가 | [상세](devlog/2026-05-12/141-ai-runtime-repair-multidomain.md) |
+| 2026-05-12 | 142 | Codex CLI 실행 파일 탐색과 자동 빌드 fallback 보강 | [상세](devlog/2026-05-12/142-codex-cli-executable-resolution.md) |
+| 2026-05-12 | 143 | Codex CLI 소스 변경 감지 기반 cargo 자동 빌드 보강 | [상세](devlog/2026-05-12/143-codex-cli-stale-source-auto-build.md) |
+| 2026-05-12 | 144 | 서비스 AI 런타임 검사/수정 진단 조건 불일치 수정 | [상세](devlog/2026-05-12/144-service-ai-runtime-repair-diagnostics-fix.md) |
+| 2026-05-12 | 145 | 서비스 AI 검사에 화면 표시 실패 로그 신호 병합 | [상세](devlog/2026-05-12/145-service-ai-visible-failed-operation-signal.md) |
+| 2026-05-12 | 146 | AI 런타임 검사 사용자 프롬프트와 컨테이너 터미널 조치 도구 추가 | [상세](devlog/2026-05-12/146-service-ai-runtime-terminal-actions.md) |
+| 2026-05-12 | 147 | 서비스 AI 수정 코멘트와 런타임 스트리밍 적용/컨테이너 조치 실행 보강 | [상세](devlog/2026-05-12/147-service-ai-runtime-stream-apply-actions.md) |
+| 2026-05-12 | 148 | AI 런타임 검사 스트림 완료 검증과 강제 AI 분석 실행 보강 | [상세](devlog/2026-05-12/148-service-ai-runtime-stream-completion-guard.md) |
+| 2026-05-12 | 149 | 매크로 첨부 파일 저장과 실행 전 서버 전송 기능 추가 | [상세](devlog/2026-05-12/149-macro-file-attachments.md) |
+| 2026-05-12 | 150 | 매크로 첨부 파일 DB 스키마 수동 적용 | [상세](devlog/2026-05-12/150-macro-file-schema-apply.md) |
+| 2026-05-12 | 151 | 매크로 스크립트 CRLF 줄바꿈 정규화 | [상세](devlog/2026-05-12/151-macro-script-crlf-normalization.md) |
+| 2026-05-12 | 152 | 서비스 AI Codex Agent 입력·권한·MCP scope 설계와 allowlist 적용 | [상세](devlog/2026-05-12/152-service-ai-codex-agent-scope-design.md) |
+| 2026-05-12 | 153 | 서비스 AI 보완 검토와 배포 검증 MCP·중복 배포 방지 보강 | [상세](devlog/2026-05-12/153-service-ai-verification-mcp-duplicate-guard.md) |
+| 2026-05-12 | 154 | AI 백그라운드 검증 조회와 일반 사용자용 MCP 권한 확장 | [상세](devlog/2026-05-12/154-service-ai-background-verification-permissions.md) |
+| 2026-05-13 | 155 | 서비스 생성 배포 시 AI 검증 자동 시작 제거 | [상세](devlog/2026-05-13/155-service-ai-verification-explicit-start.md) |
+| 2026-05-13 | 156 | AI 검증 로그 압축과 실패 후 재시도 플로우 보강 | [상세](devlog/2026-05-13/156-service-ai-verification-retry-log-flow.md) |
+| 2026-05-13 | 157 | bbb Jitsi 서비스 직접 복구와 AI 런타임 compose 계약 보강 | [상세](devlog/2026-05-13/157-bbb-service-ai-runtime-contract.md) |
+| 2026-05-13 | 158 | Codex 로그인 실행 설정과 AI 점검 모델 선택 추가 | [상세](devlog/2026-05-13/158-codex-login-settings-ai-model-picker.md) |
+| 2026-05-13 | 159 | AI 모델 목록 Codex 상단 항목과 커스텀 CLI 경유 표시 정리 | [상세](devlog/2026-05-13/159-codex-top-model-custom-cli-routing.md) |
+| 2026-05-13 | 160 | AI 모델 선택 기본값 Codex 우선 고정 | [상세](devlog/2026-05-13/160-codex-default-model-ref.md) |
+| 2026-05-13 | 161 | AI 실행 스트림의 Codex CLI 경로 확인 표시 보강 | [상세](devlog/2026-05-13/161-ai-codex-cli-execution-visibility.md) |
+| 2026-05-13 | 162 | 시스템 설정 AI 탭 서브탭화와 모델 표시 순서 옵션 추가 | [상세](devlog/2026-05-13/162-system-ai-subtabs-model-order.md) |
+| 2026-05-13 | 163 | Codex 로그인 상태 판정과 커스텀 CLI 표시 제거 | [상세](devlog/2026-05-13/163-codex-login-status-custom-cli-hide.md) |
+| 2026-05-13 | 164 | 서버 자원 10분 통계 집계와 min/max area 차트 적용 | [상세](devlog/2026-05-13/164-node-resource-window-area-chart.md) |
+| 2026-05-13 | 165 | 노드 로컬 1초 샘플링 10분 집계와 ApexCharts 분리 차트 적용 | [상세](devlog/2026-05-13/165-node-local-rollup-apexcharts.md) |
+| 2026-05-13 | 166 | 모달 레이어와 서버별 자원 차트 탭 UI 수정 | [상세](devlog/2026-05-13/166-modal-layout-node-chart-tabs.md) |
+| 2026-05-13 | 167 | 자원 차트 시간대 정규화와 ApexCharts hover 시간 표시 보강 | [상세](devlog/2026-05-13/167-resource-chart-timezone-tooltip.md) |
+| 2026-05-13 | 168 | CPU/Memory min-max 차트와 Storage 단일 측정 수집 로직 정리 | [상세](devlog/2026-05-13/168-resource-minmax-storage-single-sample.md) |
+| 2026-05-13 | 169 | 대시보드 카드 정리와 작업 로그 조회 화면 추가 | [상세](devlog/2026-05-13/169-dashboard-operations-log.md) |
+| 2026-05-13 | 170 | 대시보드 배치·도메인 조회·ApexCharts hover와 자원 min/max 보정 | [상세](devlog/2026-05-13/170-dashboard-domain-chart-fixes.md) |
+| 2026-05-13 | 171 | 대시보드 등록 도메인 목록 표시 기준 단순화 | [상세](devlog/2026-05-13/171-dashboard-registered-domain-list.md) |
+| 2026-05-13 | 172 | 대시보드 도메인 카드 조회 SQL 확정과 서비스 재시작 반영 | [상세](devlog/2026-05-13/172-dashboard-domain-card-runtime-fix.md) |

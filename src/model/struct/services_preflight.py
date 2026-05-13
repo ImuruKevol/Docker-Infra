@@ -170,7 +170,30 @@ class ServicesPreflight:
             return [_item("placement", "실행 서버", "ok", f"자원 사용량을 기준으로 {label} 서버를 자동 선택합니다.", details)]
         return [_item("placement", "실행 서버", "ok", f"배포 후보 서버 {len(nodes)}대를 확인했습니다.", details)]
 
-    def _check_database(self, namespace, domain, service_id=None, env=None):
+    def _domain_entries(self, payload):
+        payload = payload or {}
+        rows = []
+        for item in payload.get("domains") or []:
+            if not isinstance(item, dict):
+                continue
+            domain = str(item.get("domain") or "").strip().lower()
+            if domain:
+                rows.append({**item, "domain": domain})
+        if not rows:
+            domain = str(payload.get("domain") or "").strip().lower()
+            if domain:
+                rows.append({"domain": domain, "port": payload.get("port") or payload.get("domain_target_port")})
+        deduped = []
+        seen = set()
+        for item in rows:
+            if item["domain"] in seen:
+                continue
+            seen.add(item["domain"])
+            deduped.append(item)
+        return deduped
+
+    def _check_database(self, namespace, domains, service_id=None, env=None):
+        domains = domains if isinstance(domains, list) else ([{"domain": domains}] if domains else [])
         issues = []
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -180,13 +203,16 @@ class ServicesPreflight:
                     cursor.execute("SELECT id FROM services WHERE namespace = %s LIMIT 1", (namespace,))
                 if cursor.fetchone() is not None:
                     issues.append(_item("namespace", "서비스 이름", "error", "같은 이름으로 생성된 서비스가 이미 있습니다. 이름을 조금 바꿔 다시 저장해주세요."))
-                if domain:
+                for item in domains:
+                    domain = str((item or {}).get("domain") or "").strip().lower()
+                    if not domain:
+                        continue
                     if service_id:
                         cursor.execute("SELECT service_id FROM service_domains WHERE lower(domain) = lower(%s) AND service_id <> %s LIMIT 1", (domain, service_id))
                     else:
                         cursor.execute("SELECT service_id FROM service_domains WHERE lower(domain) = lower(%s) LIMIT 1", (domain,))
                     if cursor.fetchone() is not None:
-                        issues.append(_item("domain.duplicate", "도메인 중복", "error", "이미 다른 서비스에서 사용하는 도메인입니다."))
+                        issues.append(_item("domain.duplicate", "도메인 중복", "error", f"{domain} 도메인은 이미 다른 서비스에서 사용 중입니다."))
         return issues
 
     def _check_compose(self, validation, namespace):
@@ -328,30 +354,38 @@ class ServicesPreflight:
             items.append(_item("ports.remote", "다른 서버 포트", "ok", "등록된 다른 서버에서도 공개 포트를 사용할 수 있습니다.", remote_checks))
         return items
 
-    def _check_domain(self, payload, validation, domain, env=None):
-        if not domain:
+    def _check_domain(self, payload, validation, domains, env=None):
+        domains = domains if isinstance(domains, list) else ([{"domain": domains}] if domains else [])
+        if not domains:
             return [_item("domain", "도메인 연결", "ok", "도메인을 사용하지 않는 서비스로 저장합니다.")]
         issues = []
-        if DOMAIN_RE.match(domain) is None:
-            issues.append(_item("domain.format", "도메인 연결", "error", "도메인 형식이 올바르지 않습니다."))
-        certs = webserver.certificates_for_domain(domain, zone_id=payload.get("zone_id"), env=env)
-        ssl_mode = "existing" if int((certs.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
-        if ssl_mode == "certbot" and shutil.which("certbot") is None:
-            issues.append(_item("domain.certbot", "SSL 인증서", "warning", "인증서가 없어 무료 인증서 발급 대상입니다. certbot 설치 여부는 배포 단계에서 다시 확인합니다."))
+        details = []
         nginx = webserver.nginx_defaults()
-        if nginx.get("installed") is not True:
-            issues.append(_item("nginx.installed", "nginx 설정", "warning", "nginx가 아직 설치되어 있지 않습니다. 배포 전에 설치가 필요합니다."))
-        safe_domain = re.sub(r"[^A-Za-z0-9_.-]+", "-", domain).strip(".-")
-        config_path = Path(nginx.get("available_site_path") or "/etc/nginx/sites-available") / f"docker-infra-{safe_domain}.conf"
-        if config_path.exists():
-            issues.append(_item("nginx.config", "nginx 설정", "warning", "같은 이름의 nginx 설정 파일이 이미 있습니다. 배포 시 Docker Infra 관리 설정인지 확인합니다.", [{"path": str(config_path)}]))
+        for item in domains:
+            domain = str((item or {}).get("domain") or "").strip().lower()
+            if not domain:
+                continue
+            if DOMAIN_RE.match(domain) is None:
+                issues.append(_item("domain.format", "도메인 연결", "error", f"{domain} 도메인 형식이 올바르지 않습니다."))
+                continue
+            certs = webserver.certificates_for_domain(domain, zone_id=(item or {}).get("zone_id") or payload.get("zone_id"), env=env)
+            ssl_mode = "existing" if int((certs.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
+            if ssl_mode == "certbot" and shutil.which("certbot") is None:
+                issues.append(_item("domain.certbot", "SSL 인증서", "warning", f"{domain} 인증서가 없어 무료 인증서 발급 대상입니다. certbot 설치 여부는 배포 단계에서 다시 확인합니다."))
+            if nginx.get("installed") is not True:
+                issues.append(_item("nginx.installed", "nginx 설정", "warning", "nginx가 아직 설치되어 있지 않습니다. 배포 전에 설치가 필요합니다."))
+            safe_domain = re.sub(r"[^A-Za-z0-9_.-]+", "-", domain).strip(".-")
+            config_path = Path(nginx.get("available_site_path") or "/etc/nginx/sites-available") / f"docker-infra-{safe_domain}.conf"
+            if config_path.exists():
+                issues.append(_item("nginx.config", "nginx 설정", "warning", f"{domain} nginx 설정 파일이 이미 있습니다. 배포 시 Docker Infra 관리 설정인지 확인합니다.", [{"path": str(config_path)}]))
+            details.append({"domain": domain, "ssl_mode": ssl_mode, "config_path": str(config_path)})
         if issues:
             return issues
-        return [_item("domain", "도메인과 nginx", "ok", "도메인 중복, SSL 방식, nginx 설정 경로를 확인했습니다.", [{"ssl_mode": ssl_mode, "config_path": str(config_path)}])]
+        return [_item("domain", "도메인과 nginx", "ok", "도메인 중복, SSL 방식, nginx 설정 경로를 확인했습니다.", details)]
 
     def check(self, payload, content, namespace, validation=None, env=None):
         payload = payload or {}
-        domain = str(payload.get("domain") or "").strip().lower()
+        domains = self._domain_entries(payload)
         service_id = payload.get("service_id")
         validation = validation or validator.validate({"namespace": namespace, "filename": "docker-compose.yaml", "content": content})
         candidate_nodes = self._candidate_nodes(payload, env=env)
@@ -360,13 +394,13 @@ class ServicesPreflight:
         except Exception:
             placement_recommendation = None
         items = []
-        items.extend(self._check_database(namespace, domain, service_id=service_id, env=env))
+        items.extend(self._check_database(namespace, domains, service_id=service_id, env=env))
         items.extend(self._check_compose(validation, namespace))
         items.extend(self._check_placement(candidate_nodes, recommendation=placement_recommendation))
         items.extend(self._check_images(validation, nodes=candidate_nodes, env=env))
         items.extend(self._check_volumes(validation, namespace))
         items.extend(self._check_ports(content, nodes=candidate_nodes, env=env))
-        items.extend(self._check_domain(payload, validation, domain, env=env))
+        items.extend(self._check_domain(payload, validation, domains, env=env))
         blocking = [item for item in items if item["status"] == "error"]
         warnings = [item for item in items if item["status"] in {"warning", "adjusted"}]
         return {

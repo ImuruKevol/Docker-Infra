@@ -11,8 +11,8 @@ class MacroManager:
     def list(self, payload=None, env=None):
         return store.list(payload, env=env)
 
-    def save(self, payload, env=None):
-        return store.save(payload, env=env)
+    def save(self, payload, file_storages=None, env=None):
+        return store.save(payload, file_storages=file_storages, env=env)
 
     def delete(self, macro_id, env=None):
         return store.delete(macro_id, env=env)

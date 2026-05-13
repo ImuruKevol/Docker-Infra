@@ -52,11 +52,80 @@ export class Component implements OnInit, OnDestroy {
             description: '',
             script: '#!/usr/bin/env bash\n',
             enabled: true,
+            existing_files: [],
+            files: [],
         };
     }
 
     private resetMacroForm() {
         this.macroForm = this.emptyMacroForm();
+    }
+
+    public existingMacroFiles() {
+        return this.macroForm?.existing_files || [];
+    }
+
+    public pendingMacroFiles() {
+        return this.macroForm?.files || [];
+    }
+
+    public macroFilesFor(macro: any) {
+        return macro?.files || [];
+    }
+
+    public macroFileCount(macro: any) {
+        const files = this.macroFilesFor(macro);
+        return Number(macro?.file_count ?? files.length ?? 0);
+    }
+
+    public macroFileSummary(macro: any) {
+        const count = this.macroFileCount(macro);
+        return count ? `첨부 ${count}개` : '첨부 없음';
+    }
+
+    public formatFileSize(value: any) {
+        const size = Number(value || 0);
+        if (size < 1024) return `${size} B`;
+        if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+        return `${(size / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    public async selectMacroFiles(event: Event) {
+        const input = event.target as HTMLInputElement;
+        const files = Array.from(input.files || []);
+        if (!files.length) return;
+        this.macroForm.files = [...this.pendingMacroFiles(), ...files];
+        input.value = '';
+        await this.service.render();
+    }
+
+    public async removeExistingMacroFile(fileId: string) {
+        this.macroForm.existing_files = this.existingMacroFiles().filter((item: any) => item.id !== fileId);
+        await this.service.render();
+    }
+
+    public async removePendingMacroFile(index: number) {
+        this.macroForm.files = this.pendingMacroFiles().filter((_: any, itemIndex: number) => itemIndex !== index);
+        await this.service.render();
+    }
+
+    private keepMacroFileIds() {
+        return this.existingMacroFiles().map((item: any) => item.id).filter((id: string) => !!id);
+    }
+
+    private async saveMacroRequest(payload: any) {
+        const formData = new FormData();
+        Object.entries(payload || {}).forEach(([key, value]) => {
+            if (value === undefined || value === null) return;
+            formData.append(key, String(value));
+        });
+        formData.append('keep_file_ids', JSON.stringify(this.keepMacroFileIds()));
+        for (const file of this.pendingMacroFiles()) {
+            formData.append('files', file, file.name);
+        }
+        const response = await fetch('/wiz/api/page.macros/save_macro', { method: 'POST', body: formData });
+        const json = await response.json();
+        return { code: json?.code || response.status, data: json?.data || json };
     }
 
     private isDarkMode() {
@@ -142,6 +211,8 @@ export class Component implements OnInit, OnDestroy {
             description: macro?.description || '',
             script: macro?.script || '#!/usr/bin/env bash\n',
             enabled: macro?.enabled !== false,
+            existing_files: [...(macro?.files || [])],
+            files: [],
         };
         this.syncMacroEditorTheme();
         this.modalOpen.set(true);
@@ -175,7 +246,7 @@ export class Component implements OnInit, OnDestroy {
         }
 
         this.busy.set(true);
-        const { code, data } = await wiz.call("save_macro", {
+        const { code, data } = await this.saveMacroRequest({
             id: this.macroForm?.id || undefined,
             name,
             description: this.macroForm?.description || '',
