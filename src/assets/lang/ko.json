@@ -3,14 +3,15 @@
         "brand": "Docker Infra",
         "language": "언어",
         "darkMode": "다크 모드",
-        "menu": "메뉴",
+        "primaryMenu": "일반 메뉴",
+        "advancedMenu": "고급 메뉴",
         "dashboard": "대시보드",
-  "servers": "서버 관리",
-  "services": "서비스 관리",
-  "macros": "매크로",
-  "domains": "도메인 관리",
+        "services": "서비스 관리",
+        "domains": "도메인 관리",
+        "servers": "서버 관리",
         "images": "이미지 관리",
-        "system": "시스템 설정",
-        "tools": "도구 다운로드"
+        "macros": "매크로",
+        "operations": "작업 로그",
+        "system": "시스템 설정"
     }
 }

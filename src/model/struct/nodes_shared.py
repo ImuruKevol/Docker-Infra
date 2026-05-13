@@ -1,5 +1,6 @@
 import datetime
 import json
+import re
 
 
 DEFAULT_OVERLAY_NETWORK = "docker_infra_overlay"
@@ -134,25 +135,66 @@ def parse_label_map(value):
     return labels
 
 
-def infer_service_namespace(labels):
+def _container_name(value):
+    raw = str(value or "").strip().lstrip("/")
+    if "," in raw:
+        raw = raw.split(",", 1)[0].strip().lstrip("/")
+    return raw
+
+
+def infer_runtime_service_name(labels, container_name=None):
     if not isinstance(labels, dict):
-        return None
-    if labels.get("com.docker.stack.namespace"):
-        return labels["com.docker.stack.namespace"]
-    if labels.get("com.docker.compose.project"):
-        return labels["com.docker.compose.project"]
+        labels = {}
     swarm_name = labels.get("com.docker.swarm.service.name")
-    if swarm_name and "_" in swarm_name:
-        return swarm_name.split("_", 1)[0]
+    if swarm_name:
+        return swarm_name
+    compose_project = labels.get("com.docker.compose.project")
+    compose_service = labels.get("com.docker.compose.service")
+    if compose_project and compose_service:
+        return f"{compose_project}_{compose_service}"
+    if compose_service:
+        return compose_service
+    name = _container_name(container_name)
+    if not name:
+        return None
+    swarm_match = re.match(r"^(.+)\.\d+\.[A-Za-z0-9_.-]+$", name)
+    if swarm_match:
+        return swarm_match.group(1)
+    compose_match = re.match(r"^(.+)[_-]\d+$", name)
+    if compose_match:
+        return compose_match.group(1)
     return None
 
 
-def infer_runtime_kind(labels):
+def infer_service_namespace(labels, runtime_service_name=None, container_name=None):
     if not isinstance(labels, dict):
-        return "container"
+        labels = {}
+    if labels.get("com.docker.stack.namespace") or labels.get("com.docker.swarm.service.name"):
+        if labels.get("com.docker.stack.namespace"):
+            return labels["com.docker.stack.namespace"]
+        swarm_name = labels.get("com.docker.swarm.service.name")
+        if swarm_name and swarm_name.count("_") == 1:
+            return swarm_name.split("_", 1)[0]
+    if labels.get("com.docker.compose.project"):
+        return labels["com.docker.compose.project"]
+    runtime_name = runtime_service_name or infer_runtime_service_name(labels, container_name)
+    if runtime_name and runtime_name.count("_") == 1:
+        return runtime_name.split("_", 1)[0]
+    return None
+
+
+def infer_runtime_kind(labels, runtime_service_name=None, container_name=None):
+    if not isinstance(labels, dict):
+        labels = {}
     if labels.get("com.docker.stack.namespace") or labels.get("com.docker.swarm.service.name"):
         return "swarm"
     if labels.get("com.docker.compose.project"):
+        return "compose"
+    name = _container_name(container_name)
+    runtime_name = runtime_service_name or infer_runtime_service_name(labels, name)
+    if runtime_name and name.startswith(f"{runtime_name}."):
+        return "swarm"
+    if runtime_name:
         return "compose"
     return "container"
 
@@ -196,6 +238,66 @@ def parse_port_bindings(value):
     return bindings
 
 
+def _labels_from_item(item):
+    labels = (item or {}).get("labels")
+    if isinstance(labels, dict):
+        return labels
+    raw = (item or {}).get("Labels")
+    if raw is None:
+        raw = labels
+    if isinstance(raw, dict):
+        return raw
+    return parse_label_map(raw)
+
+
+def normalize_container_item(item):
+    data = dict(item or {})
+    labels = _labels_from_item(data)
+    name = data.get("name") or data.get("Names") or data.get("Name")
+    ports = data.get("ports") or data.get("Ports")
+    runtime_service_name = data.get("runtime_service_name") or infer_runtime_service_name(labels, name)
+    service_namespace = data.get("service_namespace") or infer_service_namespace(labels, runtime_service_name, name)
+    normalized = {
+        **data,
+        "id": data.get("id") or data.get("ID") or data.get("Id"),
+        "name": name,
+        "image": data.get("image") or data.get("Image"),
+        "state": data.get("state") or data.get("State"),
+        "status": data.get("status") or data.get("Status"),
+        "ports": ports,
+        "labels": labels,
+        "runtime_kind": data.get("runtime_kind") or infer_runtime_kind(labels, runtime_service_name, name),
+        "service_namespace": service_namespace,
+        "runtime_service_name": runtime_service_name,
+        "port_bindings": data.get("port_bindings") or parse_port_bindings(ports),
+    }
+    return normalized
+
+
+def _identity_matches(value, identity):
+    value = _container_name(value)
+    identity = str(identity or "").strip()
+    if not value or not identity:
+        return False
+    if value == identity:
+        return True
+    return any(value.startswith(f"{identity}{separator}") for separator in ("_", "-", "."))
+
+
+def container_matches_service(item, service):
+    item = normalize_container_item(item)
+    service = service or {}
+    identities = [service.get("namespace"), service.get("stack_name")]
+    values = [item.get("service_namespace"), item.get("runtime_service_name"), item.get("name")]
+    for identity in identities:
+        if not identity:
+            continue
+        for value in values:
+            if _identity_matches(value, identity):
+                return True
+    return False
+
+
 def parse_docker_ps_lines(stdout):
     items = []
     for line in (stdout or "").splitlines():
@@ -204,19 +306,15 @@ def parse_docker_ps_lines(stdout):
             continue
         ports = data.get("Ports") or data.get("ports")
         labels = parse_label_map(data.get("Labels") or data.get("labels"))
-        item = {
+        item = normalize_container_item({
             "id": data.get("ID") or data.get("Id") or data.get("id"),
             "name": data.get("Names") or data.get("Name") or data.get("name"),
             "image": data.get("Image") or data.get("image"),
             "state": data.get("State") or data.get("state"),
             "status": data.get("Status") or data.get("status"),
             "ports": ports,
-            "port_bindings": parse_port_bindings(ports),
             "labels": labels,
-            "runtime_kind": infer_runtime_kind(labels),
-            "service_namespace": infer_service_namespace(labels),
-            "runtime_service_name": labels.get("com.docker.swarm.service.name") or labels.get("com.docker.compose.service"),
-        }
+        })
         item["raw"] = data
         items.append(item)
     return items
@@ -265,9 +363,12 @@ class NodesShared:
     parse_reported_at = staticmethod(parse_reported_at)
     container_items = staticmethod(container_items)
     parse_label_map = staticmethod(parse_label_map)
+    infer_runtime_service_name = staticmethod(infer_runtime_service_name)
     infer_service_namespace = staticmethod(infer_service_namespace)
     infer_runtime_kind = staticmethod(infer_runtime_kind)
     parse_port_bindings = staticmethod(parse_port_bindings)
+    normalize_container_item = staticmethod(normalize_container_item)
+    container_matches_service = staticmethod(container_matches_service)
     parse_docker_ps_lines = staticmethod(parse_docker_ps_lines)
     container_summary = staticmethod(container_summary)
     load_json = staticmethod(load_json)

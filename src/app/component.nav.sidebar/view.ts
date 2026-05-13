@@ -3,19 +3,31 @@ import { HostListener } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
 import { AppearanceRuntime } from '@wiz/libs/portal/season/appearance';
 
+type NavMenuItem = { link: string; label: string; icon: string };
+type NavMenuGroup = { label: string; items: NavMenuItem[] };
+
 export class Component implements OnInit {
-    public allMenuItems = [
-        { link: '/dashboard', label: 'nav.dashboard', icon: 'fa-gauge-high' },
-        { link: '/servers', label: 'nav.servers', icon: 'fa-server' },
-        { link: '/services', label: 'nav.services', icon: 'fa-layer-group' },
-        { link: '/macros', label: 'nav.macros', icon: 'fa-bolt' },
-        { link: '/domains', label: 'nav.domains', icon: 'fa-globe' },
-        { link: '/operations', label: '작업 로그', icon: 'fa-clock-rotate-left' },
-        { link: '/images', label: 'nav.images', icon: 'fa-cubes' },
-        { link: '/system', label: 'nav.system', icon: 'fa-gear' },
-        { link: '/tools', label: 'nav.tools', icon: 'fa-toolbox' },
+    public allMenuGroups: NavMenuGroup[] = [
+        {
+            label: 'nav.primaryMenu',
+            items: [
+                { link: '/dashboard', label: 'nav.dashboard', icon: 'fa-gauge-high' },
+                { link: '/services', label: 'nav.services', icon: 'fa-layer-group' },
+                { link: '/domains', label: 'nav.domains', icon: 'fa-globe' },
+            ]
+        },
+        {
+            label: 'nav.advancedMenu',
+            items: [
+                { link: '/servers', label: 'nav.servers', icon: 'fa-server' },
+                { link: '/images', label: 'nav.images', icon: 'fa-cubes' },
+                { link: '/macros', label: 'nav.macros', icon: 'fa-bolt' },
+                { link: '/operations', label: 'nav.operations', icon: 'fa-clock-rotate-left' },
+                { link: '/system', label: 'nav.system', icon: 'fa-gear' },
+            ]
+        }
     ];
-    public menuItems = this.allMenuItems;
+    public menuGroups = this.allMenuGroups;
     public appearance: any = {
         browser_title: 'Docker Infra',
         favicon_url: '',
@@ -80,7 +92,7 @@ export class Component implements OnInit {
     }
 
     public async loadMenuState() {
-        this.menuItems = this.allMenuItems;
+        this.menuGroups = this.allMenuGroups;
     }
 
     @HostListener('window:docker-infra:appearance-changed', ['$event'])

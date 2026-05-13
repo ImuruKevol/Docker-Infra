@@ -14,6 +14,13 @@ def _limit(value):
         return 80
 
 
+def _page(value):
+    try:
+        return max(1, int(value or 1))
+    except Exception:
+        return 1
+
+
 def load():
     catalog = wiz.model("struct/infra_catalog_registry")
     body = wiz.request.query()
@@ -21,7 +28,7 @@ def load():
     payload = {}
 
     try:
-        payload = catalog.operation_logs(filters=_filters(body), limit=_limit(body.get("limit")))
+        payload = catalog.operation_logs(filters=_filters(body), limit=_limit(body.get("limit")), page=_page(body.get("page")))
     except RuntimeError as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}

@@ -357,17 +357,7 @@ class NodesMonitoring:
                 },
                 "collector": {"service": COLLECTOR_SERVICE, "timer": COLLECTOR_TIMER},
             })
-        operation = operations.create(
-            "node.monitoring.collector.repair",
-            target_type="node" if target_node_id else "nodes",
-            target_id=target_node_id or None,
-            status="failed" if failed else "succeeded",
-            message="서버 자원 수집 systemd timer를 점검하고 누락 시 재구성했습니다.",
-            requested_payload={"node_id": target_node_id, "service": COLLECTOR_SERVICE, "timer": COLLECTOR_TIMER},
-            result_payload={"count": len(results), "failed": failed, "repaired": repaired, "results": results},
-            env=env,
-        )
-        return {"operation": operation, "results": results, "failed": failed, "repaired": repaired, "succeeded": len(results) - failed}
+        return {"results": results, "failed": failed, "repaired": repaired, "succeeded": len(results) - failed}
 
     def _execute_repair(self, payload=None, env=None):
         try:

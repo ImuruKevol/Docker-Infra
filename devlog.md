@@ -173,3 +173,12 @@
 | 2026-05-13 | 171 | 대시보드 등록 도메인 목록 표시 기준 단순화 | [상세](devlog/2026-05-13/171-dashboard-registered-domain-list.md) |
 | 2026-05-13 | 172 | 대시보드 도메인 카드 조회 SQL 확정과 서비스 재시작 반영 | [상세](devlog/2026-05-13/172-dashboard-domain-card-runtime-fix.md) |
 | 2026-05-13 | 173 | CPU/Memory 자원 차트 hover tooltip min-max 표시 보강 | [상세](devlog/2026-05-13/173-resource-tooltip-minmax.md) |
+| 2026-05-13 | 174 | 작업 로그 페이지네이션과 개수 select 폭 보정 | [상세](devlog/2026-05-13/174-operations-pagination-select-width.md) |
+| 2026-05-13 | 175 | 작업 로그 전체 건수 fallback과 페이지 버튼 보강 | [상세](devlog/2026-05-13/175-operations-pagination-total-fallback.md) |
+| 2026-05-13 | 176 | 서버 자원 수집 자동 점검 작업 로그 제거 | [상세](devlog/2026-05-13/176-node-monitoring-repair-log-suppression.md) |
+| 2026-05-13 | 177 | 서버 상세 등록 서비스 매칭 복구 | [상세](devlog/2026-05-13/177-server-detail-service-matching.md) |
+| 2026-05-13 | 178 | 서버 상세 카드 제거와 전역 매크로 실행 전용화 | [상세](devlog/2026-05-13/178-server-detail-global-macros.md) |
+| 2026-05-13 | 179 | 서버 상세 매크로 전역 표시 제거 | [상세](devlog/2026-05-13/179-server-macro-global-label-cleanup.md) |
+| 2026-05-13 | 180 | 서버 상세 매크로 실행 인자 체크박스 폭 축소 | [상세](devlog/2026-05-13/180-server-macro-args-checkbox-width.md) |
+| 2026-05-13 | 181 | 사이드 메뉴 카테고리 분리와 도구 다운로드 제거 | [상세](devlog/2026-05-13/181-sidebar-menu-groups-remove-tools.md) |
+| 2026-05-13 | 182 | 대시보드 카드 단위 API 분리와 부분 로딩 적용 | [상세](devlog/2026-05-13/182-dashboard-card-api-split.md) |

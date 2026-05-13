@@ -174,6 +174,7 @@ def container_items():
             "state": item.get("State") or "",
             "status": item.get("Status") or "",
             "ports": item.get("Ports") or "",
+            "labels": item.get("Labels") or item.get("labels") or "",
         })
     return items
 

@@ -14,6 +14,7 @@ export class Component implements OnInit, OnDestroy {
     public query = signal<string>('');
     public statusFilter = signal<OperationStatus>('');
     public limit = signal<number>(80);
+    public pagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 80 });
     private pollTimer: any = null;
 
     public statusFilters: { value: OperationStatus; label: string }[] = [
@@ -29,24 +30,43 @@ export class Component implements OnInit, OnDestroy {
 
     public async ngOnInit() {
         await this.service.init();
-        await this.load();
+        await this.load(1);
     }
 
     public ngOnDestroy() {
         this.stopPolling();
     }
 
-    public async load(showLoading: boolean = true) {
+    public async load(page: number = this.pagination().current || 1, showLoading: boolean = true) {
         if (showLoading) this.loading.set(true);
         this.error.set('');
+        const requestedPage = Math.max(1, Number(page || 1));
+        const requestedLimit = Math.max(1, Number(this.limit() || 80));
         const { code, data } = await wiz.call('load', {
             query: this.query(),
             status: this.statusFilter(),
-            limit: this.limit(),
+            limit: requestedLimit,
+            page: requestedPage,
         });
         if (code === 200) {
-            this.operations.set(data.operations || []);
+            const operations = data.operations || [];
+            const pagination = data.pagination || {};
+            const statusTotal = this.query().trim() ? 0 : this.totalFromStatusCounts(data.status_counts || {}, this.statusFilter());
+            const total = this.numberValue(pagination.total, data.total, statusTotal || undefined, operations.length, 0);
+            const limit = Math.max(1, this.numberValue(pagination.limit, data.page_size, requestedLimit));
+            const fallbackEnd = total > 0 ? Math.ceil(total / limit) : 1;
+            const end = Math.max(1, this.numberValue(pagination.end, data.pages, fallbackEnd));
+            const current = Math.min(Math.max(1, this.numberValue(pagination.current, data.page, requestedPage)), end);
+            this.operations.set(operations);
             this.statusCounts.set(data.status_counts || {});
+            this.limit.set(limit);
+            this.pagination.set({
+                current,
+                start: Math.max(1, Number(pagination.start || this.paginationStart(current))),
+                end,
+                total,
+                limit,
+            });
         } else {
             this.error.set(data?.message || '작업 로그를 불러올 수 없습니다.');
         }
@@ -55,12 +75,12 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async applyFilters() {
-        await this.load(true);
+        await this.load(1, true);
     }
 
     public async selectStatus(status: OperationStatus) {
         this.statusFilter.set(status);
-        await this.load(true);
+        await this.load(1, true);
     }
 
     public async openOperation(operation: any) {
@@ -142,6 +162,57 @@ export class Component implements OnInit, OnDestroy {
     public statusCount(status: OperationStatus) {
         if (!status) return Object.values(this.statusCounts()).reduce((sum: number, value: any) => sum + Number(value || 0), 0);
         return Number(this.statusCounts()?.[status] || 0);
+    }
+
+    private numberValue(...values: any[]) {
+        for (const value of values) {
+            if (value === null || value === undefined || value === '') continue;
+            const number = Number(value);
+            if (Number.isFinite(number) && number >= 0) return number;
+        }
+        return 0;
+    }
+
+    private totalFromStatusCounts(counts: any, status: OperationStatus) {
+        if (status) return Number(counts?.[status] || 0);
+        return Object.values(counts || {}).reduce((sum: number, value: any) => sum + Number(value || 0), 0);
+    }
+
+    private paginationStart(page: number) {
+        return Math.floor((Math.max(1, page) - 1) / 10) * 10 + 1;
+    }
+
+    public showPagination() {
+        return Number(this.pagination()?.end || 1) > 1;
+    }
+
+    public visiblePages() {
+        const pagination = this.pagination();
+        const current = Number(pagination?.current || 1);
+        const end = Number(pagination?.end || 1);
+        const windowSize = 7;
+        let start = Math.max(1, current - Math.floor(windowSize / 2));
+        let finish = Math.min(end, start + windowSize - 1);
+        start = Math.max(1, finish - windowSize + 1);
+        const pages: number[] = [];
+        for (let page = start; page <= finish; page++) pages.push(page);
+        return pages;
+    }
+
+    public pageButtonClass(page: number) {
+        if (Number(page) === Number(this.pagination()?.current || 1)) return 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950';
+        return 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800';
+    }
+
+    public paginationSummary() {
+        const pagination = this.pagination();
+        const total = Number(pagination?.total || 0);
+        if (!total) return '총 0개';
+        const current = Number(pagination?.current || 1);
+        const limit = Number(pagination?.limit || this.limit() || 80);
+        const start = (current - 1) * limit + 1;
+        const end = Math.min(total, current * limit);
+        return `총 ${total}개 · ${start}-${end}`;
     }
 
     public operationServerText(operation: any) {

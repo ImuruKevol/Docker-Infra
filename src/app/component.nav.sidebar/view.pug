@@ -20,10 +20,10 @@ div(class="mx-2 mb-4 rounded-md border border-zinc-200 bg-white p-2 dark:border-
 
 nav(class="flex flex-1 flex-col overflow-y-auto")
     ul(role="list", class="mx-2 flex flex-1 flex-col gap-y-4")
-        li
-            div(class="px-2 text-[11px] font-semibold uppercase text-zinc-400 dark:text-zinc-500") {{'nav.menu' | translate}}
+        li(*ngFor="let group of menuGroups")
+            div(class="px-2 text-[11px] font-semibold uppercase text-zinc-400 dark:text-zinc-500") {{group.label | translate}}
             ul(role="list", class="mt-1 space-y-0.5")
-                li(*ngFor="let item of menuItems")
+                li(*ngFor="let item of group.items")
                     a([routerLink]="item.link", [class]="activeClass(item.link)")
                         i(class="fa-solid w-4 text-center text-[13px] text-zinc-400 dark:text-zinc-500", [ngClass]="item.icon")
                         span(class="truncate") {{item.label | translate}}

@@ -12,6 +12,8 @@ _load_json = shared.load_json
 _parse_docker_ps_lines = shared.parse_docker_ps_lines
 _container_summary = shared.container_summary
 _container_items = shared.container_items
+_normalize_container_item = shared.normalize_container_item
+_container_matches_service = shared.container_matches_service
 NodeError = shared.NodeError
 SYSTEM_METRICS_SCRIPT = local_catalog.SYSTEM_METRICS_SCRIPT
 
@@ -95,13 +97,22 @@ class NodeRuntimeMixin(files_mixin):
                 return by_stack[stack_name]
         if namespace and namespace in by_stack:
             return by_stack[namespace]
+        seen = set()
+        for service in list(by_namespace.values()) + list(by_stack.values()):
+            service_id = str(service.get("id") or service.get("namespace") or service.get("stack_name") or "")
+            if service_id in seen:
+                continue
+            seen.add(service_id)
+            if _container_matches_service(item, service):
+                return service
         return None
 
     def _decorate_containers(self, items, env=None):
         by_namespace, by_stack = self._services_map(env=env)
         groups = {}
         unmanaged = []
-        for item in items:
+        for raw_item in items:
+            item = _normalize_container_item(raw_item)
             service = self._match_service(item, by_namespace, by_stack)
             if service is None:
                 item["registered_service"] = None

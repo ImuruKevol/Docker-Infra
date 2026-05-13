@@ -19,14 +19,12 @@ export class Component implements OnInit, OnDestroy {
     public serviceGroups = signal<any[]>([]);
     public macros = signal<any[]>([]);
     public globalMacros = signal<any[]>([]);
-    public nodeMacros = signal<any[]>([]);
     public macroLoading = signal<boolean>(false);
     public macroError = signal<string>('');
     public selectedMacroId = signal<string>('');
     public macroArgsEnabled = signal<boolean>(false);
     public macroArgsInput = signal<string>('');
     public macroRunResult = signal<any>(null);
-    public macroModalOpen = signal<boolean>(false);
     public lastOperation = signal<any>(null);
     public serverModalOpen = signal<boolean>(false);
     public editingNodeId = signal<string>('');
@@ -57,17 +55,6 @@ export class Component implements OnInit, OnDestroy {
     public terminalError = signal<string>('');
     public terminalExpanded = signal<boolean>(false);
     public serverForm: any = this.emptyServerForm();
-    public macroForm: any = this.emptyMacroForm();
-    public macroEditorOptions: any = {
-        language: 'shell',
-        theme: 'vs',
-        fontSize: 13,
-        minimap: { enabled: false },
-        automaticLayout: true,
-        wordWrap: 'on',
-        scrollBeyondLastLine: false,
-        roundedSelection: false,
-    };
     private refreshTimer: ReturnType<typeof setInterval> | null = null;
     private metricRequestRunning = false;
     private autoRefreshRequestRunning = false;
@@ -89,7 +76,6 @@ export class Component implements OnInit, OnDestroy {
 
     public async ngOnInit() {
         await this.service.init();
-        this.syncMacroEditorTheme();
         this.startThemeObserver();
         await this.load();
     }
@@ -101,15 +87,6 @@ export class Component implements OnInit, OnDestroy {
         this.cancelResourceChartRender();
         this.destroyResourceChart();
         this.stopThemeObserver();
-    }
-
-    @HostListener('document:keydown', ['$event'])
-    public handleDocumentKeydown(event: KeyboardEvent) {
-        if (!this.macroModalOpen()) return;
-        const isSave = (event.ctrlKey || event.metaKey) && String(event.key || '').toLowerCase() === 's';
-        if (!isSave) return;
-        event.preventDefault();
-        void this.saveMacro();
     }
 
     @HostListener('window:resize')
@@ -125,43 +102,15 @@ export class Component implements OnInit, OnDestroy {
         this.serverForm = this.emptyServerForm();
     }
 
-    private emptyMacroForm() {
-        return {
-            id: '',
-            name: '',
-            description: '',
-            script: '#!/usr/bin/env bash\n',
-            enabled: true,
-            existing_files: [],
-            files: [],
-        };
-    }
-
-    private resetMacroForm() {
-        this.macroForm = this.emptyMacroForm();
-    }
-
     private todayDateInput() {
         const date = new Date();
         date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
         return date.toISOString().slice(0, 10);
     }
 
-    private isDarkMode() {
-        return Boolean(document.documentElement.classList.contains('dark'));
-    }
-
-    private syncMacroEditorTheme() {
-        this.macroEditorOptions = {
-            ...this.macroEditorOptions,
-            theme: this.isDarkMode() ? 'vs-dark' : 'vs',
-        };
-    }
-
     private startThemeObserver() {
         if (typeof MutationObserver === 'undefined') return;
         this.themeObserver = new MutationObserver(() => {
-            this.syncMacroEditorTheme();
             this.applyTerminalTheme();
             this.scheduleResourceChartRender();
         });
@@ -196,7 +145,6 @@ export class Component implements OnInit, OnDestroy {
         this.applyContainerPanel({ summary: { total: 0, running: 0, stopped: 0 }, service_groups: [] });
         this.terminalExpanded.set(false);
         this.globalMacros.set([]);
-        this.nodeMacros.set([]);
         this.macros.set([]);
         this.selectedMacroId.set('');
         this.macroArgsEnabled.set(false);
@@ -525,50 +473,6 @@ export class Component implements OnInit, OnDestroy {
         this.importCandidate.set(null);
     }
 
-    public openAddMacro() {
-        if (!this.selected()?.id) return;
-        this.resetMacroForm();
-        this.syncMacroEditorTheme();
-        this.macroModalOpen.set(true);
-    }
-
-    public openEditMacro(macro: any) {
-        this.macroForm = {
-            id: macro?.id || '',
-            name: macro?.name || '',
-            description: macro?.description || '',
-            script: macro?.script || '#!/usr/bin/env bash\n',
-            enabled: macro?.enabled !== false,
-            existing_files: [...(macro?.files || [])],
-            files: [],
-        };
-        this.syncMacroEditorTheme();
-        this.macroModalOpen.set(true);
-    }
-
-    public closeMacroModal() {
-        if (this.busy()) return;
-        this.macroModalOpen.set(false);
-        this.resetMacroForm();
-    }
-
-    public macroModalTitle() {
-        return this.macroForm?.id ? '서버 전용 매크로 수정' : '서버 전용 매크로 추가';
-    }
-
-    public macroSubmitLabel() {
-        if (this.busy()) return this.macroForm?.id ? '저장 중' : '등록 중';
-        return this.macroForm?.id ? '저장' : '등록';
-    }
-
-    public existingMacroFiles() {
-        return this.macroForm?.existing_files || [];
-    }
-
-    public pendingMacroFiles() {
-        return this.macroForm?.files || [];
-    }
-
     public macroFilesFor(macro: any) {
         return macro?.files || [];
     }
@@ -590,49 +494,10 @@ export class Component implements OnInit, OnDestroy {
         return `${(size / 1024 / 1024).toFixed(1)} MB`;
     }
 
-    public async selectMacroFiles(event: Event) {
-        const input = event.target as HTMLInputElement;
-        const files = Array.from(input.files || []);
-        if (!files.length) return;
-        this.macroForm.files = [...this.pendingMacroFiles(), ...files];
-        input.value = '';
-        await this.service.render();
-    }
-
-    public async removeExistingMacroFile(fileId: string) {
-        this.macroForm.existing_files = this.existingMacroFiles().filter((item: any) => item.id !== fileId);
-        await this.service.render();
-    }
-
-    public async removePendingMacroFile(index: number) {
-        this.macroForm.files = this.pendingMacroFiles().filter((_: any, itemIndex: number) => itemIndex !== index);
-        await this.service.render();
-    }
-
-    private keepMacroFileIds() {
-        return this.existingMacroFiles().map((item: any) => item.id).filter((id: string) => !!id);
-    }
-
-    private async saveMacroRequest(payload: any) {
-        const formData = new FormData();
-        Object.entries(payload || {}).forEach(([key, value]) => {
-            if (value === undefined || value === null) return;
-            formData.append(key, String(value));
-        });
-        formData.append('keep_file_ids', JSON.stringify(this.keepMacroFileIds()));
-        for (const file of this.pendingMacroFiles()) {
-            formData.append('files', file, file.name);
-        }
-        const response = await fetch('/wiz/api/page.servers/save_macro', { method: 'POST', body: formData });
-        const json = await response.json();
-        return { code: json?.code || response.status, data: json?.data || json };
-    }
-
     public async loadMacros(nodeId: string | null = this.selected()?.id) {
         const targetNodeId = String(nodeId || '').trim();
         if (!targetNodeId) {
             this.globalMacros.set([]);
-            this.nodeMacros.set([]);
             this.macros.set([]);
             this.selectedMacroId.set('');
             return;
@@ -640,13 +505,12 @@ export class Component implements OnInit, OnDestroy {
         const token = ++this.macroRequestToken;
         this.macroLoading.set(true);
         this.macroError.set('');
-        const { code, data } = await wiz.call("list_macros", { node_id: targetNodeId });
+        const { code, data } = await wiz.call("list_macros", {});
         if (token !== this.macroRequestToken || this.selected()?.id !== targetNodeId) return;
         if (code === 200) {
-            const available = data.available_macros || [];
+            const available = data.available_macros || data.global_macros || [];
             const previous = this.selectedMacroId();
-            this.globalMacros.set(data.global_macros || []);
-            this.nodeMacros.set(data.node_macros || []);
+            this.globalMacros.set(available);
             this.macros.set(available);
             const selectedId = available.some((item: any) => item.id === previous)
                 ? previous
@@ -656,65 +520,6 @@ export class Component implements OnInit, OnDestroy {
             this.macroError.set(data?.message || '매크로 목록을 불러올 수 없습니다.');
         }
         this.macroLoading.set(false);
-        await this.service.render();
-    }
-
-    public async saveMacro() {
-        const name = String(this.macroForm?.name || '').trim();
-        const script = String(this.macroForm?.script || '').trim();
-        if (!name) {
-            await this.alert('매크로 이름을 입력해주세요.');
-            return;
-        }
-        if (!script) {
-            await this.alert('실행할 스크립트를 입력해주세요.');
-            return;
-        }
-
-        this.busy.set(true);
-        const { code, data } = await this.saveMacroRequest({
-            id: this.macroForm?.id || undefined,
-            node_id: this.selected()?.id,
-            name,
-            description: this.macroForm?.description || '',
-            script: this.macroForm?.script || '',
-            enabled: this.macroForm?.enabled !== false,
-        });
-        if (code === 200) {
-            this.macroModalOpen.set(false);
-            this.selectedMacroId.set(data?.macro?.id || this.selectedMacroId());
-            this.resetMacroForm();
-            await this.loadMacros(this.selected()?.id);
-        } else {
-            await this.alert(data?.message || '매크로를 저장할 수 없습니다.');
-        }
-        this.busy.set(false);
-        await this.service.render();
-    }
-
-    public async deleteMacro(macro: any) {
-        const confirmed = await this.service.modal.show({
-            title: '매크로 삭제',
-            message: `${macro?.name || '선택한 매크로'}를 삭제합니다.`,
-            cancel: '취소',
-            action: '삭제',
-            actionBtn: 'warning',
-            status: 'warning',
-        });
-        if (!confirmed) return;
-
-        this.busy.set(true);
-        const { code, data } = await wiz.call("delete_macro", { macro_id: macro?.id });
-        if (code === 200) {
-            if (this.selectedMacroId() === macro?.id) {
-                this.selectedMacroId.set('');
-                this.macroRunResult.set(null);
-            }
-            await this.loadMacros(this.selected()?.id);
-        } else {
-            await this.alert(data?.message || '매크로를 삭제할 수 없습니다.');
-        }
-        this.busy.set(false);
         await this.service.render();
     }
 
@@ -762,31 +567,25 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
-    public macroScopeLabel(macro: any) {
-        return macro?.scope_type === 'node' ? '이 서버 전용' : '전역';
-    }
-
-    public macroScopeClass(macro: any) {
-        return macro?.scope_type === 'node'
-            ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300'
-            : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
-    }
-
     public macroSelectorItems() {
         return this.macros().map((macro: any) => ({
             value: macro.id,
             label: macro.name,
-            description: `${macro.description || (macro.scope_type === 'node'
-                ? '이 서버에서만 실행할 수 있는 매크로'
-                : '여러 서버에서 공통으로 실행하는 전역 매크로')}${this.macroFileCount(macro) ? ` · ${this.macroFileSummary(macro)}` : ''}`,
-            badge: macro.enabled === false ? '비활성화' : this.macroScopeLabel(macro),
-            badgeClass: macro.enabled === false ? this.statusClass('warning') : this.macroScopeClass(macro),
+            description: `${macro.description || '설명이 등록되지 않았습니다.'}${this.macroFileCount(macro) ? ` · ${this.macroFileSummary(macro)}` : ''}`,
+            badge: macro.enabled === false ? '비활성화' : '',
+            badgeClass: macro.enabled === false
+                ? this.statusClass('warning')
+                : '',
             disabled: false,
         }));
     }
 
+    public selectedMacroDescription() {
+        return String(this.selectedMacro()?.description || '').trim() || '설명이 등록되지 않았습니다.';
+    }
+
     public macroCountSummary() {
-        return `전역 ${this.globalMacros().length}개 · 서버 전용 ${this.nodeMacros().length}개`;
+        return `실행 가능한 매크로 ${this.globalMacros().length}개`;
     }
 
     public setDetailTab(tab: string) {

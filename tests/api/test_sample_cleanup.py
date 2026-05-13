@@ -54,10 +54,12 @@ class SampleCleanupTest(unittest.TestCase):
             "page.dashboard",
             "page.servers",
             "page.services",
+            "page.services.create",
             "page.domains",
             "page.images",
+            "page.macros",
+            "page.operations",
             "page.system",
-            "page.tools",
         ]
         for page in expected_pages:
             page_root = ROOT / "src" / "app" / page

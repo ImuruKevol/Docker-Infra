@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import os
 import unittest
 from pathlib import Path
@@ -28,6 +29,35 @@ LOCAL_COMMAND_SCRIPTS = ROOT / "src" / "model" / "struct" / "local_command_scrip
 
 
 class NodeReporterStaticContractTest(unittest.TestCase):
+    def test_cached_container_identity_can_be_restored_without_labels(self):
+        spec = importlib.util.spec_from_file_location("nodes_shared_contract", NODES_SHARED_MODEL)
+        nodes_shared = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(nodes_shared)
+
+        swarm_item = nodes_shared.normalize_container_item({
+            "name": "bbb_web.1.yv14x3",
+            "state": "running",
+            "ports": "0.0.0.0:8080->80/tcp",
+        })
+        self.assertEqual(swarm_item["runtime_service_name"], "bbb_web")
+        self.assertEqual(swarm_item["service_namespace"], "bbb")
+        self.assertEqual(swarm_item["runtime_kind"], "swarm")
+        self.assertTrue(nodes_shared.container_matches_service(swarm_item, {"namespace": "bbb", "stack_name": "bbb"}))
+
+        compose_item = nodes_shared.normalize_container_item({
+            "name": "bbb-web-1",
+            "state": "running",
+        })
+        self.assertTrue(nodes_shared.container_matches_service(compose_item, {"namespace": "bbb", "stack_name": "bbb"}))
+        self.assertFalse(nodes_shared.container_matches_service({"name": "bbbackup-web-1"}, {"namespace": "bbb", "stack_name": "bbb"}))
+        self.assertTrue(nodes_shared.container_matches_service({"name": "my_app_web.1.yv14x3"}, {"namespace": "my_app", "stack_name": "my_app"}))
+
+        labeled_item = nodes_shared.normalize_container_item({
+            "name": "random",
+            "Labels": "com.docker.stack.namespace=bbb,com.docker.swarm.service.name=bbb_web",
+        })
+        self.assertEqual(labeled_item["service_namespace"], "bbb")
+
     def test_reporter_routes_and_servers_page_contract_are_declared(self):
         nodes_controller = NODES_PATH_ROUTE.read_text(encoding="utf-8")
         reporter_controller = REPORTER_ROUTE.read_text(encoding="utf-8")
@@ -126,7 +156,8 @@ class NodeReporterStaticContractTest(unittest.TestCase):
         self.assertIn("class NodesMonitoring", monitoring_model)
         self.assertIn("ensure_exporters", monitoring_model)
         self.assertIn("ensure_collectors_if_needed_async", monitoring_model)
-        self.assertIn("node.monitoring.collector.repair", monitoring_model)
+        self.assertNotIn("node.monitoring.collector.repair", monitoring_model)
+        self.assertNotIn("서버 자원 수집 systemd timer를 점검하고 누락 시 재구성했습니다.", monitoring_model)
         self.assertIn("check_exporters", monitoring_model)
         self.assertIn("issue_reporter_token", monitoring_model)
         self.assertIn("COLLECTOR_TIMER", monitoring_model)
@@ -138,7 +169,11 @@ class NodeReporterStaticContractTest(unittest.TestCase):
         self.assertIn("threading.Thread", monitoring_model)
         self.assertIn("def live_metric", nodes_runtime_model)
         self.assertIn("containers_refreshed_at", nodes_runtime_model)
+        self.assertIn("normalize_container_item", nodes_runtime_model)
+        self.assertIn("container_matches_service", nodes_runtime_model)
         self.assertNotIn('"containers_refresh"', nodes_runtime_model)
+        self.assertIn('"labels": item.get("Labels")', local_command_scripts)
+        self.assertIn("2026-05-13-container-labels-v1", commands)
         self.assertIn("astimezone(datetime.timezone.utc)", nodes_shared_model)
         self.assertIn('replace("+00:00", "Z")', metric_history_model)
         self.assertIn("metric_snapshot(node_id) if persist else nodes_model.live_metric(node_id)", servers_api)

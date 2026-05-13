@@ -253,7 +253,7 @@ class InfraCatalog:
             },
         }
 
-    def _operation_rows(self, cursor, filters=None, limit=80, include_output=False):
+    def _operation_filter_parts(self, filters=None):
         filters = filters or {}
         clauses = []
         params = []
@@ -295,6 +295,36 @@ class InfraCatalog:
             )
             params.extend([needle] * 11)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where, params
+
+    def _operation_from_clause(self):
+        return """
+            FROM operation_logs op
+            LEFT JOIN services s ON s.id::text = NULLIF(COALESCE(
+                CASE WHEN op.target_type = 'service' THEN op.target_id ELSE NULL END,
+                op.metadata->>'service_id',
+                op.requested_payload->>'service_id',
+                op.result_payload->>'service_id'
+            ), '')
+            LEFT JOIN nodes target_node ON op.target_type = 'node' AND target_node.id::text = op.target_id
+            LEFT JOIN nodes payload_node ON payload_node.id::text = NULLIF(op.requested_payload->>'node_id', '')
+            LEFT JOIN nodes metadata_node ON metadata_node.id::text = NULLIF(COALESCE(op.metadata->>'node_id', op.metadata->>'macro_node_id'), '')
+        """
+
+    def _operation_count(self, cursor, filters=None):
+        where, params = self._operation_filter_parts(filters)
+        cursor.execute(
+            f"""
+            SELECT count(*) AS count
+            {self._operation_from_clause()}
+            {where}
+            """,
+            params,
+        )
+        return int(cursor.fetchone()["count"])
+
+    def _operation_rows(self, cursor, filters=None, limit=80, offset=0, include_output=False):
+        where, params = self._operation_filter_parts(filters)
         output_column = "op.output," if include_output else ""
         cursor.execute(
             f"""
@@ -321,16 +351,7 @@ class InfraCatalog:
                 COALESCE(target_node.name, payload_node.name, metadata_node.name) AS node_name,
                 COALESCE(target_node.host, payload_node.host, metadata_node.host) AS node_host,
                 output_node.node AS output_node
-            FROM operation_logs op
-            LEFT JOIN services s ON s.id::text = NULLIF(COALESCE(
-                CASE WHEN op.target_type = 'service' THEN op.target_id ELSE NULL END,
-                op.metadata->>'service_id',
-                op.requested_payload->>'service_id',
-                op.result_payload->>'service_id'
-            ), '')
-            LEFT JOIN nodes target_node ON op.target_type = 'node' AND target_node.id::text = op.target_id
-            LEFT JOIN nodes payload_node ON payload_node.id::text = NULLIF(op.requested_payload->>'node_id', '')
-            LEFT JOIN nodes metadata_node ON metadata_node.id::text = NULLIF(COALESCE(op.metadata->>'node_id', op.metadata->>'macro_node_id'), '')
+            {self._operation_from_clause()}
             LEFT JOIN LATERAL (
                 SELECT item->'metadata'->'node' AS node
                 FROM jsonb_array_elements(COALESCE(op.output, '[]'::jsonb)) WITH ORDINALITY AS out(item, ord)
@@ -341,8 +362,9 @@ class InfraCatalog:
             {where}
             ORDER BY op.created_at DESC
             LIMIT %s
+            OFFSET %s
             """,
-            [*params, max(1, min(int(limit or 80), 200))],
+            [*params, max(1, min(int(limit or 80), 200)), max(0, int(offset or 0))],
         )
         return [self._normalize_operation(_serialize(dict(row))) for row in cursor.fetchall()]
 
@@ -428,13 +450,40 @@ class InfraCatalog:
         operation["output_count"] = int(operation.get("output_count") or 0)
         return operation
 
-    def operation_logs(self, filters=None, limit=80):
+    def operation_logs(self, filters=None, limit=80, page=1):
+        try:
+            limit = max(1, min(int(limit or 80), 200))
+        except Exception:
+            limit = 80
+        try:
+            page = max(1, int(page or 1))
+        except Exception:
+            page = 1
         with connect() as connection:
             with connection.cursor() as cursor:
-                operations = self._operation_rows(cursor, filters=filters, limit=limit)
+                total = self._operation_count(cursor, filters=filters)
+                total_pages = max(1, (total + limit - 1) // limit)
+                current = min(page, total_pages)
+                offset = (current - 1) * limit
+                operations = self._operation_rows(cursor, filters=filters, limit=limit, offset=offset)
                 cursor.execute("SELECT status, count(*) AS count FROM operation_logs GROUP BY status ORDER BY status")
                 status_counts = {row["status"]: int(row["count"]) for row in cursor.fetchall()}
-        return {"operations": operations, "status_counts": status_counts}
+        pagination = {
+            "current": current,
+            "start": ((current - 1) // 10) * 10 + 1,
+            "end": total_pages,
+            "total": total,
+            "limit": limit,
+        }
+        return {
+            "operations": operations,
+            "status_counts": status_counts,
+            "pagination": pagination,
+            "total": total,
+            "page": current,
+            "pages": total_pages,
+            "page_size": limit,
+        }
 
     def operation_detail(self, operation_id):
         if not operation_id:
@@ -475,6 +524,130 @@ class InfraCatalog:
             params,
         )
         return [_serialize(dict(row)) for row in cursor.fetchall()]
+
+    def dashboard_status(self):
+        return {
+            "counts": self.counts(),
+            "health": system.health(),
+            "setup": setup.status(include_checks=False),
+            "backup_system": self.backup_status(),
+        }
+
+    def dashboard_nodes(self):
+        with connect() as connection:
+            with connection.cursor() as cursor:
+                nodes = _rows(
+                    cursor,
+                    """
+                    SELECT
+                        n.id,
+                        n.name,
+                        n.role,
+                        n.host,
+                        n.status,
+                        n.is_local_master,
+                        n.updated_at,
+                        m.cpu_percent AS latest_cpu_percent,
+                        m.memory AS latest_memory,
+                        m.storage AS latest_storage,
+                        m.containers AS latest_containers,
+                        m.reported_at AS latest_reported_at
+                    FROM nodes n
+                    LEFT JOIN LATERAL (
+                        SELECT cpu_percent, memory, storage, containers, reported_at
+                        FROM node_metrics
+                        WHERE node_id = n.id
+                        ORDER BY reported_at DESC, created_at DESC
+                        LIMIT 1
+                    ) m ON true
+                    ORDER BY n.is_local_master DESC, n.created_at DESC
+                    LIMIT 6
+                    """,
+                )
+                for node in nodes:
+                    node["latest_metric"] = {
+                        "cpu_percent": node.pop("latest_cpu_percent", None),
+                        "memory": node.pop("latest_memory", None) or {},
+                        "storage": node.pop("latest_storage", None) or {},
+                        "containers": node.pop("latest_containers", None) or {},
+                        "reported_at": node.pop("latest_reported_at", None),
+                    }
+        return {"nodes": nodes, "node_metric_history": metric_history.dashboard_summary()}
+
+    def dashboard_operations(self):
+        with connect() as connection:
+            with connection.cursor() as cursor:
+                recent_operations = self._operation_rows(cursor, limit=6)
+                cursor.execute(
+                    """
+                    SELECT status, count(*) AS count
+                    FROM operation_logs
+                    GROUP BY status
+                    ORDER BY status
+                    """
+                )
+                operation_statuses = {row["status"]: int(row["count"]) for row in cursor.fetchall()}
+        return {"recent_operations": recent_operations, "operation_statuses": operation_statuses}
+
+    def dashboard_domains(self):
+        return {"domain_usage": self.domain_usage()}
+
+    def dashboard_resources(self, start_date=None, end_date=None, start_at=None, end_at=None):
+        resource_chart = metric_history.dashboard_chart(start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at)
+        node_resource_charts = []
+        with connect() as connection:
+            with connection.cursor() as cursor:
+                chart_nodes = _rows(
+                    cursor,
+                    """
+                    SELECT id, name, role, host, status, is_local_master
+                    FROM nodes
+                    ORDER BY is_local_master DESC, created_at DESC
+                    """,
+                )
+                chart_nodes_by_id = {str(node["id"]): node for node in chart_nodes}
+                node_ids = [node["id"] for node in chart_nodes if node.get("id")]
+                node_resource_charts = metric_history.dashboard_node_charts(
+                    node_ids,
+                    start_date=resource_chart.get("start_date"),
+                    end_date=resource_chart.get("end_date"),
+                    start_at=resource_chart.get("start_at"),
+                    end_at=resource_chart.get("end_at"),
+                )
+                for chart in node_resource_charts:
+                    chart["node"] = chart_nodes_by_id.get(str(chart.get("node_id"))) or {}
+                db_metric_rows = self._node_metric_rows_for_chart(cursor, resource_chart)
+                if db_metric_rows:
+                    db_resource_chart = metric_history.dashboard_chart_from_metrics(
+                        db_metric_rows,
+                        start_date=resource_chart.get("start_date"),
+                        end_date=resource_chart.get("end_date"),
+                        start_at=resource_chart.get("start_at"),
+                        end_at=resource_chart.get("end_at"),
+                    )
+                    if db_resource_chart.get("rows"):
+                        resource_chart = db_resource_chart
+                if db_metric_rows and node_resource_charts:
+                    db_node_charts = metric_history.dashboard_node_charts_from_metrics(
+                        node_ids,
+                        db_metric_rows,
+                        start_date=resource_chart.get("start_date"),
+                        end_date=resource_chart.get("end_date"),
+                        start_at=resource_chart.get("start_at"),
+                        end_at=resource_chart.get("end_at"),
+                    )
+                    db_node_charts_by_id = {str(chart.get("node_id")): chart for chart in db_node_charts if chart.get("rows")}
+                    node_resource_charts = [
+                        db_node_charts_by_id.get(str(chart.get("node_id")), chart)
+                        for chart in node_resource_charts
+                    ]
+                    for chart in node_resource_charts:
+                        chart["node"] = chart_nodes_by_id.get(str(chart.get("node_id"))) or chart.get("node") or {}
+        return {
+            "node_metric_history": metric_history.dashboard_summary(),
+            "node_resource_chart": resource_chart,
+            "node_resource_charts": node_resource_charts,
+        }
 
     def dashboard(self, start_date=None, end_date=None, start_at=None, end_at=None):
         resource_chart = metric_history.dashboard_chart(start_date=start_date, end_date=end_date, start_at=start_at, end_at=end_at)

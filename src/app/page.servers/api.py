@@ -18,12 +18,6 @@ def _error_payload(exc, default_code=500, default_error="UNEXPECTED_ERROR"):
     return default_code, {"message": str(exc), "error_code": default_error}
 
 
-def _macro_request():
-    if request.form or request.files:
-        return request.form.to_dict(flat=True), request.files.getlist("files")
-    return wiz.request.query(), []
-
-
 def _with_monitoring_state(payload, monitoring):
     payload = payload or {}
     payload["monitoring"] = monitoring.state()
@@ -562,67 +556,15 @@ def import_compose_service():
 
 def list_macros():
     macros_model = wiz.model("struct").macros
-    body = wiz.request.query()
-    node_id = body.get("node_id")
     code = 200
     payload = {}
 
     try:
+        macros = macros_model.list({"scope_type": macros_model.SCOPE_GLOBAL})
         payload = {
-            "global_macros": macros_model.list({"scope_type": macros_model.SCOPE_GLOBAL}),
-            "node_macros": macros_model.list({"scope_type": macros_model.SCOPE_NODE, "node_id": node_id}) if node_id else [],
-            "available_macros": macros_model.list({"available_for_node": node_id}) if node_id else macros_model.list({"scope_type": macros_model.SCOPE_GLOBAL}),
+            "global_macros": macros,
+            "available_macros": macros,
         }
-    except macros_model.MacroError as exc:
-        code = exc.status_code
-        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
-        code = 503
-        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
-    except Exception as exc:
-        code, payload = _error_payload(exc)
-
-    wiz.response.status(code, **payload)
-
-
-def save_macro():
-    macros_model = wiz.model("struct").macros
-    body, files = _macro_request()
-    code = 200
-    payload = {}
-
-    try:
-        payload = {
-            "macro": macros_model.save({
-                **body,
-                "scope_type": macros_model.SCOPE_NODE,
-                "node_id": body.get("node_id"),
-            }, file_storages=files)
-        }
-    except macros_model.MacroError as exc:
-        code = exc.status_code
-        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
-        code = 503
-        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
-    except Exception as exc:
-        code, payload = _error_payload(exc)
-
-    wiz.response.status(code, **payload)
-
-
-def delete_macro():
-    macros_model = wiz.model("struct").macros
-    body = wiz.request.query()
-    macro_id = body.get("macro_id")
-    if not macro_id:
-        wiz.response.status(400, message="macro_id는 필수입니다.", error_code="MACRO_ID_REQUIRED")
-        return
-
-    code = 200
-    payload = {}
-    try:
-        payload = macros_model.delete(macro_id)
     except macros_model.MacroError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -638,11 +580,21 @@ def delete_macro():
 def run_macro():
     macros_model = wiz.model("struct").macros
     nodes_model = wiz.model("struct").nodes
+    body = wiz.request.query()
+    macro_id = body.get("macro_id")
+    if not macro_id:
+        wiz.response.status(400, message="macro_id는 필수입니다.", error_code="MACRO_ID_REQUIRED")
+        return
+
     code = 200
     payload = {}
 
     try:
-        payload = {"operation": macros_model.run(wiz.request.query())}
+        global_macros = macros_model.list({"scope_type": macros_model.SCOPE_GLOBAL})
+        if not any(str(item.get("id")) == str(macro_id) for item in global_macros):
+            wiz.response.status(409, message="서버 관리에서는 선택한 매크로를 실행할 수 없습니다.", error_code="GLOBAL_MACRO_REQUIRED")
+            return
+        payload = {"operation": macros_model.run(body)}
     except macros_model.MacroError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

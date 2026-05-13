@@ -17,10 +17,9 @@ header(class="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-bl
                 span 새로고침
 
 main(class="space-y-6 px-5 py-5")
-    div(*ngIf="loading()", class="h-32 rounded-md border border-zinc-200 bg-white p-5 text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400") 정보를 불러오는 중입니다.
     div(*ngIf="error()", class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300") {{error()}}
 
-    div(*ngIf="!loading() && !error()", class="space-y-6")
+    div(*ngIf="!error()", class="space-y-6")
         section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
             div(class="flex flex-col gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
                 div
@@ -44,7 +43,7 @@ main(class="space-y-6 px-5 py-5")
                 div(*ngIf="resourceChartBusy() && resourceRows().length === 0", class="flex h-64 items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400")
                     i(class="fa-solid fa-spinner fa-spin")
                     span 자원 기록을 불러오는 중입니다.
-                div(*ngIf="!resourceChartBusy() && resourceRows().length === 0", class="flex h-64 items-center justify-center rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400") 선택한 기간에 표시할 자원 기록이 없습니다.
+                div(*ngIf="!resourceChartBusy() && !resourceChartError() && resourceRows().length === 0", class="flex h-64 items-center justify-center rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400") 선택한 기간에 표시할 자원 기록이 없습니다.
                 div(*ngIf="resourceRows().length > 0", class="grid grid-cols-1 divide-y divide-zinc-100 dark:divide-zinc-800 xl:grid-cols-3 xl:divide-x xl:divide-y-0")
                     div(class="min-h-72 px-2 py-3")
                         h3(class="px-1 text-xs font-semibold text-sky-700 dark:text-sky-300") CPU
@@ -64,6 +63,10 @@ main(class="space-y-6 px-5 py-5")
                         p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") {{metricHistoryText()}}
                     a(routerLink="/servers", class="text-xs font-semibold text-sky-700 hover:text-sky-800 dark:text-sky-300") Open
                 div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                    div(*ngIf="isCardLoading('servers')", class="flex items-center justify-center gap-2 px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400")
+                        i(class="fa-solid fa-spinner fa-spin")
+                        span 서버 정보를 불러오는 중입니다.
+                    div(*ngIf="cardError('servers')", class="px-4 py-3 text-sm text-rose-700 dark:text-rose-300") {{cardError('servers')}}
                     div(*ngFor="let node of nodes()", class="flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between")
                         div(class="min-w-0 flex-1")
                             p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{node.name}}
@@ -76,7 +79,7 @@ main(class="space-y-6 px-5 py-5")
                         div(class="flex shrink-0 flex-col items-start gap-1 xl:items-end")
                             span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(node.status)") {{statusLabel(node.status)}}
                             span(class="text-[11px] text-zinc-500 dark:text-zinc-400") {{formatDate(nodeMetric(node).reported_at)}}
-                    div(*ngIf="nodes().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") No servers
+                    div(*ngIf="!isCardLoading('servers') && !cardError('servers') && nodes().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") No servers
 
             div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
                 div(class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
@@ -95,12 +98,16 @@ main(class="space-y-6 px-5 py-5")
                         p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 서비스
                         p(class="mt-1 text-base font-semibold text-zinc-950 dark:text-zinc-50") {{domainSummary()?.linked_service_count || 0}}
                 div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                    div(*ngIf="isCardLoading('domains')", class="flex items-center justify-center gap-2 px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400")
+                        i(class="fa-solid fa-spinner fa-spin")
+                        span 도메인 정보를 불러오는 중입니다.
+                    div(*ngIf="cardError('domains')", class="px-4 py-3 text-sm text-rose-700 dark:text-rose-300") {{cardError('domains')}}
                     div(*ngFor="let domain of domainRows()", class="flex items-center justify-between gap-3 px-4 py-3")
                         div(class="min-w-0")
                             p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{domain.domain}}
                             p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400") {{domainServiceSummary(domain)}}
                         span(class="inline-flex shrink-0 rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="domainBadgeClass(domain)") 서비스 {{domain.service_count || 0}}개
-                    div(*ngIf="domainRows().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 도메인이 없습니다.
+                    div(*ngIf="!isCardLoading('domains') && !cardError('domains') && domainRows().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 도메인이 없습니다.
 
         section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
             div(class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
@@ -109,13 +116,17 @@ main(class="space-y-6 px-5 py-5")
                     p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") 실행 서버와 작업 내용을 함께 표시합니다.
                 a(routerLink="/operations", class="text-xs font-semibold text-sky-700 hover:text-sky-800 dark:text-sky-300") 로그 보기
             div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                div(*ngIf="isCardLoading('operations')", class="flex items-center justify-center gap-2 px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400")
+                    i(class="fa-solid fa-spinner fa-spin")
+                    span 최근 작업을 불러오는 중입니다.
+                div(*ngIf="cardError('operations')", class="px-4 py-3 text-sm text-rose-700 dark:text-rose-300") {{cardError('operations')}}
                 div(*ngFor="let operation of operations()", class="flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:justify-between")
                     div(class="min-w-0")
                         p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{operation.action_text || operation.operation_label || operation.type}}
                         p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400") {{operationServerText(operation)}} · {{operationTargetText(operation)}} · {{formatDate(operation.created_at)}}
                         p(*ngIf="operation.message", class="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{operation.message}}
                     span(class="inline-flex shrink-0 rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(operation.status)") {{statusLabel(operation.status)}}
-                div(*ngIf="operations().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 작업 이력이 없습니다.
+                div(*ngIf="!isCardLoading('operations') && !cardError('operations') && operations().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 작업 이력이 없습니다.
 
         div(*ngIf="nodeChartsOpen()", class="fixed inset-0 z-40 flex items-start justify-center bg-zinc-950/40 px-4 py-6 backdrop-blur-sm")
             section(class="max-h-[84vh] w-full max-w-5xl overflow-y-auto rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950")

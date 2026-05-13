@@ -6,6 +6,8 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
     public loading = signal<boolean>(true);
     public data = signal<any>({});
     public error = signal<string>('');
+    public cardLoading = signal<any>({});
+    public cardErrors = signal<any>({});
     public resourceChartBusy = signal<boolean>(false);
     public resourceChartError = signal<string>('');
     public resourceStartDate = signal<string>(this.dateInputOffset(-1));
@@ -17,6 +19,9 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
     private resourceChartTitleObservers: MutationObserver[] = [];
     private nodeChartTitleObservers: MutationObserver[] = [];
     private resourceChartRenderTimer: ReturnType<typeof setTimeout> | null = null;
+    private loadToken = 0;
+    private resourceLoadToken = 0;
+    private dashboardCards = ['summary', 'resources', 'servers', 'domains', 'operations'];
 
     constructor(public service: Service) { }
 
@@ -65,31 +70,127 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
         };
     }
 
-    public async load(showPageLoading: boolean = true) {
-        if (showPageLoading) this.loading.set(true);
-        this.resourceChartBusy.set(!showPageLoading);
-        if (showPageLoading) this.error.set('');
-        this.resourceChartError.set('');
-        await this.service.render();
+    private emptyCardLoading() {
+        return this.dashboardCards.reduce((state: any, card: string) => {
+            state[card] = false;
+            return state;
+        }, {});
+    }
 
-        const { code, data } = await wiz.call("overview", this.resourceRangePayload());
-        if (code === 200) {
-            this.data.set(data || {});
-            this.ensureActiveNodeChart();
-        } else {
-            const message = data?.message || 'Dashboard를 불러올 수 없습니다.';
-            if (showPageLoading) this.error.set(message);
-            else this.resourceChartError.set(message);
+    private resetCardLoading() {
+        return this.dashboardCards.reduce((state: any, card: string) => {
+            state[card] = true;
+            return state;
+        }, {});
+    }
+
+    private updateData(patch: any) {
+        this.data.set({ ...(this.data() || {}), ...(patch || {}) });
+    }
+
+    private setCardLoading(card: string, loading: boolean) {
+        this.cardLoading.set({ ...(this.cardLoading() || {}), [card]: loading });
+    }
+
+    private setCardError(card: string, message: string) {
+        this.cardErrors.set({ ...(this.cardErrors() || {}), [card]: message });
+    }
+
+    public isCardLoading(card: string) {
+        return Boolean(this.cardLoading()?.[card]);
+    }
+
+    public cardError(card: string) {
+        return this.cardErrors()?.[card] || '';
+    }
+
+    private responseMessage(data: any, fallback: string) {
+        return data?.message || fallback;
+    }
+
+    private exceptionMessage(error: any, fallback: string) {
+        if (error?.message) return error.message;
+        if (typeof error === 'string') return error;
+        return fallback;
+    }
+
+    private async loadCard(card: string, apiName: string, fallback: string, token: number) {
+        this.setCardLoading(card, true);
+        this.setCardError(card, '');
+        try {
+            const { code, data } = await wiz.call(apiName, {});
+            if (token !== this.loadToken) return;
+            if (code === 200) this.updateData(data || {});
+            else this.setCardError(card, this.responseMessage(data, fallback));
+        } catch (error: any) {
+            if (token !== this.loadToken) return;
+            this.setCardError(card, this.exceptionMessage(error, fallback));
         }
+        if (token !== this.loadToken) return;
+        this.setCardLoading(card, false);
+        await this.service.render();
+    }
 
-        if (showPageLoading) this.loading.set(false);
+    private async loadResources(token: number) {
+        this.setCardLoading('resources', true);
+        this.setCardError('resources', '');
+        this.resourceChartBusy.set(true);
+        this.resourceChartError.set('');
+        try {
+            const { code, data } = await wiz.call("resources", this.resourceRangePayload());
+            if (token !== this.resourceLoadToken) return;
+            if (code === 200) {
+                this.updateData(data || {});
+                this.ensureActiveNodeChart();
+            } else {
+                const message = this.responseMessage(data, '자원 기록을 불러올 수 없습니다.');
+                this.resourceChartError.set(message);
+                this.setCardError('resources', message);
+            }
+        } catch (error: any) {
+            if (token !== this.resourceLoadToken) return;
+            const message = this.exceptionMessage(error, '자원 기록을 불러올 수 없습니다.');
+            this.resourceChartError.set(message);
+            this.setCardError('resources', message);
+        }
+        if (token !== this.resourceLoadToken) return;
+        this.setCardLoading('resources', false);
         this.resourceChartBusy.set(false);
         await this.service.render();
         this.scheduleResourceChartRender();
     }
 
+    public async load(showPageLoading: boolean = true) {
+        const token = ++this.loadToken;
+        const resourceToken = ++this.resourceLoadToken;
+        if (showPageLoading) {
+            this.data.set({});
+            this.cardErrors.set({});
+            this.cardLoading.set(this.resetCardLoading());
+        }
+        this.error.set('');
+        this.loading.set(false);
+        this.resourceChartError.set('');
+        this.resourceChartBusy.set(true);
+        await this.service.render();
+
+        await Promise.all([
+            this.loadCard('summary', 'summary', 'Dashboard 상태를 불러올 수 없습니다.', token),
+            this.loadResources(resourceToken),
+            this.loadCard('servers', 'servers', '서버 목록을 불러올 수 없습니다.', token),
+            this.loadCard('domains', 'domains', '도메인 정보를 불러올 수 없습니다.', token),
+            this.loadCard('operations', 'operations', '최근 작업을 불러올 수 없습니다.', token),
+        ]);
+
+        if (token !== this.loadToken) return;
+        this.loading.set(false);
+        this.cardLoading.set({ ...this.emptyCardLoading(), ...(this.cardLoading() || {}) });
+        await this.service.render();
+        this.scheduleResourceChartRender();
+    }
+
     public async applyResourceRange() {
-        await this.load(false);
+        await this.loadResources(++this.resourceLoadToken);
     }
 
     public counts() {

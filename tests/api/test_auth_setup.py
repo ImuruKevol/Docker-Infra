@@ -39,10 +39,12 @@ class AuthSetupStaticContractTest(unittest.TestCase):
             "page.dashboard",
             "page.servers",
             "page.services",
+            "page.services.create",
             "page.domains",
             "page.images",
+            "page.macros",
+            "page.operations",
             "page.system",
-            "page.tools",
         ]
         for app in protected_apps:
             with self.subTest(app=app):

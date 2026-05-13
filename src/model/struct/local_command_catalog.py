@@ -9,7 +9,7 @@ MAX_TIMEOUT_SECONDS = 1800
 MAX_CAPTURE_CHARS = 20000
 NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$")
-METRICS_COLLECTOR_AGENT_VERSION = "2026-05-13-node-local-rollup-v3"
+METRICS_COLLECTOR_AGENT_VERSION = "2026-05-13-container-labels-v1"
 
 
 class LocalCommandError(Exception):

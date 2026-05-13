@@ -3,14 +3,15 @@
         "brand": "Docker Infra",
         "language": "Language",
         "darkMode": "Dark mode",
-        "menu": "Menu",
+        "primaryMenu": "General",
+        "advancedMenu": "Advanced",
         "dashboard": "Dashboard",
-  "servers": "Servers",
-  "services": "Services",
-  "macros": "Macros",
-  "domains": "Domains",
+        "services": "Services",
+        "domains": "Domains",
+        "servers": "Servers",
         "images": "Images",
-        "system": "System",
-        "tools": "Tools"
+        "macros": "Macros",
+        "operations": "Operation logs",
+        "system": "System"
     }
 }
