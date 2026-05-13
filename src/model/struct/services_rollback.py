@@ -11,6 +11,7 @@ connect = wiz.model("db/postgres").connect
 validator = wiz.model("struct/compose_validator")
 operations = wiz.model("struct/operations")
 image_backups = wiz.model("struct/service_image_backups")
+backup_system = wiz.model("struct/backup_system")
 shared = wiz.model("struct/services_shared")
 ServiceError = shared.ServiceError
 _row = shared.row
@@ -77,6 +78,18 @@ def _load_yaml(content):
         raise ServiceError(400, f"Compose를 읽을 수 없습니다: {exc}", "COMPOSE_PARSE_FAILED")
 
 
+def _backup_system_status(env=None):
+    try:
+        status = backup_system.status(env=env) or {}
+    except Exception:
+        status = {}
+    return {
+        "enabled": bool(status.get("enabled")),
+        "status": status.get("status") or "disabled",
+        "harbor_url": status.get("harbor_url") or "",
+    }
+
+
 class ServiceRollbackMixin:
     def _version_row(self, cursor, service_id, version_id):
         cursor.execute(
@@ -108,6 +121,92 @@ class ServiceRollbackMixin:
             "content": target_content,
         })
         return service, version, domains, target_content, validation
+
+    def _version_image_backups(self, service_id, compose_version_id, env=None):
+        image_backups.ensure_schema(env=env)
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM service_image_backups
+                    WHERE service_id = %s
+                      AND compose_version_id = %s
+                    ORDER BY
+                      CASE WHEN backup_status = 'backup_succeeded' AND backup_ref IS NOT NULL THEN 0 ELSE 1 END,
+                      updated_at DESC,
+                      created_at DESC
+                    """,
+                    (service_id, compose_version_id),
+                )
+                return [_row(row) for row in cursor.fetchall()]
+
+    def _image_restore_context(self, service_id, version, target, env=None):
+        backup_state = _backup_system_status(env=env)
+        rows = self._version_image_backups(service_id, version["id"], env=env)
+        by_service = {}
+        for row in rows:
+            name = str(row.get("compose_service") or "").strip()
+            if name and name not in by_service:
+                by_service[name] = row
+
+        image_services = [name for name, item in sorted((target or {}).items()) if item.get("image")]
+        items = []
+        pending = []
+        missing = []
+        for name in image_services:
+            row = by_service.get(name)
+            if row and row.get("backup_status") == "backup_succeeded" and row.get("backup_ref"):
+                items.append({
+                    "service": name,
+                    "image_ref": row.get("image_ref"),
+                    "backup_ref": row.get("backup_ref"),
+                    "backup_id": row.get("id"),
+                })
+            elif row:
+                pending.append({
+                    "service": name,
+                    "image_ref": row.get("image_ref"),
+                    "backup_status": row.get("backup_status"),
+                })
+            else:
+                missing.append(name)
+
+        return {
+            "backup_system": backup_state,
+            "image_restore": {
+                "enabled": bool(backup_state.get("enabled")),
+                "can_apply": bool(backup_state.get("enabled") and items),
+                "available_count": len(items),
+                "pending_count": len(pending),
+                "missing_count": len(missing),
+                "items": items,
+                "pending": pending,
+                "missing_services": missing,
+            },
+        }
+
+    def _compose_with_image_restore_refs(self, service, target_content, image_restore):
+        if not image_restore.get("can_apply"):
+            return target_content, None, []
+        compose = _load_yaml(target_content)
+        services = compose.setdefault("services", {})
+        applied = []
+        for item in image_restore.get("items") or []:
+            service_name = item.get("service")
+            backup_ref = item.get("backup_ref")
+            if service_name in services and backup_ref:
+                services[service_name]["image"] = backup_ref
+                applied.append(item)
+        if not applied:
+            return target_content, None, []
+        content = yaml.safe_dump(compose, sort_keys=False, allow_unicode=False)
+        validation = validator.validate({
+            "namespace": service["namespace"],
+            "filename": Path(service.get("compose_path") or "docker-compose.yaml").name,
+            "content": content,
+        })
+        return content, validation, applied
 
     def rollback_plan(self, payload, env=None):
         payload = payload or {}
@@ -151,15 +250,20 @@ class ServiceRollbackMixin:
                 "message": "연결 포트가 복원할 Compose에 있습니다." if matched else "현재 도메인 연결 포트가 복원할 Compose에 없습니다.",
             })
 
+        image_restore_context = self._image_restore_context(service_id, version, target, env=env)
+
         return {
             "service": service,
             "target_version": version,
+            "backup_system": image_restore_context["backup_system"],
+            "image_restore": image_restore_context["image_restore"],
             "summary": {
                 "same_content": _checksum(current_content) == _checksum(target_content),
                 "services": len(target),
                 "added_services": len(added),
                 "removed_services": len(removed),
                 "image_changes": len(image_changes),
+                "image_restore_available": image_restore_context["image_restore"]["available_count"],
                 "port_changes": len(port_changes),
                 "domain_warnings": len([item for item in domain_impacts if item["status"] == "warning"]),
             },
@@ -178,6 +282,12 @@ class ServiceRollbackMixin:
         version_id = payload.get("version_id")
         plan = self.rollback_plan(payload, env=env)
         service, version, _domains, target_content, validation = self._rollback_target(service_id, version_id, env=env)
+        applied_image_refs = []
+        if payload.get("restore_images") is not False:
+            next_content, next_validation, applied_image_refs = self._compose_with_image_restore_refs(service, target_content, plan.get("image_restore") or {})
+            if applied_image_refs:
+                target_content = next_content
+                validation = next_validation
         compose_path = Path(service["compose_path"]).expanduser()
         compose_path.parent.mkdir(parents=True, exist_ok=True)
         history_id = f"rollback_{_utc_id()}"
@@ -197,6 +307,7 @@ class ServiceRollbackMixin:
             "target_version_id": version["id"],
             "target_version": version["version"],
             "previous_path": str(previous_path) if previous_path.exists() else "",
+            "image_restore_count": len(applied_image_refs),
         }
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -219,7 +330,13 @@ class ServiceRollbackMixin:
                         str(applied_path),
                         checksum,
                         service.get("test_run_id"),
-                        Jsonb({"source": "compose_rollback", "history_id": history_id, "target_version_id": version["id"], "target_version": version["version"]}),
+                        Jsonb({
+                            "source": "compose_rollback",
+                            "history_id": history_id,
+                            "target_version_id": version["id"],
+                            "target_version": version["version"],
+                            "image_restore_count": len(applied_image_refs),
+                        }),
                     ),
                 )
                 compose_version = _row(cursor.fetchone())
@@ -238,9 +355,14 @@ class ServiceRollbackMixin:
             target_type="service",
             target_id=service_id,
             status="succeeded",
-            message=f"Compose 버전 {version['version']} 기준으로 되돌림",
+            message=f"Compose 버전 {version['version']} 기준으로 되돌림" + (f" · 이미지 {len(applied_image_refs)}개 Harbor 백업 반영" if applied_image_refs else ""),
             requested_payload={"service_id": service_id, "version_id": version_id},
-            result_payload={"compose_version": compose_version["version"], "target_version": version["version"]},
+            result_payload={
+                "compose_version": compose_version["version"],
+                "target_version": version["version"],
+                "image_restore_count": len(applied_image_refs),
+                "image_restore": applied_image_refs,
+            },
             metadata={"service_id": service_id, "namespace": updated_service.get("namespace")},
             env=env,
         )

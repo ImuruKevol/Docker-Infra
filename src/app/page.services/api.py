@@ -71,16 +71,33 @@ def _merge_wizard_components(components, service):
     return result
 
 
-def _service_detail_payload(service_id):
-    services_model = wiz.model("struct").services
+def _with_detail_components(payload, expose_compose=True, include_flow=True):
     wizard = wiz.model("struct").services_wizard
-    flow_model = wiz.model("struct/services_flow")
-    payload = services_model.detail(service_id)
+    compose_content = payload.get("compose_content") or ""
     payload["components"] = _merge_wizard_components(
-        wizard.components_from_content(payload.get("compose_content")),
+        wizard.components_from_content(compose_content),
         payload.get("service"),
     )
-    payload["service_flow"] = flow_model.build(payload, payload["components"])
+    if include_flow:
+        flow_model = wiz.model("struct/services_flow")
+        flow_source = {**payload, "compose_content": compose_content}
+        payload["service_flow"] = flow_model.build(flow_source, payload["components"])
+    if not expose_compose:
+        payload.pop("compose_content", None)
+    return payload
+
+
+def _service_detail_payload(service_id):
+    services_model = wiz.model("struct").services
+    payload = _with_detail_components(services_model.detail(service_id), include_flow=False)
+    payload["detail_sections"] = {"overview": True, "logs": True, "source": True, "files": True, "versions": True}
+    return payload
+
+
+def _service_overview_payload(service_id):
+    services_model = wiz.model("struct").services
+    payload = _with_detail_components(services_model.detail_overview(service_id), expose_compose=False, include_flow=False)
+    payload["detail_sections"] = {"overview": True, "logs": False, "source": False, "files": True, "versions": False}
     return payload
 
 
@@ -362,7 +379,76 @@ def detail_service():
     code = 200
     payload = {}
     try:
-        payload = _service_detail_payload(service_id)
+        payload = _service_overview_payload(service_id)
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def detail_service_logs():
+    services_model = wiz.model("struct").services
+    body = wiz.request.query()
+    service_id = body.get("service_id")
+    if not service_id:
+        wiz.response.status(400, message="service_id는 필수입니다.", error_code="SERVICE_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = services_model.detail_logs(service_id)
+        payload["detail_sections"] = {"logs": True}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def detail_service_backups():
+    services_model = wiz.model("struct").services
+    body = wiz.request.query()
+    service_id = body.get("service_id")
+    if not service_id:
+        wiz.response.status(400, message="service_id는 필수입니다.", error_code="SERVICE_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = services_model.detail_backups(service_id)
+        payload["detail_sections"] = {"backups": True}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def detail_service_advanced():
+    services_model = wiz.model("struct").services
+    body = wiz.request.query()
+    service_id = body.get("service_id")
+    if not service_id:
+        wiz.response.status(400, message="service_id는 필수입니다.", error_code="SERVICE_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = _with_detail_components(services_model.detail_advanced(service_id), include_flow=False)
+        payload["detail_sections"] = {"source": True, "versions": True}
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -454,6 +540,82 @@ def service_container_action():
         result = nodes_model.container_action(target_node_id, {"container_id": target.get("id") or container_id, "action": action})
         services_model.refresh_deploy_status(service_id)
         payload = {"result": result.get("result") or result, **_service_detail_payload(service_id)}
+    except nodes_model.NodeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def _container_signal(container):
+    state = str((container or {}).get("state") or "").lower()
+    status = str((container or {}).get("status") or "").lower()
+    if "unhealthy" in status:
+        return "unhealthy"
+    if "health: starting" in status:
+        return "starting"
+    if "healthy" in status:
+        return "healthy"
+    return state
+
+
+def _can_run_container_action(container, action):
+    allowed = {
+        "start": {"created", "exited", "dead"},
+        "restart": {"running", "healthy", "unhealthy", "starting", "paused", "created", "exited", "dead"},
+        "stop": {"running", "healthy", "unhealthy", "starting", "paused", "restarting"},
+    }
+    return bool((container or {}).get("id") and (container or {}).get("node_id") and _container_signal(container) in allowed.get(action, set()))
+
+
+def service_container_bulk_action():
+    services_model = wiz.model("struct").services
+    nodes_model = wiz.model("struct").nodes
+    body = wiz.request.query()
+    service_id = body.get("service_id")
+    action = str(body.get("action") or "").strip().lower()
+    if not service_id:
+        wiz.response.status(400, message="service_id는 필수입니다.", error_code="SERVICE_ID_REQUIRED")
+        return
+    if action not in {"start", "stop", "restart"}:
+        wiz.response.status(400, message="지원하지 않는 일괄 동작입니다.", error_code="INVALID_CONTAINER_BULK_ACTION")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        runtime = services_model.refresh_deploy_status(service_id).get("runtime_status") or {}
+        containers = ((runtime.get("containers") or {}).get("containers") or [])
+        targets = [item for item in containers if _can_run_container_action(item, action)]
+        if not targets:
+            raise services_model.ServiceError(409, "현재 상태에서 일괄 동작을 실행할 컨테이너가 없습니다.", "SERVICE_CONTAINER_BULK_EMPTY")
+        results = []
+        for target in targets:
+            result = nodes_model.container_action(
+                target.get("node_id"),
+                {"container_id": target.get("id"), "action": action},
+            )
+            results.append({
+                "container_id": target.get("id"),
+                "name": target.get("name") or target.get("runtime_service_name"),
+                "node_id": target.get("node_id"),
+                "result": result.get("result") or result,
+            })
+        services_model.refresh_deploy_status(service_id)
+        payload = {
+            "result": {
+                "action": action,
+                "requested_count": len(targets),
+                "succeeded_count": len(results),
+                "items": results,
+            },
+            **_service_detail_payload(service_id),
+        }
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

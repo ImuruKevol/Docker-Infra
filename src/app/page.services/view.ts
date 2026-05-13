@@ -2,18 +2,20 @@ import { OnDestroy, OnInit, signal } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
 
 type EditSection = 'basic' | 'components' | 'domain' | 'advanced' | 'ai';
+type DetailTab = 'overview' | 'logs' | 'source' | 'files' | 'versions';
 
 export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
     public busy = signal<boolean>(false);
     public detailLoading = signal<boolean>(false);
+    public detailTabLoading = signal<boolean>(false);
     public error = signal<string>('');
     public services = signal<any[]>([]);
     public nodes = signal<any[]>([]);
     public zones = signal<any[]>([]);
     public selected = signal<any>(null);
     public detail = signal<any>(null);
-    public detailTab = signal<'overview' | 'logs' | 'backups' | 'advanced'>('overview');
+    public detailTab = signal<DetailTab>('overview');
     public serviceModalOpen = signal<boolean>(false);
     public serviceMode = signal<'basic_web' | 'direct_compose'>('basic_web');
     public createStep = signal<number>(1);
@@ -154,18 +156,97 @@ export class Component implements OnInit, OnDestroy {
         this.themeObserver = null;
     }
 
+    private hasOwn(value: any, key: string) {
+        return Object.prototype.hasOwnProperty.call(value || {}, key);
+    }
+
     private applyDetail(data: any) {
-        const previousEditorKey = this.advancedEditorTarget()?.key || 'compose';
-        this.detail.set(data || null);
-        this.selected.set(data?.service || null);
-        if (data?.service) this.detailLoading.set(false);
-        this.advancedNginxEditOpen.set(false);
-        this.advancedComposeDraft.set(data?.compose_content || '');
-        this.nginxConfigDrafts = {};
-        for (const config of data?.nginx_configs || []) {
-            this.nginxConfigDrafts[config.domain_id] = config.content || '';
+        if (!data) {
+            this.detail.set(null);
+            this.selected.set(null);
+            this.detailLoading.set(false);
+            this.advancedNginxEditOpen.set(false);
+            this.advancedComposeDraft.set('');
+            this.nginxConfigDrafts = {};
+            this.advancedEditorTarget.set(null);
+            this.advancedEditorContent.set('');
+            this.advancedEditorDirty.set(false);
+            return;
         }
-        this.selectAdvancedEditorByKey(previousEditorKey);
+        const previousEditorKey = this.advancedEditorTarget()?.key || 'compose';
+        const current = this.detail();
+        const incomingServiceId = data?.service?.id || '';
+        const currentServiceId = current?.service?.id || '';
+        const sameService = Boolean(current && (!incomingServiceId || incomingServiceId === currentServiceId));
+        const merged = sameService
+            ? {
+                ...current,
+                ...data,
+                service: data.service || current.service,
+                detail_sections: {
+                    ...(current.detail_sections || {}),
+                    ...(data.detail_sections || {}),
+                },
+            }
+            : data;
+        this.detail.set(merged || null);
+        this.selected.set(merged?.service || null);
+        if (merged?.service) this.detailLoading.set(false);
+
+        const refreshAdvancedState = !sameService || this.hasOwn(data, 'compose_content') || this.hasOwn(data, 'nginx_configs');
+        if (refreshAdvancedState) {
+            this.advancedNginxEditOpen.set(false);
+            if (!sameService || this.hasOwn(data, 'compose_content')) {
+                this.advancedComposeDraft.set(merged?.compose_content || '');
+            }
+            if (!sameService || this.hasOwn(data, 'nginx_configs')) {
+                this.nginxConfigDrafts = {};
+                for (const config of merged?.nginx_configs || []) {
+                    this.nginxConfigDrafts[config.domain_id] = config.content || '';
+                }
+            }
+            this.selectAdvancedEditorByKey(previousEditorKey);
+        }
+    }
+
+    private detailSectionLoaded(section: string) {
+        if (section === 'overview' || section === 'files') return true;
+        if (section === 'source' || section === 'versions') {
+            return Boolean(this.detail()?.detail_sections?.[section] || this.detail()?.detail_sections?.advanced);
+        }
+        return Boolean(this.detail()?.detail_sections?.[section]);
+    }
+
+    private async loadDetailSection(section: string, force: boolean = false, silent: boolean = false) {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || section === 'overview') return true;
+        if (!force && this.detailSectionLoaded(section)) return true;
+        const endpoint: any = {
+            logs: 'detail_service_logs',
+            source: 'detail_service_advanced',
+            versions: 'detail_service_advanced',
+        };
+        const functionName = endpoint[section];
+        if (!functionName) return false;
+        const requestSeq = this.detailRequestSeq;
+        this.detailTabLoading.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call(functionName, { service_id: serviceId });
+        if (requestSeq !== this.detailRequestSeq || this.selected()?.id !== serviceId) {
+            this.detailTabLoading.set(false);
+            await this.service.render();
+            return false;
+        }
+        if (code === 200) {
+            this.applyDetail(data);
+            this.detailTabLoading.set(false);
+            await this.service.render();
+            return true;
+        }
+        this.detailTabLoading.set(false);
+        if (!silent) await this.alert(data?.message || '서비스 상세 정보를 불러올 수 없습니다.');
+        await this.service.render();
+        return false;
     }
 
     private validationDetails(details: any[] = []) {
@@ -223,6 +304,7 @@ export class Component implements OnInit, OnDestroy {
                 this.selected.set(next);
                 this.detail.set(null);
                 this.detailTab.set('overview');
+                this.detailTabLoading.set(false);
                 this.advancedDetailOpen.set(false);
                 this.advancedNginxEditOpen.set(false);
                 this.loading.set(false);
@@ -258,6 +340,7 @@ export class Component implements OnInit, OnDestroy {
             this.detail.set(null);
             this.detailTab.set('overview');
         }
+        this.detailTabLoading.set(false);
         this.advancedDetailOpen.set(false);
         this.advancedNginxEditOpen.set(false);
         this.detailLoading.set(true);
@@ -985,8 +1068,12 @@ export class Component implements OnInit, OnDestroy {
     }
 
     private async openEditModalAsync() {
-        const detail = this.detail();
-        const service = detail?.service;
+        let detail = this.detail();
+        let service = detail?.service;
+        if (!service) return;
+        if (!(await this.loadDetailSection('source'))) return;
+        detail = this.detail();
+        service = detail?.service;
         if (!service) return;
         if (!(await this.loadEditOptions())) return;
         const domain = (detail.domains || [])[0] || null;
@@ -1515,10 +1602,78 @@ export class Component implements OnInit, OnDestroy {
             { label: '대상 버전', value: `버전 ${this.rollbackTarget()?.version || '-'}` },
             { label: '구성 수', value: `${summary.services || 0}개` },
             { label: '이미지 변경', value: `${summary.image_changes || 0}개` },
+            { label: '이미지 롤백', value: this.rollbackImageRestoreValue() },
             { label: '포트 변경', value: `${summary.port_changes || 0}개` },
             { label: '추가/제거', value: `${summary.added_services || 0}개 추가 · ${summary.removed_services || 0}개 제거` },
             { label: '도메인 주의', value: `${summary.domain_warnings || 0}개` },
         ];
+    }
+
+    public backupSystemStatus() {
+        return this.rollbackPlan()?.backup_system || this.detail()?.backup_system || {};
+    }
+
+    public backupSystemEnabled() {
+        return Boolean(this.backupSystemStatus()?.enabled);
+    }
+
+    public versionRollbackHint() {
+        if (this.backupSystemEnabled()) {
+            return '내장 Harbor 백업이 있는 버전은 Compose와 이미지 버전을 함께 되돌립니다.';
+        }
+        return '저장된 Compose 버전으로 되돌릴 수 있습니다.';
+    }
+
+    public backupSystemBadgeText() {
+        const status = this.backupSystemStatus();
+        if (!status?.enabled) return '이미지 롤백 꺼짐';
+        if (status?.status === 'running') return '이미지 롤백 가능';
+        return `Harbor ${status?.status || '확인 필요'}`;
+    }
+
+    public backupSystemBadgeClass() {
+        const status = this.backupSystemStatus();
+        if (status?.enabled && status?.status === 'running') {
+            return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
+        }
+        if (status?.enabled) {
+            return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
+    public rollbackImageRestoreSummary() {
+        return this.rollbackPlan()?.image_restore || {};
+    }
+
+    public rollbackImageRestoreRows() {
+        return this.rollbackImageRestoreSummary()?.items || [];
+    }
+
+    public rollbackImageRestoreValue() {
+        const restore = this.rollbackImageRestoreSummary();
+        if (!this.backupSystemEnabled()) return '꺼짐';
+        const count = Number(restore.available_count || 0);
+        return count > 0 ? `${count}개 가능` : '백업 없음';
+    }
+
+    public rollbackImageRestoreText() {
+        const restore = this.rollbackImageRestoreSummary();
+        if (!this.backupSystemEnabled()) return '내장 Harbor가 꺼져 있어 Compose 설정만 되돌립니다.';
+        const count = Number(restore.available_count || 0);
+        if (count > 0) return `Harbor에 백업된 이미지 ${count}개를 Compose에 함께 반영합니다.`;
+        return '이 Compose 버전에 연결된 Harbor 이미지 백업이 없어 Compose 설정만 되돌립니다.';
+    }
+
+    public rollbackImageRestoreClass() {
+        const restore = this.rollbackImageRestoreSummary();
+        if (this.backupSystemEnabled() && Number(restore.available_count || 0) > 0) {
+            return 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-200';
+        }
+        if (this.backupSystemEnabled()) {
+            return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
     }
 
     public rollbackImageChanges() {
@@ -1546,7 +1701,7 @@ export class Component implements OnInit, OnDestroy {
         const versionId = this.rollbackTarget()?.id;
         if (!serviceId || !versionId || this.rollbackBusy()) return;
         this.rollbackBusy.set(true);
-        const { code, data } = await wiz.call('rollback_service', { service_id: serviceId, version_id: versionId });
+        const { code, data } = await wiz.call('rollback_service', { service_id: serviceId, version_id: versionId, restore_images: true });
         if (code !== 200) {
             this.rollbackBusy.set(false);
             await this.alert(this.formatComposeError(data, '서비스를 되돌릴 수 없습니다.'));
@@ -1813,14 +1968,17 @@ export class Component implements OnInit, OnDestroy {
         return [
             { key: 'overview', label: '구성', icon: 'fa-diagram-project' },
             { key: 'logs', label: '로그', icon: 'fa-terminal' },
-            { key: 'backups', label: '백업', icon: 'fa-box-archive' },
-            { key: 'advanced', label: '고급', icon: 'fa-code' },
+            { key: 'source', label: 'Compose/Nginx', icon: 'fa-code' },
+            { key: 'files', label: '서비스 파일', icon: 'fa-folder-tree' },
+            { key: 'versions', label: '버전 이력', icon: 'fa-clock-rotate-left' },
         ];
     }
 
-    public setDetailTab(tab: any) {
-        if (!['overview', 'logs', 'backups', 'advanced'].includes(tab)) return;
+    public async setDetailTab(tab: any) {
+        if (!['overview', 'logs', 'source', 'files', 'versions'].includes(tab)) return;
         this.detailTab.set(tab);
+        await this.service.render();
+        await this.loadDetailSection(tab);
     }
 
     public serviceFlow() {
@@ -2064,17 +2222,74 @@ export class Component implements OnInit, OnDestroy {
         return this.runtimeStatus()?.containers?.containers || [];
     }
 
-    public runtimeContainerRows() {
-        return this.runtimeContainers().map((container: any) => {
-            const status = this.containerStatusLabel(container);
-            return {
-                name: this.containerDisplayName(container),
-                status,
-                className: this.containerStatusClass(container),
-                message: this.containerStatusMessage(container),
-                ports: this.containerPortLabels(container),
-            };
-        });
+    private runtimePublicServiceNames() {
+        const names: string[] = [];
+        const push = (value: any) => {
+            const text = String(value || '').trim();
+            if (text && !names.includes(text)) names.push(text);
+        };
+        for (const domain of this.detail()?.domains || []) {
+            const metadata = domain?.metadata || {};
+            push(metadata.compose_service);
+        }
+        for (const domain of this.runtimeDomains()) {
+            push(domain?.compose_service);
+            push(domain?.metadata?.compose_service);
+        }
+        for (const component of this.detail()?.components || []) {
+            const role = String(component?.role || '').toLowerCase();
+            const hasPublicPort = (component?.ports || []).some((port: any) => port?.public_endpoint);
+            if (role === 'public' || hasPublicPort) {
+                push(component.key);
+                push(component.service_name);
+                push(component.label);
+            }
+        }
+        return names;
+    }
+
+    private runtimeContainerNameCandidates(container: any) {
+        const namespace = this.detail()?.service?.namespace || '';
+        const values: string[] = [];
+        const push = (value: any) => {
+            const text = String(value || '').trim();
+            if (text && !values.includes(text)) values.push(text);
+        };
+        push(container?.runtime_service_name);
+        push(container?.name);
+        push(this.containerDisplayName(container));
+        for (const value of [...values]) {
+            if (namespace && value.startsWith(`${namespace}_`)) push(value.slice(namespace.length + 1));
+            if (namespace && value.startsWith(`${namespace}-`)) push(value.slice(namespace.length + 1));
+        }
+        return values;
+    }
+
+    public isRuntimeContainerPublic(container: any) {
+        const ports = container?.port_bindings || [];
+        if (ports.some((port: any) => port?.published && !port?.internal_only)) return true;
+        const publicNames = this.runtimePublicServiceNames();
+        const candidates = this.runtimeContainerNameCandidates(container);
+        return candidates.some((name: string) => publicNames.includes(name));
+    }
+
+    public runtimePublicContainers() {
+        return this.runtimeContainers().filter((container: any) => this.isRuntimeContainerPublic(container));
+    }
+
+    public runtimeInternalContainers() {
+        return this.runtimeContainers().filter((container: any) => !this.isRuntimeContainerPublic(container));
+    }
+
+    public containerExposureLabel(container: any) {
+        return this.isRuntimeContainerPublic(container) ? '외부 오픈' : '내부 전용';
+    }
+
+    public containerExposureClass(container: any) {
+        if (this.isRuntimeContainerPublic(container)) {
+            return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
     }
 
     public containerDisplayName(container: any) {
@@ -2096,16 +2311,6 @@ export class Component implements OnInit, OnDestroy {
             return labels[state] || '확인 필요';
         }
         return state ? '확인 필요' : '상태 없음';
-    }
-
-    public containerStatusMessage(container: any) {
-        const state = String(container?.state || '').toLowerCase();
-        const status = String(container?.status || '').trim();
-        if (status.toLowerCase().includes('unhealthy')) return '상태 점검이 실패했습니다. 최근 처리 내역과 로그를 확인하세요.';
-        if (status.toLowerCase().includes('health: starting')) return '컨테이너가 시작되고 상태 점검을 기다리는 중입니다.';
-        if (state === 'running') return '서비스 구성요소가 실행 중입니다.';
-        if (state === 'exited') return '중지된 구성요소입니다. 다시 적용 또는 되돌리기가 필요할 수 있습니다.';
-        return status || 'Docker에서 받은 상태 정보가 없습니다.';
     }
 
     public containerStatusClass(container: any) {
@@ -2155,6 +2360,57 @@ export class Component implements OnInit, OnDestroy {
             delete: '삭제할 수 없는 상태입니다.',
         };
         return reasons[action] || labels[action];
+    }
+
+    public runtimeBulkContainerTargets(action: string) {
+        return this.runtimeContainers().filter((container: any) => this.canRunRuntimeContainerAction(container, action));
+    }
+
+    public canRunRuntimeBulkAction(action: string) {
+        if (!['start', 'stop', 'restart'].includes(action)) return false;
+        return this.runtimeBulkContainerTargets(action).length > 0;
+    }
+
+    public runtimeBulkActionTitle(action: string) {
+        const labels: any = { start: '일괄 시작', stop: '일괄 중지', restart: '일괄 재시작' };
+        const count = this.runtimeBulkContainerTargets(action).length;
+        if (count > 0) return `${labels[action]} · 대상 ${count}개`;
+        const reasons: any = {
+            start: '시작할 수 있는 중지 컨테이너가 없습니다.',
+            stop: '중지할 수 있는 실행 컨테이너가 없습니다.',
+            restart: '재시작할 수 있는 컨테이너가 없습니다.',
+        };
+        return reasons[action] || labels[action];
+    }
+
+    public async runRuntimeBulkAction(action: string) {
+        if (!this.canRunRuntimeBulkAction(action)) return;
+        const labels: any = { start: '시작', stop: '중지', restart: '재시작' };
+        const count = this.runtimeBulkContainerTargets(action).length;
+        const confirmed = await this.service.modal.show({
+            title: `컨테이너 일괄 ${labels[action]}`,
+            message: `선택한 서비스의 대상 컨테이너 ${count}개를 일괄 ${labels[action]}합니다.`,
+            cancel: '취소',
+            action: `일괄 ${labels[action]}`,
+            actionBtn: action === 'stop' ? 'warning' : 'primary',
+            status: action === 'stop' ? 'warning' : 'info',
+        });
+        if (!confirmed) return;
+
+        this.busy.set(true);
+        const { code, data } = await wiz.call('service_container_bulk_action', {
+            service_id: this.selected()?.id,
+            action,
+        });
+        this.busy.set(false);
+        if (code === 200) {
+            this.applyDetail(data);
+            const succeeded = data?.result?.succeeded_count ?? count;
+            await this.alert(`컨테이너 ${succeeded}개에 일괄 ${labels[action]}을 실행했습니다.`, 'success');
+        } else {
+            await this.alert(data?.message || `컨테이너 일괄 ${labels[action]}을 실행할 수 없습니다.`);
+        }
+        await this.service.render();
     }
 
     public async runRuntimeContainerAction(container: any, action: string) {
@@ -2390,6 +2646,7 @@ export class Component implements OnInit, OnDestroy {
         this.runtimeAiBusy.set(true);
         this.resetRuntimeAiStream();
         try {
+            await this.loadDetailSection('logs', false, true);
             const { code, data } = await wiz.call('start_runtime_ai_verification', {
                 service_id: serviceId,
                 model_ref: this.runtimeAiModelRef() || this.aiDefaultModelRef() || 'auto',

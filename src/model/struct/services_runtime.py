@@ -8,8 +8,21 @@ local_executor = wiz.model("struct/local_executor")
 webserver = wiz.model("struct/webserver")
 shared = wiz.model("struct/services_shared")
 image_backups = wiz.model("struct/service_image_backups")
+backup_system = wiz.model("struct/backup_system")
 ServiceError = shared.ServiceError
 _row = shared.row
+
+
+def _backup_system_status(env=None):
+    try:
+        status = backup_system.status(env=env) or {}
+    except Exception:
+        status = {}
+    return {
+        "enabled": bool(status.get("enabled")),
+        "status": status.get("status") or "disabled",
+        "harbor_url": status.get("harbor_url") or "",
+    }
 
 
 class ServiceRuntimeMixin:
@@ -75,51 +88,94 @@ class ServiceRuntimeMixin:
             })
         return configs
 
-    def detail(self, service_id, env=None):
+    def _domains(self, cursor, service_id):
+        cursor.execute(
+            "SELECT * FROM service_domains WHERE service_id = %s ORDER BY created_at ASC",
+            (service_id,),
+        )
+        return [_row(row) for row in cursor.fetchall()]
+
+    def _versions(self, cursor, service_id):
+        cursor.execute(
+            "SELECT * FROM compose_versions WHERE service_id = %s ORDER BY version DESC, created_at DESC LIMIT 20",
+            (service_id,),
+        )
+        return [_row(row) for row in cursor.fetchall()]
+
+    def _operations(self, cursor, service_id, namespace, limit=20, include_output=True):
+        limit = max(1, min(int(limit or 20), 100))
+        output_column = ", output" if include_output else ""
+        cursor.execute(
+            f"""
+            SELECT id, type, status, message, created_at, started_at, finished_at, metadata, requested_payload, result_payload{output_column}
+            FROM operation_logs
+            WHERE requested_payload->>'service_id' = %s
+               OR metadata->>'service_id' = %s
+               OR requested_payload->>'namespace' = %s
+               OR metadata->>'namespace' = %s
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (service_id, service_id, namespace, namespace, limit),
+        )
+        return [_row(row) for row in cursor.fetchall()]
+
+    def _compose_content(self, service):
+        compose_path = Path(service["compose_path"]).expanduser()
+        if compose_path.is_file():
+            return compose_path.read_text(encoding="utf-8")
+        return ""
+
+    def detail_overview(self, service_id, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 service = self._service_row(cursor, service_id)
-                cursor.execute(
-                    "SELECT * FROM service_domains WHERE service_id = %s ORDER BY created_at ASC",
-                    (service_id,),
-                )
-                domains = [_row(row) for row in cursor.fetchall()]
-                cursor.execute(
-                    "SELECT * FROM compose_versions WHERE service_id = %s ORDER BY version DESC, created_at DESC LIMIT 20",
-                    (service_id,),
-                )
-                versions = [_row(row) for row in cursor.fetchall()]
-                cursor.execute(
-                    """
-                    SELECT id, type, status, message, created_at, started_at, finished_at, metadata, requested_payload, result_payload, output
-                    FROM operation_logs
-                    WHERE requested_payload->>'service_id' = %s
-                       OR metadata->>'service_id' = %s
-                       OR requested_payload->>'namespace' = %s
-                       OR metadata->>'namespace' = %s
-                    ORDER BY created_at DESC
-                    LIMIT 20
-                    """,
-                    (service_id, service_id, service.get("namespace"), service.get("namespace")),
-                )
-                operations = [_row(row) for row in cursor.fetchall()]
-
-        compose_content = ""
-        compose_path = Path(service["compose_path"]).expanduser()
-        if compose_path.is_file():
-            compose_content = compose_path.read_text(encoding="utf-8")
+                domains = self._domains(cursor, service_id)
+                operations = self._operations(cursor, service_id, service.get("namespace"), limit=5, include_output=False)
         root = self._service_root(service)
         return {
             "service": service,
             "domains": domains,
-            "versions": versions,
-            "image_backups": image_backups.list_for_service(service_id, env=env),
             "operations": operations,
-            "compose_content": compose_content,
+            "compose_content": self._compose_content(service),
             "file_root": str(root),
             "runtime_status": (service.get("metadata") or {}).get("runtime_status") or {},
-            "nginx_configs": self._nginx_configs(service_id, env=env),
         }
+
+    def detail_logs(self, service_id, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                service = self._service_row(cursor, service_id)
+                operations = self._operations(cursor, service_id, service.get("namespace"), limit=20, include_output=True)
+        return {"operations": operations}
+
+    def detail_backups(self, service_id, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                self._service_row(cursor, service_id)
+        return {"image_backups": image_backups.list_for_service(service_id, env=env)}
+
+    def detail_advanced(self, service_id, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                service = self._service_row(cursor, service_id)
+                versions = self._versions(cursor, service_id)
+        return {
+            "service": service,
+            "versions": versions,
+            "compose_content": self._compose_content(service),
+            "file_root": str(self._service_root(service)),
+            "runtime_status": (service.get("metadata") or {}).get("runtime_status") or {},
+            "nginx_configs": self._nginx_configs(service_id, env=env),
+            "backup_system": _backup_system_status(env=env),
+        }
+
+    def detail(self, service_id, env=None):
+        payload = self.detail_overview(service_id, env=env)
+        payload.update(self.detail_logs(service_id, env=env))
+        payload.update(self.detail_backups(service_id, env=env))
+        payload.update(self.detail_advanced(service_id, env=env))
+        return payload
 
     def update_nginx_config(self, payload, env=None):
         body = payload or {}

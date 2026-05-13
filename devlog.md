@@ -182,3 +182,7 @@
 | 2026-05-13 | 180 | 서버 상세 매크로 실행 인자 체크박스 폭 축소 | [상세](devlog/2026-05-13/180-server-macro-args-checkbox-width.md) |
 | 2026-05-13 | 181 | 사이드 메뉴 카테고리 분리와 도구 다운로드 제거 | [상세](devlog/2026-05-13/181-sidebar-menu-groups-remove-tools.md) |
 | 2026-05-13 | 182 | 대시보드 카드 단위 API 분리와 부분 로딩 적용 | [상세](devlog/2026-05-13/182-dashboard-card-api-split.md) |
+| 2026-05-13 | 183 | 서비스 상세 탭 API 분리와 지연 로딩 적용 | [상세](devlog/2026-05-13/183-service-detail-tab-api-split.md) |
+| 2026-05-13 | 184 | 서비스 상세 구성 탭 실행 상태와 원문/파일/버전 탭 재구성 | [상세](devlog/2026-05-13/184-service-detail-runtime-tabs.md) |
+| 2026-05-14 | 185 | 서비스 상세 구성 탭 관리자 친화 UI 정리 | [상세](devlog/2026-05-14/185-service-detail-admin-friendly-ui.md) |
+| 2026-05-14 | 186 | 서비스 상세 탭 카드와 헤더 디자인 통일 | [상세](devlog/2026-05-14/186-service-detail-tab-design-unification.md) |
