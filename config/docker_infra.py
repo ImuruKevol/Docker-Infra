@@ -35,6 +35,8 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "service.stack.volumes.remove",
     "proxy.nginx.reload",
     "certbot.nginx.issue",
+    "certbot.renew",
+    "certbot.renewal.ensure",
     "openssl.self_signed_cert.issue",
     "backup.harbor.install",
     "backup.harbor.up",

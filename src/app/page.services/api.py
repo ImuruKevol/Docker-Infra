@@ -375,6 +375,44 @@ def refresh_deploy_status():
     wiz.response.status(code, **payload)
 
 
+def renew_service_certificate():
+    services_model = wiz.model("struct").services
+    body = wiz.request.query()
+    code = 200
+    payload = {}
+    try:
+        result = services_model.renew_certbot_certificate(body)
+        service_id = body.get("service_id")
+        payload = {"result": result, **_service_overview_payload(service_id)}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def ensure_service_certificate_renewal():
+    services_model = wiz.model("struct").services
+    body = wiz.request.query()
+    code = 200
+    payload = {}
+    try:
+        result = services_model.ensure_certbot_renewal(body)
+        service_id = body.get("service_id")
+        payload = {"result": result, **_service_overview_payload(service_id)}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
 def detail_service():
     services_model = wiz.model("struct").services
     body = wiz.request.query()

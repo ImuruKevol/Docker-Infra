@@ -73,6 +73,7 @@ export class Component implements OnInit, OnDestroy {
     public runtimeAiModalOpen = signal<boolean>(false);
     public runtimeAiIntent = signal<string>('');
     public runtimeAiAllowContainerActions = signal<boolean>(true);
+    public runtimeAiAllowSshDiagnostics = signal<boolean>(true);
     public runtimeAiStreamEvents = signal<any[]>([]);
     public runtimeAiOutputTokenCount = signal<number>(0);
     public editAiModelRef = signal<string>('auto');
@@ -874,6 +875,99 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
+    public freeCertificates() {
+        return this.detail()?.free_certificates || [];
+    }
+
+    public certificateStatusLabel(status: string) {
+        const labels: any = {
+            valid: '정상',
+            expiring: '만료 임박',
+            expired: '만료됨',
+            missing: '파일 없음',
+            error: '확인 실패',
+            disabled: '비활성',
+            key_insecure: '키 권한 확인',
+            key_mismatch: '키 불일치',
+        };
+        return labels[status] || status || '발급 대기';
+    }
+
+    public certificateStatusClass(status: string) {
+        if (['valid'].includes(status)) return this.statusClass('running');
+        if (['expiring', 'disabled'].includes(status)) return this.statusClass('pending');
+        if (['expired', 'missing', 'error', 'key_insecure', 'key_mismatch'].includes(status)) return this.statusClass('failed');
+        return this.statusClass('');
+    }
+
+    public certificateExpiresText(item: any) {
+        const cert = item?.certificate || {};
+        if (!cert?.not_after) return '발급 후 표시됩니다.';
+        const days = cert.days_remaining;
+        if (Number.isFinite(Number(days))) {
+            if (Number(days) < 0) return `${Math.abs(Number(days))}일 전 만료 · ${this.formatDate(cert.not_after)}`;
+            return `${Number(days)}일 남음 · ${this.formatDate(cert.not_after)}`;
+        }
+        return this.formatDate(cert.not_after);
+    }
+
+    public certificateAutoRenewText(item: any) {
+        const renewal = item?.auto_renewal || {};
+        if (renewal.configured) return `자동 갱신 감지됨 · ${renewal.method || 'system'}`;
+        if (renewal.status === 'ok') return '자동 갱신 작업 없음';
+        return '자동 갱신 상태 확인 실패';
+    }
+
+    public certificateRenewTitle(item: any) {
+        if (item?.manual_renew_enabled) return `${item.domain} 무료 인증서 수동 갱신`;
+        return '발급된 certbot 인증서가 있을 때 갱신할 수 있습니다.';
+    }
+
+    public certificateAutoRenewTitle(item: any) {
+        if (item?.auto_renewal?.configured) return '자동 갱신 작업이 이미 감지되었습니다.';
+        return `${item.domain} 무료 인증서 자동 갱신 설정`;
+    }
+
+    public async ensureServiceCertificateRenewal(item: any) {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || !item?.domain || item?.auto_renewal?.configured || this.busy()) return;
+        const ok = await this.confirm('certbot renew를 주기적으로 실행하는 systemd timer 또는 cron 작업을 설정합니다.', '자동 갱신 설정', 'warning');
+        if (!ok) return;
+        this.busy.set(true);
+        const { code, data } = await wiz.call('ensure_service_certificate_renewal', {
+            service_id: serviceId,
+            domain: item.domain,
+        });
+        this.busy.set(false);
+        if (code === 200) {
+            this.applyDetail(data);
+            await this.alert('무료 인증서 자동 갱신 설정을 확인했습니다.', 'success');
+        } else {
+            await this.alert(data?.message || '무료 인증서 자동 갱신을 설정할 수 없습니다.');
+        }
+        await this.service.render();
+    }
+
+    public async renewServiceCertificate(item: any) {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || !item?.domain || !item?.manual_renew_enabled || this.busy()) return;
+        const ok = await this.confirm(`${item.domain} 무료 인증서를 지금 갱신합니다. 갱신 후 nginx 설정을 다시 적용합니다.`, '인증서 갱신', 'warning');
+        if (!ok) return;
+        this.busy.set(true);
+        const { code, data } = await wiz.call('renew_service_certificate', {
+            service_id: serviceId,
+            domain: item.domain,
+        });
+        this.busy.set(false);
+        if (code === 200) {
+            this.applyDetail(data);
+            await this.alert('무료 인증서를 갱신했습니다.', 'success');
+        } else {
+            await this.alert(data?.message || '무료 인증서를 갱신할 수 없습니다.');
+        }
+        await this.service.render();
+    }
+
     public nginxConfigs() {
         return this.detail()?.nginx_configs || [];
     }
@@ -1187,11 +1281,39 @@ export class Component implements OnInit, OnDestroy {
         return this.compactAiStreamRows(this.editAiStreamEvents());
     }
 
+    private isMcpToolExposureNoise(value: any) {
+        const text = String(value || '').toLowerCase();
+        if (!text) return false;
+        const mentionsTool = text.includes('mcp') || text.includes('tool_search') || text.includes('도구');
+        const unavailable = [
+            'not exposed',
+            'not available',
+            'not provided',
+            'not found',
+            'unavailable',
+            '노출되어',
+            '노출되지',
+            '사용할 수 없',
+            '제공되지',
+        ].some((token: string) => text.includes(token));
+        return mentionsTool && unavailable;
+    }
+
+    private normalizeMcpToolExposureMessage(value: any) {
+        const lines = String(value || '').replace(/\r/g, '').split('\n');
+        const kept = lines.filter((line: string) => !this.isMcpToolExposureNoise(line));
+        if (kept.length === lines.length) return value;
+        const fallback = '일부 AI 보조 점검은 현재 허용된 도구와 서비스 상태 정보로 대체했습니다.';
+        const normalized = [...kept.map((line: string) => line.trim()).filter(Boolean), fallback];
+        return normalized.join('\n');
+    }
+
     private streamLines(value: any) {
         return String(value || '')
             .replace(/\r/g, '')
             .split('\n')
             .map((line: string) => line.replace(/\s+/g, ' ').trim())
+            .filter((line: string) => !this.isMcpToolExposureNoise(line))
             .filter((line: string) => !!line)
             .map((line: string) => line.length > 220 ? `${line.slice(0, 217)}...` : line);
     }
@@ -1830,7 +1952,20 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public operationOutput() {
-        return this.operationDetail()?.output || [];
+        return (this.operationDetail()?.output || []).map((item: any) => {
+            const message = this.normalizeMcpToolExposureMessage(item?.message || '');
+            if (message === item?.message) return item;
+            return {
+                ...item,
+                message,
+                stream: item?.stream === 'stderr' ? 'system' : item?.stream,
+                metadata: {
+                    ...(item?.metadata || {}),
+                    step: item?.metadata?.step || 'ai tool fallback',
+                    normalized_mcp_tool_exposure: true,
+                },
+            };
+        });
     }
 
     public operationStreamClass(stream: string) {
@@ -2638,6 +2773,7 @@ export class Component implements OnInit, OnDestroy {
         await this.ensureAiModelOptions();
         this.runtimeAiIntent.set('');
         this.runtimeAiAllowContainerActions.set(true);
+        this.runtimeAiAllowSshDiagnostics.set(true);
         this.runtimeAiModalOpen.set(true);
         await this.service.render();
     }
@@ -2663,6 +2799,15 @@ export class Component implements OnInit, OnDestroy {
         return this.compactAiStreamRows(this.runtimeAiStreamEvents());
     }
 
+    public runtimeAiScopeItems() {
+        return [
+            { label: '실패 로그', value: `${this.runtimeIssueOperations().length}개` },
+            { label: '컨테이너', value: `중지 ${this.runtimeContainerSummary()?.stopped || 0}개` },
+            { label: 'Docker 작업', value: `${this.runtimeStackSummary()?.running || 0}/${this.runtimeStackSummary()?.desired || 0}` },
+            { label: '브라우저 점검', value: this.runtimeDomains().length ? '포함' : '도메인 없음' },
+        ];
+    }
+
     public async submitRuntimeAiRepair() {
         const serviceId = this.selected()?.id;
         if (!serviceId || this.runtimeAiBusy()) return;
@@ -2677,7 +2822,7 @@ export class Component implements OnInit, OnDestroy {
                 intent: String(this.runtimeAiIntent() || '').trim(),
                 client_runtime_issues: this.runtimeIssueSnapshot(),
                 allow_container_terminal_actions: this.runtimeAiAllowContainerActions(),
-                allow_ssh_command: true,
+                allow_ssh_command: this.runtimeAiAllowSshDiagnostics(),
                 apply: true,
                 deploy: true,
             });
@@ -2725,6 +2870,8 @@ export class Component implements OnInit, OnDestroy {
         const labels: any = {
             'service.deploy': '서비스 적용',
             'service.ai.verify': 'AI 백그라운드 검증',
+            'service.certbot.renew': '무료 인증서 갱신',
+            'service.certbot.renewal.ensure': '무료 인증서 자동 갱신 설정',
             'service.compose.rollback': 'Compose 되돌리기',
             'service.image.backup': '이미지 백업',
             'service.image.restore': '이미지 복원',

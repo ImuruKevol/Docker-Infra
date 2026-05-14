@@ -112,6 +112,10 @@ class Struct:
         return self._load("services_status")
 
     @property
+    def services_certbot(self):
+        return self._load("services_certbot")
+
+    @property
     def services_placement(self):
         return self._load("services_placement")
 

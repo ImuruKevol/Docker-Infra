@@ -139,6 +139,7 @@ Docker Infra는 AI 앞뒤의 control plane이다.
 | `dns_lookup` | read/network | 허용된 서비스 도메인의 DNS 해석 확인 | post-deploy/runtime scope |
 | `tcp_connect_check` | read/network | 허용된 도메인, IP, port의 TCP 연결 확인 | post-deploy/runtime scope |
 | `http_probe` | read/network | 허용된 서비스 URL의 HTTP status, redirect, 본문 일부 확인 | post-deploy/runtime scope |
+| `browser_probe` | read/network | 허용된 서비스 URL의 title, 본문 텍스트, 최종 URL을 브라우저형 요청으로 확인 | post-deploy/runtime scope |
 | `server_collect` | read/local/remote | system/docker/log 진단 수집 | 초안/검증/runtime scope |
 | `container_action` | destructive-limited | stop/restart/remove 문제 컨테이너 | runtime repair와 AI 자동 조치 허용 시 |
 | `ssh_command` | read/diagnostic | 등록 서버 비파괴 진단 | destructive command 차단 조건으로 일반 AI scope 허용 |

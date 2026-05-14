@@ -569,6 +569,152 @@ def _certbot_nginx_issue_command(params):
     return command
 
 
+def _certbot_renew_command(params):
+    cert_name = str((params or {}).get("cert_name") or (params or {}).get("domain") or "").strip().lower()
+    if DOMAIN_RE.match(cert_name) is None or "*" in cert_name:
+        raise LocalCommandError(400, "cert_name 형식이 올바르지 않습니다.", "INVALID_CERTBOT_CERT_NAME")
+    command = ["certbot", "renew", "--cert-name", cert_name, "--non-interactive"]
+    if (params or {}).get("force") is not False:
+        command.append("--force-renewal")
+    if (params or {}).get("dry_run"):
+        command.append("--dry-run")
+    return command
+
+
+def _certbot_renewal_status_command(params):
+    script = r"""
+import glob
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+
+def run(argv):
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=5, check=False)
+        return {"status": "ok" if completed.returncode == 0 else "error", "exit_code": completed.returncode, "stdout": completed.stdout or "", "stderr": completed.stderr or ""}
+    except Exception as exc:
+        return {"status": "error", "exit_code": None, "stdout": "", "stderr": str(exc)}
+
+
+def unit_status(unit):
+    return {
+        "active": run(["systemctl", "is-active", unit])["stdout"].strip(),
+        "enabled": run(["systemctl", "is-enabled", unit])["stdout"].strip(),
+    }
+
+
+certbot_path = shutil.which("certbot") or ""
+systemd_available = shutil.which("systemctl") is not None
+timer_lines = []
+units = {}
+if systemd_available:
+    timers = run(["systemctl", "list-timers", "--all", "--no-pager", "--plain"])
+    for line in (timers.get("stdout") or "").splitlines():
+        lowered = line.lower()
+        if "certbot" in lowered or "letsencrypt" in lowered or "docker-infra-certbot-renew" in lowered:
+            timer_lines.append(" ".join(line.split()))
+    for unit in ["certbot.timer", "snap.certbot.renew.timer", "docker-infra-certbot-renew.timer"]:
+        units[unit] = unit_status(unit)
+
+cron_entries = []
+for path in [Path("/etc/crontab"), *[Path(item) for item in glob.glob("/etc/cron.d/*")]]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        continue
+    for line in text.splitlines():
+        clean = line.strip()
+        if clean and not clean.startswith("#") and "certbot" in clean and "renew" in clean:
+            cron_entries.append({"path": str(path), "line": clean})
+
+configured = bool(cron_entries or timer_lines or any(
+    item.get("active") == "active" or item.get("enabled") == "enabled"
+    for item in units.values()
+))
+print(json.dumps({
+    "installed": bool(certbot_path),
+    "certbot_path": certbot_path,
+    "configured": configured,
+    "method": "systemd" if timer_lines or any(item.get("active") == "active" or item.get("enabled") == "enabled" for item in units.values()) else ("cron" if cron_entries else "none"),
+    "schedule": "systemd timer 또는 cron이 certbot renew를 주기적으로 실행합니다." if configured else "자동 갱신 작업이 감지되지 않았습니다.",
+    "systemd_available": systemd_available,
+    "timers": timer_lines[:20],
+    "units": units,
+    "cron": cron_entries[:20],
+}, ensure_ascii=False))
+""".strip()
+    return [sys.executable, "-c", script]
+
+
+def _certbot_renewal_ensure_command(params):
+    service_name = "docker-infra-certbot-renew.service"
+    timer_name = "docker-infra-certbot-renew.timer"
+    script = (
+        "set -eu\n"
+        "SUDO=''\n"
+        "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+        "CERTBOT_BIN=$(command -v certbot || true)\n"
+        "if [ -z \"$CERTBOT_BIN\" ]; then echo 'certbot command not found' >&2; exit 44; fi\n"
+        "NGINX_BIN=$(command -v nginx || true)\n"
+        "HOOK=''\n"
+        "if [ -n \"$NGINX_BIN\" ]; then HOOK=\" --deploy-hook \\\"$NGINX_BIN -s reload\\\"\"; fi\n"
+        "if command -v systemctl >/dev/null 2>&1 && systemctl list-timers --all --no-pager >/dev/null 2>&1; then\n"
+        "  if systemctl list-timers --all --no-pager 2>/dev/null | grep -Ei 'certbot|letsencrypt' >/dev/null 2>&1; then\n"
+        "    echo 'certbot renewal timer already configured'\n"
+        "    systemctl list-timers --all --no-pager 2>/dev/null | grep -Ei 'certbot|letsencrypt' || true\n"
+        "    exit 0\n"
+        "  fi\n"
+        f"  SERVICE_TMP=/tmp/{shlex.quote(service_name)}\n"
+        f"  TIMER_TMP=/tmp/{shlex.quote(timer_name)}\n"
+        "  cat > \"$SERVICE_TMP\" <<EOF\n"
+        "[Unit]\n"
+        "Description=Docker Infra Certbot renewal\n"
+        "After=network-online.target nginx.service\n"
+        "Wants=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "ExecStart=/bin/sh -lc '$CERTBOT_BIN renew -q$HOOK'\n"
+        "EOF\n"
+        "  cat > \"$TIMER_TMP\" <<EOF\n"
+        "[Unit]\n"
+        "Description=Run Docker Infra Certbot renewal twice daily\n"
+        "\n"
+        "[Timer]\n"
+        "OnCalendar=*-*-* 00,12:00:00\n"
+        "RandomizedDelaySec=1h\n"
+        "Persistent=true\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+        "EOF\n"
+        f"  $SUDO mv \"$SERVICE_TMP\" /etc/systemd/system/{shlex.quote(service_name)}\n"
+        f"  $SUDO mv \"$TIMER_TMP\" /etc/systemd/system/{shlex.quote(timer_name)}\n"
+        "  $SUDO systemctl daemon-reload\n"
+        f"  $SUDO systemctl enable --now {shlex.quote(timer_name)}\n"
+        f"  systemctl list-timers --all --no-pager | grep {shlex.quote(timer_name)} || true\n"
+        "  exit 0\n"
+        "fi\n"
+        "CRON_TMP=/tmp/docker-infra-certbot-renew\n"
+        "if [ -n \"$NGINX_BIN\" ]; then\n"
+        "  printf \"7 0,12 * * * root %s renew -q --deploy-hook '%s -s reload'\\n\" \"$CERTBOT_BIN\" \"$NGINX_BIN\" > \"$CRON_TMP\"\n"
+        "else\n"
+        "  printf \"7 0,12 * * * root %s renew -q\\n\" \"$CERTBOT_BIN\" > \"$CRON_TMP\"\n"
+        "fi\n"
+        "if [ -f /etc/cron.d/docker-infra-certbot-renew ] && grep -q 'certbot.*renew' /etc/cron.d/docker-infra-certbot-renew; then\n"
+        "  echo 'certbot renewal cron already configured'\n"
+        "  cat /etc/cron.d/docker-infra-certbot-renew\n"
+        "  exit 0\n"
+        "fi\n"
+        "$SUDO mv \"$CRON_TMP\" /etc/cron.d/docker-infra-certbot-renew\n"
+        "$SUDO chmod 0644 /etc/cron.d/docker-infra-certbot-renew\n"
+        "cat /etc/cron.d/docker-infra-certbot-renew\n"
+    )
+    return ["sh", "-lc", script]
+
+
 def _openssl_self_signed_cert_command(params):
     domain = str((params or {}).get("domain") or "").strip().lower()
     cert_path = _path_param(params, "cert_path")
@@ -708,6 +854,9 @@ COMMAND_SPECS = {
     "service.stack.services": {"category": "service", "factory": _service_stack_services_command, "default_timeout_seconds": 20},
     "service.stack.ps": {"category": "service", "factory": _service_stack_ps_command, "default_timeout_seconds": 20},
     "certbot.nginx.issue": {"category": "certbot", "factory": _certbot_nginx_issue_command, "destructive": True, "default_timeout_seconds": 300},
+    "certbot.renew": {"category": "certbot", "factory": _certbot_renew_command, "destructive": True, "default_timeout_seconds": 300},
+    "certbot.renewal.status": {"category": "certbot", "factory": _certbot_renewal_status_command, "default_timeout_seconds": 20},
+    "certbot.renewal.ensure": {"category": "certbot", "factory": _certbot_renewal_ensure_command, "destructive": True, "default_timeout_seconds": 120},
     "openssl.self_signed_cert.issue": {"category": "openssl", "factory": _openssl_self_signed_cert_command, "destructive": True, "default_timeout_seconds": 30},
     "backup.harbor.install": {"category": "backup", "factory": _backup_harbor_install_command, "destructive": True, "default_timeout_seconds": 1800},
     "backup.harbor.up": {"category": "backup", "factory": _backup_harbor_up_command, "destructive": True, "default_timeout_seconds": 300},

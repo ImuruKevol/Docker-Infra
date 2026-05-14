@@ -31,7 +31,7 @@ def _compose_service_name(stack_name, task):
 def _task_active(task):
     desired = str(task.get("DesiredState") or task.get("Desired state") or "").lower()
     current = str(task.get("CurrentState") or task.get("Current state") or "").lower()
-    return desired == "running" and (current.startswith("running") or current.startswith("preparing") or current.startswith("starting"))
+    return desired == "running" and current.startswith("running")
 
 
 def _node_maps(env=None):

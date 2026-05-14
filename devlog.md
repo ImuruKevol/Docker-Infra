@@ -200,3 +200,6 @@
 | 2026-05-14 | 198 | 백업 레지스트리 insecure registry 노드 자동 적용 | [상세](devlog/2026-05-14/198-backup-insecure-registry-node-setup.md) |
 | 2026-05-14 | 199 | 이미지 관리 Harbor 컴팩트 UI 재구성 | [상세](devlog/2026-05-14/199-harbor-compact-ui-redesign.md) |
 | 2026-05-14 | 200 | 이미지 관리 서버 로컬 저장소 UI 통일 | [상세](devlog/2026-05-14/200-local-image-ui-unification.md) |
+| 2026-05-14 | 201 | 서비스 AI MCP scope와 백그라운드 모달 개선 | [상세](devlog/2026-05-14/201-service-ai-runtime-mcp-modal.md) |
+| 2026-05-14 | 202 | 서비스 AI 검사 모달 모델 선택 배치 조정 | [상세](devlog/2026-05-14/202-service-ai-modal-model-placement.md) |
+| 2026-05-14 | 203 | 서비스 certbot SSL 적용 타이밍과 갱신 관리 보강 | [상세](devlog/2026-05-14/203-service-certbot-runtime-renewal.md) |

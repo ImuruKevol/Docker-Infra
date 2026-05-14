@@ -29,6 +29,7 @@ DEPLOY_TARGETS_MODEL = ROOT / "src" / "model" / "struct" / "services_deploy_targ
 PLACEMENT_MODEL = ROOT / "src" / "model" / "struct" / "services_placement.py"
 NGINX_MODEL = ROOT / "src" / "model" / "struct" / "service_nginx.py"
 NGINX_CERT_MODEL = ROOT / "src" / "model" / "struct" / "service_nginx_certificates.py"
+SERVICES_CERTBOT_MODEL = ROOT / "src" / "model" / "struct" / "services_certbot.py"
 DOMAINS_MODEL = ROOT / "src" / "model" / "struct" / "domains.py"
 DOMAINS_VIEW = ROOT / "src" / "app" / "page.domains" / "view.ts"
 DOMAINS_TEMPLATE = ROOT / "src" / "app" / "page.domains" / "view.pug"
@@ -149,11 +150,12 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
             self.assertIn(token, assistant)
         for token in ["_runtime_issue_signals", "_client_failed_operations", "_merge_runtime_operations", "client_runtime_issues", "terminal_actions", "container_action", "operator_message", "service_status", "failed_operations", "stack_replicas", "containers_stopped", "stream_runtime_repair", "runtime_actions", "terminal_action_results", "_execute_runtime_actions", "start_runtime_verification", "_runtime_verification_worker", "_wait_runtime_ready", "_runtime_snapshot_blocked", "_runtime_snapshot_key", "AI_VERIFY_UNCHANGED_BLOCKED_ATTEMPTS", "동일한 상태 확인 로그", "다음 검증 시도", "verify_runtime", "service.ai.verify"]:
             self.assertIn(token, assistant)
-        for token in ["runtimeIssueSnapshot", "client_runtime_issues", "runtimeIssueOperations", "runtimeAiIntent", "runtimeAiAllowContainerActions", "allow_container_terminal_actions", "allow_ssh_command", "submitRuntimeAiRepair", "start_runtime_ai_verification", "activeBackgroundOperation", "service.ai.verify", "editOperatorComment", "operator_comment", "doneSeen", "완료 이벤트 없이 종료"]:
+        for token in ["runtimeIssueSnapshot", "client_runtime_issues", "runtimeIssueOperations", "runtimeAiIntent", "runtimeAiAllowContainerActions", "runtimeAiAllowSshDiagnostics", "allow_container_terminal_actions", "allow_ssh_command", "submitRuntimeAiRepair", "start_runtime_ai_verification", "activeBackgroundOperation", "service.ai.verify", "editOperatorComment", "operator_comment", "doneSeen", "완료 이벤트 없이 종료", "normalizeMcpToolExposureMessage"]:
             self.assertIn(token, services_view)
-        for token in ["infra_context", "docker_image_check", "server_port_check", "container_logs", "container_action", "service_stack_status", "dns_lookup", "tcp_connect_check", "http_probe", "server_collect", "ssh_command"]:
+        for token in ["infra_context", "docker_image_check", "server_port_check", "container_logs", "container_action", "service_stack_status", "dns_lookup", "tcp_connect_check", "http_probe", "browser_probe", "server_collect", "ssh_command"]:
             self.assertIn(token, codex_runtime)
             self.assertIn(token, mcp)
+        self.assertIn("mcp_tools_for_scope", codex_runtime)
         self.assertIn("create_session_id", wizard)
         self.assertIn("_existing_create_session", wizard)
         self.assertIn("createSessionId", view)
@@ -175,6 +177,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("runRuntimeAiRepair", SERVICES_VIEW.read_text(encoding="utf-8"))
         self.assertIn("AI 검사/수정", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         self.assertIn("AI 자동 조치 허용", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertIn("서버 진단", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertIn("브라우저 점검", services_view)
         self.assertIn("백그라운드 작업 진행 중", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         self.assertIn("추가 코멘트", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         for token in ["template_detail", "selectedTemplateId", "templateLoading", "templateSelectorItems", "template_id"]:
@@ -273,7 +277,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         api = SERVICES_API.read_text(encoding="utf-8")
         flow = FLOW_MODEL.read_text(encoding="utf-8")
 
-        for token in ["runtimeServerSummaryText", "certificateSummaryText", "serviceIssue", "runtimeContainerRows", "runRuntimeContainerAction", "detailTabs", "serviceFlowPaths"]:
+        for token in ["runtimeServerSummaryText", "certificateSummaryText", "serviceIssue", "runtimeContainers", "runRuntimeContainerAction", "detailTabs", "serviceFlowPaths"]:
             self.assertIn(token, view)
         self.assertIn("flow_model.build", api)
         self.assertIn("service_flow", api)
@@ -283,12 +287,12 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         for token in ["class ServicesFlow", "depends_on", "public_paths", "internal_targets", "nginx"]:
             self.assertIn(token, flow)
         self.assertIn("서버 / 인증서", template)
-        self.assertIn("접속 흐름", template)
+        self.assertIn("실행 상태", template)
         self.assertIn("처리 로그", template)
         self.assertIn("백업", template)
-        self.assertIn("고급 관리", template)
+        self.assertIn("Compose 원문 및 Nginx 설정", template)
         self.assertIn("상태 다시 확인", template)
-        self.assertIn("실행 구성요소", template)
+        self.assertIn("외부에 오픈되는 컨테이너", template)
         self.assertIn("처리 로그 보기", template)
 
     def test_deploy_status_refresh_and_self_signed_ssl_test_path_are_wired(self):
@@ -338,7 +342,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("update_nginx_config", runtime)
         self.assertIn("proxy.nginx.configtest", runtime)
         self.assertIn("nu-monaco-editor", services_template)
-        self.assertIn("원문 설정", services_template)
+        self.assertIn("Compose 원문 및 Nginx 설정", services_template)
         self.assertIn("saveAdvancedEditor", services_view)
         self.assertIn("saveComposeContent", services_view)
         self.assertIn("saveNginxConfig", services_view)
@@ -354,6 +358,39 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("dns_records", NGINX_MODEL.read_text(encoding="utf-8"))
         self.assertIn("인증서 적용 서비스", domains_template)
         self.assertIn("certificateKeyText", domains_view)
+
+    def test_certbot_issue_waits_for_runtime_and_exposes_renewal_ops(self):
+        deploy = DEPLOY_MODEL.read_text(encoding="utf-8")
+        deploy_targets = DEPLOY_TARGETS_MODEL.read_text(encoding="utf-8")
+        runtime = (ROOT / "src" / "model" / "struct" / "services_runtime.py").read_text(encoding="utf-8")
+        nginx_cert = NGINX_CERT_MODEL.read_text(encoding="utf-8")
+        services_certbot = SERVICES_CERTBOT_MODEL.read_text(encoding="utf-8")
+        commands = LOCAL_COMMAND_MODEL.read_text(encoding="utf-8")
+        config = RUNTIME_CONFIG.read_text(encoding="utf-8")
+        services_api = SERVICES_API.read_text(encoding="utf-8")
+        services_view = SERVICES_VIEW.read_text(encoding="utf-8")
+        services_template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn("_wait_runtime_ready", deploy)
+        self.assertLess(deploy.index("_wait_runtime_ready"), deploy.index("service_nginx.apply"))
+        self.assertIn("runtime ready", deploy)
+        self.assertIn("current.startswith(\"running\")", deploy_targets)
+        self.assertIn("free_certificates", runtime)
+        self.assertIn("service_certificates", runtime)
+        for token in ["certbot.renew", "certbot.renewal.status", "certbot.renewal.ensure"]:
+            self.assertIn(token, commands)
+        for token in ["certbot.renew", "certbot.renewal.ensure"]:
+            self.assertIn(token, config)
+        for token in ["automatic_renewal_status", "ensure_automatic_renewal", "renew_certificate", "manual_renew_enabled"]:
+            self.assertIn(token, nginx_cert)
+        for token in ["renew_certbot_certificate", "ensure_certbot_renewal", "service.certbot.renew"]:
+            self.assertIn(token, services_certbot)
+        self.assertIn("def renew_service_certificate():", services_api)
+        self.assertIn("def ensure_service_certificate_renewal():", services_api)
+        for token in ["freeCertificates", "renewServiceCertificate", "ensureServiceCertificateRenewal", "certificateExpiresText", "certificateAutoRenewText"]:
+            self.assertIn(token, services_view)
+        for token in ["무료 SSL 인증서", "수동 갱신", "자동 설정"]:
+            self.assertIn(token, services_template)
 
 
 if __name__ == "__main__":

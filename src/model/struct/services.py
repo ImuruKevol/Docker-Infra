@@ -23,6 +23,7 @@ ServiceDeleteMixin = wiz.model("struct/services_delete")
 ServiceUpdateMixin = wiz.model("struct/services_update")
 ServiceRollbackMixin = wiz.model("struct/services_rollback")
 ServiceStatusMixin = wiz.model("struct/services_status")
+ServiceCertbotMixin = wiz.model("struct/services_certbot")
 ServiceError = shared.ServiceError
 _row = shared.row
 
@@ -46,7 +47,7 @@ def _normalize_namespace(value):
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower())).strip("_")
 
 
-class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixin, ServiceDeleteMixin, ServiceStatusMixin, ServiceRuntimeMixin):
+class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixin, ServiceDeleteMixin, ServiceStatusMixin, ServiceRuntimeMixin, ServiceCertbotMixin):
     ServiceError = ServiceError
     ComposeValidationError = validator.ComposeValidationError
     IMPORT_WARNING_CODES = {"FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"}

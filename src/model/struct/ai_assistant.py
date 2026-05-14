@@ -61,6 +61,13 @@ class AIAssistant:
             "compose_validation": self.compose_validation_contract(),
         }
 
+    def _mcp_tools(self, scope, allow_container_actions=False, allow_ssh_command=True):
+        return codex_runtime.mcp_tools_for_scope(
+            scope,
+            allow_container_actions=allow_container_actions,
+            allow_ssh_command=allow_ssh_command,
+        )
+
     def model_options(self, env=None):
         payload = ai_settings.public_payload(env=env)
         config = payload.get("config") or {}
@@ -1034,6 +1041,7 @@ class AIAssistant:
                 "Use the enabled docker_infra MCP tools to inspect the real current state before judging success.",
                 "Verify Docker stack tasks, container health, recent logs, DNS resolution, TCP connectivity, HTTP response, and whether the user's requested service purpose appears reachable.",
                 "You may use safe SSH diagnostics when enabled, but do not run destructive commands during the verification-only step.",
+                "If a desired MCP tool is unavailable or not exposed, do not report that as a service issue; use the enabled tools and supplied runtime context instead.",
                 "If a fix is needed, do not return a service draft here. Return a Korean repair_intent that the repair step can use.",
                 "Return only one JSON object with keys: ok, summary, issues, warnings, checks, repair_required, repair_intent.",
                 "issues must be an array of objects with key, severity, message, evidence.",
@@ -1045,18 +1053,8 @@ class AIAssistant:
     def _runtime_verification_context(self, detail, diagnostics, payload):
         service = detail.get("service") or {}
         domains = detail.get("domains") or []
-        enabled_tools = [
-            "infra_context",
-            "server_list",
-            "server_port_check",
-            "service_stack_status",
-            "container_logs",
-            "server_collect",
-            "dns_lookup",
-            "tcp_connect_check",
-            "http_probe",
-            "ssh_command",
-        ]
+        allow_ssh_command = payload.get("allow_ssh_command") is not False
+        enabled_tools = self._mcp_tools("post_deploy_verification", allow_ssh_command=allow_ssh_command)
         return {
             "mode": "post_deploy_verification",
             "service": service,
@@ -1079,16 +1077,17 @@ class AIAssistant:
                 "can_edit_project_files": False,
                 "can_deploy": payload.get("deploy") is not False,
                 "can_change_runtime": False,
-                "can_run_safe_ssh_diagnostics": payload.get("allow_ssh_command") is not False,
+                "can_run_safe_ssh_diagnostics": allow_ssh_command,
                 "can_run_container_actions": False,
-                "allow_ssh_command": payload.get("allow_ssh_command") is not False,
+                "allow_ssh_command": allow_ssh_command,
                 "mcp_enabled_tools": enabled_tools,
             },
             "mcp_guidance": {
                 "server": "docker_infra",
                 "enabled_tools": enabled_tools,
                 "preferred_tools": enabled_tools,
-                "allow_ssh_command": payload.get("allow_ssh_command") is not False,
+                "allow_ssh_command": allow_ssh_command,
+                "tool_unavailable_policy": "Do not mention unavailable or unexposed MCP tools in operator-facing summary, issues, or warnings; use enabled_tools and provided context as fallback.",
             },
         }
 
@@ -1145,6 +1144,7 @@ class AIAssistant:
                 "If safe SSH diagnostics are enabled, you may use docker_infra.ssh_command for read-only inspection commands on registered servers.",
                 "When a container terminal action is needed, also return runtime_actions as an array of objects: {action, container_id, node_id, reason}. Use action stop, restart, or remove only.",
                 "If you already executed an action through MCP, set executed=true on that runtime_actions item so Docker Infra will record it without running it twice.",
+                "If a desired MCP tool is unavailable or not exposed, do not report that as a service issue; use the enabled tools and supplied runtime context instead.",
                 "Never remove Docker volumes or unrelated containers. Summarize any terminal action you executed in Korean warnings or summary.",
                 "If the safest action is operational rather than Compose editing, keep Compose stable and return Korean warnings with the manual action.",
             ]
@@ -1156,21 +1156,11 @@ class AIAssistant:
         client_runtime_issues = payload.get("client_runtime_issues") if isinstance(payload.get("client_runtime_issues"), dict) else {}
         allow_container_actions = payload.get("allow_container_terminal_actions") is not False
         allow_ssh_command = payload.get("allow_ssh_command") is not False
-        enabled_tools = [
-            "service_stack_status",
-            "container_logs",
-            "server_collect",
-            "server_port_check",
-            "dns_lookup",
-            "tcp_connect_check",
-            "http_probe",
-            "infra_context",
-            "server_list",
-        ]
-        if allow_container_actions:
-            enabled_tools.append("container_action")
-        if allow_ssh_command:
-            enabled_tools.append("ssh_command")
+        enabled_tools = self._mcp_tools(
+            "runtime_repair" if allow_container_actions else "runtime_inspection",
+            allow_container_actions=allow_container_actions,
+            allow_ssh_command=allow_ssh_command,
+        )
         form = {
             "name": service.get("name") or service.get("namespace"),
             "description": (service.get("metadata") or {}).get("description") or "",
@@ -1229,6 +1219,7 @@ class AIAssistant:
                 "enabled_tools": enabled_tools,
                 "preferred_tools": enabled_tools,
                 "allow_ssh_command": allow_ssh_command,
+                "tool_unavailable_policy": "Do not mention unavailable or unexposed MCP tools in operator-facing summary, issues, or warnings; use enabled_tools and provided context as fallback.",
             },
         }
 
@@ -1685,7 +1676,7 @@ class AIAssistant:
 
     def _service_plan_context(self, context):
         result = dict(context or {})
-        enabled_tools = ["infra_context", "docker_search", "docker_image_check", "server_list", "server_port_check", "server_collect", "ssh_command"]
+        enabled_tools = self._mcp_tools("service_draft", allow_ssh_command=True)
         result["ai_phase"] = "initial_draft"
         result["ai_permission_scope"] = {
             "scope": "service_draft",
@@ -1706,12 +1697,13 @@ class AIAssistant:
             "enabled_tools": enabled_tools,
             "preferred_tools": enabled_tools,
             "allow_ssh_command": True,
+            "tool_unavailable_policy": "Do not mention unavailable or unexposed MCP tools in operator-facing summary, issues, or warnings; use enabled_tools and provided context as fallback.",
         }
         return result
 
     def _service_review_context(self, context, plan_data, plan_draft, plan_rendered, inspection):
         result = dict(context or {})
-        enabled_tools = ["infra_context", "docker_search", "docker_image_check", "server_list", "server_port_check", "server_collect", "ssh_command"]
+        enabled_tools = self._mcp_tools("service_preflight_repair", allow_ssh_command=True)
         result["ai_phase"] = "inspection_correction"
         result["ai_permission_scope"] = {
             "scope": "service_preflight_repair",
@@ -1736,6 +1728,7 @@ class AIAssistant:
             "enabled_tools": enabled_tools,
             "preferred_tools": enabled_tools,
             "allow_ssh_command": True,
+            "tool_unavailable_policy": "Do not mention unavailable or unexposed MCP tools in operator-facing summary, issues, or warnings; use enabled_tools and provided context as fallback.",
         }
         return result
 
@@ -2305,6 +2298,7 @@ class AIAssistant:
             "Use the compose_validation object in the user context as a hard contract. Fix violations before returning JSON.",
             "Use the output_format object in the user context as the exact output contract.",
             "Use only the docker_infra MCP tools listed in mcp_guidance.enabled_tools or ai_permission_scope.mcp_enabled_tools before making claims about registered servers, Docker images, ports, and runtime state.",
+            "If a desired MCP tool is unavailable or not exposed, do not mention that limitation in user-facing text; use enabled tools and deterministic Docker Infra context as fallback.",
             "Write user-facing text in Korean: summary, warnings, thinking_summary, form.description, and notes.",
             "Keep code, YAML, JSON keys, image names, environment variable names, service keys, namespaces, and identifiers in ASCII or their official spelling.",
         ]

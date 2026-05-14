@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -38,7 +39,7 @@ class ServiceNginxCertificates:
                 "cert_path": str(cert_path),
                 "key_path": str(key_path),
                 "enabled": True,
-                "metadata": {"source": "certbot"},
+                "metadata": {"source": "certbot", "cert_name": _safe_segment(domain), "live_dir": str(live)},
             })
         except Exception:
             return {
@@ -47,6 +48,7 @@ class ServiceNginxCertificates:
                 "key_path": str(key_path),
                 "status": "error",
                 "key_exists": key_path.is_file(),
+                "metadata": {"source": "certbot", "cert_name": _safe_segment(domain), "live_dir": str(live)},
             }
 
     def _self_signed_paths(self, domain, env=None):
@@ -89,6 +91,9 @@ class ServiceNginxCertificates:
                 return item
         return None
 
+    def certbot_certificate(self, domain, env=None):
+        return self._letsencrypt_cert(str(domain or "").strip().lower())
+
     def certificate_mode(self, cert):
         source = (cert or {}).get("metadata", {}).get("source")
         if source == "certbot":
@@ -97,7 +102,77 @@ class ServiceNginxCertificates:
             return "self_signed"
         return "existing" if cert else "http"
 
+    def automatic_renewal_status(self, env=None):
+        result = local_executor.run("certbot.renewal.status", timeout_seconds=20, env=env)
+        payload = {}
+        if result.get("status") == "ok":
+            try:
+                payload = json.loads(result.get("stdout") or "{}")
+            except Exception:
+                payload = {}
+        return {
+            "status": result.get("status"),
+            "configured": bool(payload.get("configured")),
+            "method": payload.get("method") or "unknown",
+            "schedule": payload.get("schedule") or "",
+            "installed": bool(payload.get("installed")),
+            "details": payload,
+            "check": result,
+        }
+
+    def ensure_automatic_renewal(self, commands, env=None):
+        result = local_executor.run("certbot.renewal.ensure", timeout_seconds=120, env=env)
+        commands.append({"step": "certbot auto renewal", "result": result})
+        return result
+
+    def service_certificates(self, domains, env=None):
+        renewal = self.automatic_renewal_status(env=env)
+        rows = []
+        for row in domains or []:
+            domain = str(row.get("domain") or "").strip().lower()
+            if not domain:
+                continue
+            metadata = dict(row.get("metadata") or {})
+            cert = self.certbot_certificate(domain, env=env)
+            requested = row.get("ssl_mode") == "certbot"
+            applied = metadata.get("nginx_ssl_mode") == "certbot"
+            detected = (cert or {}).get("metadata", {}).get("source") == "certbot"
+            if not requested and not applied and not detected:
+                continue
+            rows.append({
+                "domain_id": str(row.get("id") or ""),
+                "domain": domain,
+                "requested_ssl_mode": row.get("ssl_mode"),
+                "applied_ssl_mode": metadata.get("nginx_ssl_mode"),
+                "certificate": cert,
+                "auto_renewal": renewal,
+                "manual_renew_enabled": bool(cert and cert.get("cert_path")),
+            })
+        return rows
+
+    def renew_certificate(self, domain, commands=None, env=None):
+        commands = commands if commands is not None else []
+        cert_name = _safe_segment(str(domain or "").strip().lower())
+        result = local_executor.run(
+            "certbot.renew",
+            params={"cert_name": cert_name, "force": True},
+            timeout_seconds=300,
+            env=env,
+        )
+        commands.append({"step": f"certbot renew {cert_name}", "result": result})
+        if result.get("status") != "ok":
+            raise RuntimeError(f"{domain} 무료 인증서를 갱신할 수 없습니다.")
+        renewal = self.ensure_automatic_renewal(commands, env=env)
+        return {
+            "domain": str(domain or "").strip().lower(),
+            "certificate": self.certbot_certificate(domain, env=env),
+            "auto_renewal": self.automatic_renewal_status(env=env),
+            "renewal_ensure": renewal,
+            "commands": commands,
+        }
+
     def issue_certificates(self, targets, commands, env=None):
+        issued_certbot = False
         for domain in targets:
             if config.self_signed_cert_test_enabled(env):
                 root, cert_path, key_path = self._self_signed_paths(domain, env=env)
@@ -130,6 +205,9 @@ class ServiceNginxCertificates:
             commands.append({"step": f"certbot {domain}", "result": result})
             if result.get("status") != "ok":
                 raise RuntimeError(f"{domain} 무료 인증서를 발급할 수 없습니다.")
+            issued_certbot = True
+        if issued_certbot:
+            self.ensure_automatic_renewal(commands, env=env)
 
 
 Model = ServiceNginxCertificates()

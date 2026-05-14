@@ -95,6 +95,7 @@ MCP_TOOL_ALLOWLIST = {
     "dns_lookup",
     "tcp_connect_check",
     "http_probe",
+    "browser_probe",
     "server_collect",
     "ssh_command",
 }
@@ -117,8 +118,17 @@ RUNTIME_INSPECTION_MCP_TOOLS = [
     "dns_lookup",
     "tcp_connect_check",
     "http_probe",
+    "browser_probe",
     "ssh_command",
 ]
+RUNTIME_REPAIR_MCP_TOOLS = [*RUNTIME_INSPECTION_MCP_TOOLS, "container_action"]
+MCP_TOOL_SCOPES = {
+    "service_draft": SERVICE_DRAFT_MCP_TOOLS,
+    "service_preflight_repair": SERVICE_DRAFT_MCP_TOOLS,
+    "post_deploy_verification": RUNTIME_INSPECTION_MCP_TOOLS,
+    "runtime_inspection": RUNTIME_INSPECTION_MCP_TOOLS,
+    "runtime_repair": RUNTIME_REPAIR_MCP_TOOLS,
+}
 
 
 class CodexRuntimeError(Exception):
@@ -224,6 +234,18 @@ class CodexRuntime:
     def __init__(self):
         self._last_build_check_at = 0
         self._last_source_mtime = 0
+
+    def mcp_tools_for_scope(self, scope, allow_container_actions=False, allow_ssh_command=True):
+        tools = list(MCP_TOOL_SCOPES.get(str(scope or ""), SERVICE_DRAFT_MCP_TOOLS))
+        result = []
+        for tool in tools:
+            if tool == "container_action" and not allow_container_actions:
+                continue
+            if tool == "ssh_command" and not allow_ssh_command:
+                continue
+            if tool in MCP_TOOL_ALLOWLIST and tool not in result:
+                result.append(tool)
+        return result or ["infra_context"]
 
     def status(self, config=None):
         config = self._normalize_codex_config(config or {})
@@ -679,7 +701,7 @@ class CodexRuntime:
                     encoding="utf-8",
                 )
             last_message_path = runtime_home_path / "last-message.txt"
-            prompt = self._prompt(system, context, provider)
+            prompt = self._prompt(system, context, provider, mcp_enabled_tools)
             result = self._run_codex(provider, runtime_home_path, last_message_path, prompt, mcp_context_path, mcp_enabled_tools)
             metadata = {
                 "engine": "codex",
@@ -915,7 +937,9 @@ class CodexRuntime:
                 hosts.add(value)
         return sorted(hosts)
 
-    def _prompt(self, system, context, provider):
+    def _prompt(self, system, context, provider, enabled_tools=None):
+        enabled_tools = enabled_tools or []
+        enabled_label = ", ".join(enabled_tools) or "infra_context"
         payload = {
             "system": system,
             "context": context,
@@ -936,7 +960,10 @@ class CodexRuntime:
             +
             "Return only one JSON object that satisfies the system and context below. "
             "Do not edit files, do not include markdown fences, and do not describe the answer outside JSON.\n"
-            "Use only the docker_infra MCP tools explicitly enabled for this request.\n\n"
+            "Use only the docker_infra MCP tools explicitly enabled for this request. "
+            f"Enabled docker_infra MCP tools: {enabled_label}.\n"
+            "If another MCP tool is unavailable or not exposed in this session, do not report that as an operator-facing error; "
+            "fall back to the enabled tools and provided Docker Infra context.\n\n"
             "<docker_infra_ai_request>\n"
             f"{json.dumps(payload, ensure_ascii=False, sort_keys=True)}\n"
             "</docker_infra_ai_request>"

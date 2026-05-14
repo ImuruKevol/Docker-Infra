@@ -1,5 +1,6 @@
 from pathlib import Path
 import threading
+import time
 
 import yaml
 from psycopg.types.json import Jsonb
@@ -142,6 +143,47 @@ class ServiceDeployMixin:
             text = f"{label}: {result.get('status')}"
         stream = "stdout" if result.get("status") == "ok" else "stderr"
         operations.append_output(operation_id, text, stream=stream, metadata={"step": label}, env=env)
+
+    def _runtime_ready_result(self, runtime):
+        stack = ((runtime or {}).get("stack") or {}).get("summary") or {}
+        containers = ((runtime or {}).get("containers") or {}).get("summary") or {}
+        health = ((runtime or {}).get("containers") or {}).get("health") or {}
+        desired = int(stack.get("desired") or 0)
+        running = int(stack.get("running") or 0)
+        task_errors = int(stack.get("task_errors") or 0)
+        if task_errors > 0:
+            return False, f"Docker 작업 오류 {task_errors}개가 감지되었습니다."
+        if desired <= 0:
+            return False, "실행 대상 Docker 작업을 아직 확인하지 못했습니다."
+        if running < desired:
+            return False, f"Docker 작업 실행 대기 중입니다. {running}/{desired}"
+        if int(containers.get("total") or 0) > 0 and int(containers.get("running") or 0) <= 0:
+            return False, "컨테이너가 아직 실행 상태가 아닙니다."
+        if int(health.get("unhealthy") or 0) > 0:
+            return False, f"상태 점검 실패 컨테이너 {health.get('unhealthy')}개가 있습니다."
+        if int(health.get("starting") or 0) > 0:
+            return False, f"컨테이너 상태 점검이 진행 중입니다. starting {health.get('starting')}개"
+        return True, "컨테이너 실행 상태를 확인했습니다."
+
+    def _wait_runtime_ready(self, service_id, operation_id, timeout_seconds=120, delay_seconds=3, env=None):
+        timeout = max(10, min(int(timeout_seconds or 120), 600))
+        delay = max(1, min(int(delay_seconds or 3), 15))
+        deadline = time.monotonic() + timeout
+        attempts = 0
+        last = {"message": "컨테이너 실행 상태를 아직 확인하지 못했습니다."}
+        while time.monotonic() <= deadline:
+            attempts += 1
+            try:
+                refreshed = self.refresh_deploy_status(service_id, operation_id=operation_id, env=env)
+                runtime = refreshed.get("runtime_status") or {}
+                ready, message = self._runtime_ready_result(runtime)
+                last = {"message": message, "runtime_status": runtime}
+                if ready:
+                    return {"status": "ok", "message": message, "attempts": attempts, "runtime_status": runtime}
+            except Exception as exc:
+                last = {"message": str(exc)}
+            time.sleep(delay)
+        return {"status": "error", "message": last.get("message") or "컨테이너 실행 대기 시간이 초과되었습니다.", "attempts": attempts, **last}
 
     def _deploy_failure(self, operation_id, message, result=None, env=None):
         payload = {"check": result or {}}
@@ -338,6 +380,22 @@ class ServiceDeployMixin:
         self._append_result(operation_id, deploy, "stack deploy", env=env)
         if deploy.get("status") != "ok":
             return self._deploy_failure(operation_id, "서비스 배포에 실패했습니다.", deploy, env=env)
+
+        runtime_wait = self._wait_runtime_ready(
+            service_id,
+            operation_id,
+            timeout_seconds=payload.get("runtime_ready_timeout_seconds") or 120,
+            env=env,
+        )
+        operations.append_output(
+            operation_id,
+            runtime_wait.get("message") or "runtime readiness checked",
+            stream="system" if runtime_wait.get("status") == "ok" else "stderr",
+            metadata={"step": "runtime ready", "runtime_wait": runtime_wait},
+            env=env,
+        )
+        if runtime_wait.get("status") != "ok":
+            return self._deploy_failure(operation_id, "컨테이너가 실행 상태가 아니어서 nginx와 SSL 적용을 중단했습니다.", runtime_wait, env=env)
 
         proxy_targets = deploy_targets.sync_domain_proxy_targets(service_id, stack_name, env=env)
         if proxy_targets.get("updated") or proxy_targets.get("skipped") is not True:

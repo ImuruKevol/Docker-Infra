@@ -177,10 +177,15 @@ class ServiceRuntimeMixin:
                     include_output=False,
                     allow_legacy=False,
                 )
+        try:
+            free_certificates = self.service_certificates(domains, env=env)
+        except Exception:
+            free_certificates = []
         root = self._service_root(service)
         return {
             "service": service,
             "domains": domains,
+            "free_certificates": free_certificates,
             "operations": operations,
             "file_root": str(root),
             "runtime_status": (service.get("metadata") or {}).get("runtime_status") or {},

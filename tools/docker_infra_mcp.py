@@ -414,6 +414,86 @@ def tool_http_probe(arguments):
         }
 
 
+def html_text_summary(body):
+    title = ""
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", body or "", flags=re.I | re.S)
+    if title_match:
+        title = re.sub(r"\s+", " ", title_match.group(1)).strip()
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", body or "", flags=re.I | re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return {"title": trim(title, 300), "text_snippet": trim(text, 3000)}
+
+
+def tool_browser_probe(arguments):
+    arguments = arguments or {}
+    url = str(arguments.get("url") or "").strip()
+    if not url:
+        raise ValueError("url is required")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("url scheme must be http or https")
+    host = assert_allowed_probe_host(parsed.hostname)
+    timeout = max(1, min(int(arguments.get("timeout_seconds") or 15), 45))
+    contains = str(arguments.get("contains") or "")
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "User-Agent": "DockerInfra-AI-BrowserProbe/1.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+    )
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(200000)
+            content_type = response.headers.get("content-type") or ""
+            charset = "utf-8"
+            match = re.search(r"charset=([^;\s]+)", content_type, flags=re.I)
+            if match:
+                charset = match.group(1).strip("\"'")
+            body = raw.decode(charset, "replace")
+            summary = html_text_summary(body)
+            return {
+                "url": url,
+                "host": host,
+                "status": "ok",
+                "status_code": response.getcode(),
+                "final_url": response.geturl(),
+                "content_type": content_type,
+                "title": summary["title"],
+                "text_snippet": summary["text_snippet"],
+                "contains": None if not contains else contains in body,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "javascript": "not_executed",
+            }
+    except urllib.error.HTTPError as exc:
+        body = exc.read(200000).decode("utf-8", "replace")
+        summary = html_text_summary(body)
+        return {
+            "url": url,
+            "host": host,
+            "status": "http_error",
+            "status_code": exc.code,
+            "final_url": exc.geturl(),
+            "title": summary["title"],
+            "text_snippet": summary["text_snippet"],
+            "contains": None if not contains else contains in body,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "javascript": "not_executed",
+        }
+    except Exception as exc:
+        return {
+            "url": url,
+            "host": host,
+            "status": "error",
+            "message": str(exc),
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "javascript": "not_executed",
+        }
+
+
 def collect_script(arguments):
     include = arguments.get("include") or ["system", "docker", "logs"]
     if not isinstance(include, list):
@@ -592,6 +672,19 @@ TOOLS = {
             "required": ["url"],
         },
         "handler": tool_http_probe,
+    },
+    "browser_probe": {
+        "description": "Load an allowed service URL with browser-like request headers and return page title, status, final URL, and visible text snippet for user-facing service checks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "contains": {"type": "string"},
+                "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 45},
+            },
+            "required": ["url"],
+        },
+        "handler": tool_browser_probe,
     },
     "server_collect": {
         "description": "Collect system, Docker status, and recent error logs from a registered server.",
