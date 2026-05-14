@@ -102,23 +102,61 @@ class ServiceRuntimeMixin:
         )
         return [_row(row) for row in cursor.fetchall()]
 
-    def _operations(self, cursor, service_id, namespace, limit=20, include_output=True):
-        limit = max(1, min(int(limit or 20), 100))
+    def _operation_select_columns(self, include_output=True):
         output_column = ", output" if include_output else ""
+        return f"id, type, status, message, created_at, started_at, finished_at, metadata, requested_payload, result_payload{output_column}"
+
+    def _operation_rows(self, cursor, where_sql, params, limit, include_output=True):
         cursor.execute(
             f"""
-            SELECT id, type, status, message, created_at, started_at, finished_at, metadata, requested_payload, result_payload{output_column}
+            SELECT {self._operation_select_columns(include_output=include_output)}
             FROM operation_logs
-            WHERE requested_payload->>'service_id' = %s
-               OR metadata->>'service_id' = %s
-               OR requested_payload->>'namespace' = %s
-               OR metadata->>'namespace' = %s
+            WHERE {where_sql}
             ORDER BY created_at DESC
             LIMIT %s
             """,
-            (service_id, service_id, namespace, namespace, limit),
+            [*params, limit],
         )
         return [_row(row) for row in cursor.fetchall()]
+
+    def _operations(self, cursor, service_id, namespace, limit=20, include_output=True, allow_legacy=True):
+        limit = max(1, min(int(limit or 20), 100))
+        rows = self._operation_rows(
+            cursor,
+            "target_type = 'service' AND target_id = %s",
+            [str(service_id)],
+            limit,
+            include_output=include_output,
+        )
+        if len(rows) >= limit or not allow_legacy:
+            return rows
+
+        # Older operation rows did not always set target_type/target_id. Keep a small
+        # compatibility fallback, but avoid it on the common indexed path above.
+        seen_ids = {str(row.get("id")) for row in rows if row.get("id")}
+        remaining = limit - len(rows)
+        where = [
+            "(",
+            "requested_payload->>'service_id' = %s",
+            "OR metadata->>'service_id' = %s",
+            "OR requested_payload->>'namespace' = %s",
+            "OR metadata->>'namespace' = %s",
+            ")",
+        ]
+        params = [str(service_id), str(service_id), str(namespace or ""), str(namespace or "")]
+        if seen_ids:
+            where.append("AND id::text <> ALL(%s)")
+            params.append(list(seen_ids))
+        rows.extend(
+            self._operation_rows(
+                cursor,
+                " ".join(where),
+                params,
+                remaining,
+                include_output=include_output,
+            )
+        )
+        return sorted(rows, key=lambda item: item.get("created_at") or "", reverse=True)[:limit]
 
     def _compose_content(self, service):
         compose_path = Path(service["compose_path"]).expanduser()
@@ -131,13 +169,19 @@ class ServiceRuntimeMixin:
             with connection.cursor() as cursor:
                 service = self._service_row(cursor, service_id)
                 domains = self._domains(cursor, service_id)
-                operations = self._operations(cursor, service_id, service.get("namespace"), limit=5, include_output=False)
+                operations = self._operations(
+                    cursor,
+                    service_id,
+                    service.get("namespace"),
+                    limit=5,
+                    include_output=False,
+                    allow_legacy=False,
+                )
         root = self._service_root(service)
         return {
             "service": service,
             "domains": domains,
             "operations": operations,
-            "compose_content": self._compose_content(service),
             "file_root": str(root),
             "runtime_status": (service.get("metadata") or {}).get("runtime_status") or {},
         }

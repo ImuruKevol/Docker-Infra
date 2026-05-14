@@ -186,3 +186,4 @@
 | 2026-05-13 | 184 | 서비스 상세 구성 탭 실행 상태와 원문/파일/버전 탭 재구성 | [상세](devlog/2026-05-13/184-service-detail-runtime-tabs.md) |
 | 2026-05-14 | 185 | 서비스 상세 구성 탭 관리자 친화 UI 정리 | [상세](devlog/2026-05-14/185-service-detail-admin-friendly-ui.md) |
 | 2026-05-14 | 186 | 서비스 상세 탭 카드와 헤더 디자인 통일 | [상세](devlog/2026-05-14/186-service-detail-tab-design-unification.md) |
+| 2026-05-14 | 187 | 서비스 관리 API 상세/목록 경량화와 지연 로딩 최적화 | [상세](devlog/2026-05-14/187-service-management-api-optimization.md) |

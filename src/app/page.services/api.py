@@ -96,8 +96,15 @@ def _service_detail_payload(service_id):
 
 def _service_overview_payload(service_id):
     services_model = wiz.model("struct").services
-    payload = _with_detail_components(services_model.detail_overview(service_id), expose_compose=False, include_flow=False)
+    payload = services_model.detail_overview(service_id)
     payload["detail_sections"] = {"overview": True, "logs": False, "source": False, "files": True, "versions": False}
+    return payload
+
+
+def _service_advanced_payload(service_id):
+    services_model = wiz.model("struct").services
+    payload = _with_detail_components(services_model.detail_advanced(service_id), include_flow=False)
+    payload["detail_sections"] = {"source": True, "versions": True}
     return payload
 
 
@@ -241,7 +248,7 @@ def ai_runtime_repair():
         service_id = (result.get("update_result") or {}).get("service", {}).get("id") or wiz.request.query().get("service_id")
         payload = {"result": result}
         if service_id:
-            payload.update(_service_detail_payload(service_id))
+            payload.update(_service_overview_payload(service_id))
     except Exception as exc:
         code = getattr(exc, "status_code", 400)
         payload = {
@@ -299,7 +306,7 @@ def deploy_service():
 
     try:
         result = services_model.deploy(wiz.request.query())
-        payload = {"result": result, **services_model.detail(result["service"]["id"])}
+        payload = {"result": result, **_service_overview_payload(result["service"]["id"])}
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -357,7 +364,7 @@ def refresh_deploy_status():
     payload = {}
     try:
         result = services_model.refresh_deploy_status(service_id)
-        payload = {"result": result, **_service_detail_payload(service_id)}
+        payload = {"result": result, **_service_overview_payload(service_id)}
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -447,8 +454,7 @@ def detail_service_advanced():
     code = 200
     payload = {}
     try:
-        payload = _with_detail_components(services_model.detail_advanced(service_id), include_flow=False)
-        payload["detail_sections"] = {"source": True, "versions": True}
+        payload = _service_advanced_payload(service_id)
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -466,7 +472,7 @@ def save_nginx_config():
     payload = {}
     try:
         result = services_model.update_nginx_config(body)
-        payload = {"result": result, **_service_detail_payload(body.get("service_id"))}
+        payload = {"result": result, **_service_advanced_payload(body.get("service_id"))}
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -483,7 +489,7 @@ def save_compose_content():
     try:
         body = wiz.request.query()
         result = services_model.update_compose_content(body)
-        payload = {"result": result, **_service_detail_payload(result["service"]["id"])}
+        payload = {"result": result, **_service_advanced_payload(result["service"]["id"])}
     except services_model.ComposeValidationError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}
@@ -539,7 +545,7 @@ def service_container_action():
             raise services_model.ServiceError(409, "컨테이너가 실행 중인 서버를 확인할 수 없습니다.", "SERVICE_CONTAINER_NODE_MISSING")
         result = nodes_model.container_action(target_node_id, {"container_id": target.get("id") or container_id, "action": action})
         services_model.refresh_deploy_status(service_id)
-        payload = {"result": result.get("result") or result, **_service_detail_payload(service_id)}
+        payload = {"result": result.get("result") or result, **_service_overview_payload(service_id)}
     except nodes_model.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -614,7 +620,7 @@ def service_container_bulk_action():
                 "succeeded_count": len(results),
                 "items": results,
             },
-            **_service_detail_payload(service_id),
+            **_service_overview_payload(service_id),
         }
     except nodes_model.NodeError as exc:
         code = exc.status_code
@@ -638,7 +644,7 @@ def update_service():
         if not body.get("content"):
             body["content"] = wizard.render(body)
         result = services_model.update_wizard(body)
-        payload = {"result": result, **_service_detail_payload(result["service"]["id"])}
+        payload = {"result": result, **_service_overview_payload(result["service"]["id"])}
     except services_model.ComposeValidationError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}
@@ -671,16 +677,18 @@ def rollback_plan():
 
 def rollback_service():
     services_model = wiz.model("struct").services
-    wizard = wiz.model("struct").services_wizard
     code = 200
     payload = {}
     try:
         result = services_model.rollback(wiz.request.query())
-        payload = {"result": result, **services_model.detail(result["service"]["id"])}
-        payload["components"] = _merge_wizard_components(
-            wizard.components_from_content(payload.get("compose_content")),
-            payload.get("service"),
-        )
+        service_id = result["service"]["id"]
+        overview = _service_overview_payload(service_id)
+        advanced = _service_advanced_payload(service_id)
+        payload = {"result": result, **overview, **advanced}
+        payload["detail_sections"] = {
+            **(overview.get("detail_sections") or {}),
+            **(advanced.get("detail_sections") or {}),
+        }
     except services_model.ComposeValidationError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}

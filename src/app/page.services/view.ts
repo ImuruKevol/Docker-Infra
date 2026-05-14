@@ -85,6 +85,7 @@ export class Component implements OnInit, OnDestroy {
     private operationPollTimer: any = null;
     private detailRequestSeq = 0;
     private editOptionsLoaded = false;
+    private aiModelOptionsLoaded = false;
     private themeObserver: MutationObserver | null = null;
 
     constructor(public service: Service) { }
@@ -96,7 +97,6 @@ export class Component implements OnInit, OnDestroy {
         this.refreshCompose(true);
         const params = new URLSearchParams(window.location.search || '');
         await this.load(params.get('service_id') || params.get('selected_service_id') || '');
-        await this.loadAiModelOptions();
     }
 
     public ngOnDestroy() {
@@ -160,6 +160,17 @@ export class Component implements OnInit, OnDestroy {
         return Object.prototype.hasOwnProperty.call(value || {}, key);
     }
 
+    private mergeDetailSections(currentSections: any, incomingSections: any, sameService: boolean) {
+        const merged = sameService ? { ...(currentSections || {}) } : {};
+        for (const key of Object.keys(incomingSections || {})) {
+            const value = incomingSections[key];
+            if (value || !sameService || !this.hasOwn(merged, key)) {
+                merged[key] = value;
+            }
+        }
+        return merged;
+    }
+
     private applyDetail(data: any) {
         if (!data) {
             this.detail.set(null);
@@ -182,13 +193,10 @@ export class Component implements OnInit, OnDestroy {
             ? {
                 ...current,
                 ...data,
-                service: data.service || current.service,
-                detail_sections: {
-                    ...(current.detail_sections || {}),
-                    ...(data.detail_sections || {}),
-                },
+                service: data.service ? { ...(current.service || {}), ...data.service } : current.service,
+                detail_sections: this.mergeDetailSections(current.detail_sections, data.detail_sections, true),
             }
-            : data;
+            : { ...data, detail_sections: this.mergeDetailSections({}, data.detail_sections, false) };
         this.detail.set(merged || null);
         this.selected.set(merged?.service || null);
         if (merged?.service) this.detailLoading.set(false);
@@ -329,7 +337,15 @@ export class Component implements OnInit, OnDestroy {
             this.aiDefaultModelRef.set(data.default_model_ref || 'auto');
             this.editAiModelRef.set(data.default_model_ref || 'auto');
             this.runtimeAiModelRef.set(data.default_model_ref || 'auto');
+            this.aiModelOptionsLoaded = true;
+            return true;
         }
+        return false;
+    }
+
+    private async ensureAiModelOptions() {
+        if (this.aiModelOptionsLoaded) return true;
+        return await this.loadAiModelOptions();
     }
 
     public async selectService(service: any, silent: boolean = false) {
@@ -1035,8 +1051,12 @@ export class Component implements OnInit, OnDestroy {
         ];
     }
 
-    public setEditSection(section: EditSection) {
+    public async setEditSection(section: EditSection) {
         this.editSection.set(section);
+        if (section === 'ai') {
+            await this.ensureAiModelOptions();
+            await this.service.render();
+        }
     }
 
     public editSectionTitle() {
@@ -1427,6 +1447,7 @@ export class Component implements OnInit, OnDestroy {
             await this.alert('서비스 구성을 불러오지 못했습니다.');
             return;
         }
+        await this.ensureAiModelOptions();
         this.editAiBusy.set(true);
         this.resetEditAiStream();
         try {
@@ -2611,12 +2632,14 @@ export class Component implements OnInit, OnDestroy {
         return this.runtimeContainers().some((container: any) => this.containerSignal(container) !== 'running' && this.containerSignal(container) !== 'healthy');
     }
 
-    public runRuntimeAiRepair() {
+    public async runRuntimeAiRepair() {
         const serviceId = this.selected()?.id;
         if (!serviceId || this.runtimeAiBusy()) return;
+        await this.ensureAiModelOptions();
         this.runtimeAiIntent.set('');
         this.runtimeAiAllowContainerActions.set(true);
         this.runtimeAiModalOpen.set(true);
+        await this.service.render();
     }
 
     public closeRuntimeAiModal() {
@@ -2643,6 +2666,7 @@ export class Component implements OnInit, OnDestroy {
     public async submitRuntimeAiRepair() {
         const serviceId = this.selected()?.id;
         if (!serviceId || this.runtimeAiBusy()) return;
+        await this.ensureAiModelOptions();
         this.runtimeAiBusy.set(true);
         this.resetRuntimeAiStream();
         try {

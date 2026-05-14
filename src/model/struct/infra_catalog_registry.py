@@ -775,47 +775,29 @@ class InfraCatalog:
                         d.primary_domain,
                         d.primary_port,
                         COALESCE(v.version_count, 0) AS compose_version_count
-                    FROM services s
-                    LEFT JOIN (
+                    FROM (
+                        SELECT *
+                        FROM services
+                        ORDER BY created_at DESC
+                        LIMIT 80
+                    ) s
+                    LEFT JOIN LATERAL (
                         SELECT
-                            service_id,
                             count(*) AS domain_count,
                             min(domain) AS primary_domain,
                             min(port) AS primary_port
                         FROM service_domains
-                        GROUP BY service_id
-                    ) d ON d.service_id = s.id
-                    LEFT JOIN (
-                        SELECT service_id, count(*) AS version_count
+                        WHERE service_id = s.id
+                    ) d ON true
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS version_count
                         FROM compose_versions
-                        GROUP BY service_id
-                    ) v ON v.service_id = s.id
+                        WHERE service_id = s.id
+                    ) v ON true
                     ORDER BY s.created_at DESC
-                    LIMIT 80
                     """,
                 )
-                domains = _rows(
-                    cursor,
-                    """
-                    SELECT sd.*, s.name AS service_name, s.namespace AS service_namespace
-                    FROM service_domains sd
-                    LEFT JOIN services s ON s.id = sd.service_id
-                    ORDER BY sd.created_at DESC
-                    LIMIT 80
-                    """,
-                )
-                operations = _rows(
-                    cursor,
-                    """
-                    SELECT id, type, status, message, created_at, finished_at
-                    FROM operation_logs
-                    WHERE type ILIKE %s OR type ILIKE %s OR type ILIKE %s
-                    ORDER BY created_at DESC
-                    LIMIT 20
-                    """,
-                    ["%service%", "%deploy%", "%compose%"],
-                )
-        return {"services": services, "domains": domains, "operations": operations, "counts": self.counts()}
+        return {"services": services}
 
     def images(self):
         with connect() as connection:
