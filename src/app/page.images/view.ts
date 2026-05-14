@@ -359,6 +359,19 @@ export class Component implements OnInit {
         return this.harborTags().length || 0;
     }
 
+    public selectedRepositoryLabel() {
+        const selected = this.selectedRepository();
+        const repository = this.harborRepositories().find((item: any) => item?.name === selected);
+        return repository?.display_name || selected;
+    }
+
+    public shortDigest(value: any) {
+        const text = String(value || '').replace(/^sha256:/, '').trim();
+        if (!text) return '-';
+        if (text.length <= 18) return text;
+        return `${text.slice(0, 12)}...${text.slice(-6)}`;
+    }
+
     public selectedNodeSummary() {
         const nodeId = this.selectedNodeId();
         const cached = this.localSummaryByNode()?.[nodeId] || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 };
@@ -379,6 +392,15 @@ export class Component implements OnInit {
 
     public localTotalImageSize() {
         return this.selectedNodeSummary().total_size_bytes || 0;
+    }
+
+    public localTotalImageCount() {
+        return Object.values(this.localSummaryByNode() || {})
+            .reduce((total: number, item: any) => total + Number(item?.image_count || 0), 0);
+    }
+
+    public nodeImageCount(node: any) {
+        return Number(this.localSummaryByNode()?.[node?.id]?.image_count || 0);
     }
 
     public selectedNodeStorage() {

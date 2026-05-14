@@ -69,14 +69,7 @@ class ServiceImageSnapshotRunner:
         raise ServiceError(404, "스냅샷을 만들 실행 중인 서비스 컨테이너를 찾을 수 없습니다.", "SERVICE_SNAPSHOT_CONTAINER_NOT_FOUND")
 
     def _registry_for_node(self, node, config, env=None):
-        if node.get("is_local_master"):
-            return config["registry"]
-        masters = [item for item in nodes.list(env=env) if item.get("is_local_master")]
-        host = (masters[0].get("host") if masters else "").strip()
-        if host and host not in {"127.0.0.1", "localhost"}:
-            parsed = urlparse(config["harbor_url"])
-            return f"{host}:{parsed.port}" if parsed.port else host
-        return config["registry"]
+        return nodes.backup_registry_reference_for_node(node, backup_config=config, env=env)
 
     def backup_ref(self, service, backup, node, env=None):
         config = self._config(env=env)

@@ -68,11 +68,50 @@ def backup_status():
 
 def start_backup_system():
     backup_system = wiz.model("struct/backup_system")
+    body = wiz.request.query()
     code = 200
     payload = {}
     try:
-        payload = backup_system.enable()
+        if body.get("background"):
+            payload = backup_system.enable_async()
+        else:
+            payload = backup_system.enable()
     except backup_system.BackupSystemError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def backup_operation_status():
+    operations = wiz.model("struct/operations")
+    body = wiz.request.query()
+    operation_id = body.get("operation_id")
+    if not operation_id:
+        wiz.response.status(400, message="operation_id는 필수입니다.", error_code="OPERATION_ID_REQUIRED")
+        return
+    code = 200
+    payload = {}
+    try:
+        payload = {"operation": operations.detail(operation_id)}
+    except operations.OperationError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def apply_backup_registry_nodes():
+    nodes = wiz.model("struct/nodes")
+    code = 200
+    payload = {}
+    try:
+        payload = nodes.ensure_backup_registry_all()
+    except nodes.NodeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except RuntimeError as exc:

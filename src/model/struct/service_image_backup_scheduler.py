@@ -1,3 +1,4 @@
+import calendar
 import datetime
 
 
@@ -8,11 +9,6 @@ operations = wiz.model("struct/operations")
 shared = wiz.model("struct/services_shared")
 ServiceError = shared.ServiceError
 _row = shared.row
-
-
-def _minutes(value):
-    hour, minute = str(value or "00:00").split(":", 1)
-    return int(hour) * 60 + int(minute)
 
 
 def _parse_time(value):
@@ -27,15 +23,30 @@ def _parse_time(value):
     return parsed.astimezone()
 
 
-def _inside_window(policy, now):
-    start = _minutes(policy.get("window_start"))
-    end = _minutes(policy.get("window_end"))
-    current = now.hour * 60 + now.minute
-    if start == end:
-        return True
-    if start < end:
-        return start <= current <= end
-    return current >= start or current <= end
+def _scheduled_at(policy, now):
+    try:
+        hour, minute = str(policy.get("schedule_time") or "02:00").split(":", 1)
+        hour = int(hour)
+        minute = int(minute)
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError("invalid schedule time")
+    except (TypeError, ValueError):
+        hour, minute = 2, 0
+    schedule_type = str(policy.get("schedule_type") or "weekly")
+    if schedule_type == "monthly":
+        try:
+            requested_day = int(policy.get("schedule_month_day") or 1)
+        except (TypeError, ValueError):
+            requested_day = 1
+        day = min(max(1, requested_day), calendar.monthrange(now.year, now.month)[1])
+        return now.replace(day=day, hour=hour, minute=minute, second=0, microsecond=0)
+    try:
+        weekday = int(policy.get("schedule_weekday") or 0)
+    except (TypeError, ValueError):
+        weekday = 0
+    days_since = (now.weekday() - weekday) % 7
+    scheduled_date = now.date() - datetime.timedelta(days=days_since)
+    return datetime.datetime.combine(scheduled_date, datetime.time(hour, minute), tzinfo=now.tzinfo)
 
 
 class ServiceImageBackupScheduler:
@@ -47,12 +58,14 @@ class ServiceImageBackupScheduler:
         if not policy.get("enabled"):
             return "자동 백업이 꺼져 있습니다."
         now = datetime.datetime.now().astimezone()
-        if not _inside_window(policy, now):
-            return "현재 시간이 자동 백업 허용 시간대가 아닙니다."
+        scheduled_at = _scheduled_at(policy, now)
+        if now.date() != scheduled_at.date():
+            return "오늘은 자동 백업 예약 실행일이 아닙니다."
+        if now < scheduled_at:
+            return "자동 백업 예약 시간이 아직 지나지 않았습니다."
         last_run_at = _parse_time(policy.get("last_run_at"))
-        interval = datetime.timedelta(days=int(policy.get("interval_days") or 1))
-        if last_run_at and now - last_run_at < interval:
-            return "다음 자동 백업 주기 전입니다."
+        if last_run_at and last_run_at >= scheduled_at:
+            return "이번 예약 백업은 이미 실행되었습니다."
         return None
 
     def _candidates(self, limit, env=None):

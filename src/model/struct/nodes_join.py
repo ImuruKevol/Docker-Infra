@@ -124,11 +124,29 @@ class NodeJoinMixin:
             return {"operation": self._fail_join(operation_id, step, "Slave가 active swarm node가 아닙니다.", "SWARM_NODE_NOT_ACTIVE", verify_result, env=env)}
         self._update_node_after_check(node_id, _node_status_from_swarm(swarm), docker_info=docker_info, docker_result=verify_result, env=env)
         self._step(operation_id, step, "succeeded", {"swarm_node_id": swarm.get("NodeID")}, env=env)
+
+        step = "Backup registry setup"
+        self._step(operation_id, step, "running", env=env)
+        try:
+            registry_result = self.configure_backup_registry_for_node(node_id, operation_id=operation_id, env=env)
+        except NodeError as exc:
+            return {"operation": self._fail_join(operation_id, step, exc.message, exc.error_code, exc.extra.get("check"), env=env)}
+        self._step(
+            operation_id,
+            step,
+            "skipped" if registry_result.get("status") == "skipped" else "succeeded",
+            {"registries": registry_result.get("registries") or []},
+            env=env,
+        )
         result_payload = {
             "node_id": node_id,
             "swarm_node_id": swarm.get("NodeID"),
             "role": role,
             "state": swarm.get("LocalNodeState"),
+            "backup_registry": {
+                "status": registry_result.get("status"),
+                "registries": registry_result.get("registries") or [],
+            },
         }
         return {
             "operation": self.operations.transition(

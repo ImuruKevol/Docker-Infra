@@ -1,6 +1,7 @@
 import datetime
 import shlex
 import subprocess
+import threading
 import time
 
 
@@ -140,6 +141,77 @@ class LocalExecutor:
                 duration_ms=duration_ms,
                 timed_out=True,
             )
+
+        return result
+
+    def run_stream(self, command_id, timeout_seconds=None, params=None, on_output=None, env=None):
+        spec = self._command_spec(command_id)
+        self._assert_allowed(command_id, spec, env=env)
+        argv = self._argv(command_id, spec, params or {})
+        timeout = _normalize_timeout(timeout_seconds, default=spec.get("default_timeout_seconds", DEFAULT_TIMEOUT_SECONDS))
+
+        stdout_chunks = []
+        stderr_chunks = []
+        started = time.monotonic()
+
+        def read_pipe(pipe, stream, chunks):
+            try:
+                for line in iter(pipe.readline, ""):
+                    chunks.append(line)
+                    if on_output:
+                        try:
+                            on_output(stream, line)
+                        except Exception:
+                            pass
+            finally:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+        try:
+            process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+            stdout_thread = threading.Thread(target=read_pipe, args=(process.stdout, "stdout", stdout_chunks), daemon=True)
+            stderr_thread = threading.Thread(target=read_pipe, args=(process.stderr, "stderr", stderr_chunks), daemon=True)
+            stdout_thread.start()
+            stderr_thread.start()
+            timed_out = False
+            try:
+                exit_code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                process.kill()
+                exit_code = process.wait()
+                timeout_message = f"command timed out after {timeout}s"
+                stderr_chunks.append(timeout_message)
+                if on_output:
+                    try:
+                        on_output("stderr", timeout_message)
+                    except Exception:
+                        pass
+            stdout_thread.join(timeout=2)
+            stderr_thread.join(timeout=2)
+            duration_ms = int((time.monotonic() - started) * 1000)
+            status = "timeout" if timed_out else ("ok" if exit_code == 0 else "error")
+            result = _public_result(
+                command_id,
+                spec,
+                argv,
+                status,
+                exit_code=exit_code,
+                stdout="".join(stdout_chunks),
+                stderr="".join(stderr_chunks),
+                duration_ms=duration_ms,
+                timed_out=timed_out,
+            )
+        except FileNotFoundError as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            result = _public_result(command_id, spec, argv, "missing", stdout="", stderr=str(exc), duration_ms=duration_ms)
+            if on_output:
+                try:
+                    on_output("stderr", str(exc))
+                except Exception:
+                    pass
 
         return result
 

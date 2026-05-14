@@ -16,6 +16,7 @@ export class Component implements OnInit, OnDestroy {
     public runningBackupPolicy = signal<boolean>(false);
     public cleanupBusy = signal<boolean>(false);
     public backupBusy = signal<boolean>(false);
+    public backupNodeRegistryBusy = signal<boolean>(false);
     public refreshingAiProvider = signal<string>('');
     public refreshingAiResources = signal<boolean>(false);
     public refreshingCodexStatus = signal<boolean>(false);
@@ -33,6 +34,12 @@ export class Component implements OnInit, OnDestroy {
     public backupSystem: any = {};
     public backupPolicy: any = this.defaultBackupPolicy();
     public backupPolicyResult: any = null;
+    public backupInstallOperation: any = null;
+    public backupInstallLog: string = '';
+    public backupInstallTimer: any = null;
+    public backupOperationPolling: boolean = false;
+    public backupHealth: any = null;
+    public backupNodeRegistryResult: any = null;
     public cleanupPlan: any = null;
     public uploading: any = { favicon: false, logo: false };
     public assetVersion: number = Date.now();
@@ -53,6 +60,7 @@ export class Component implements OnInit, OnDestroy {
 
     public ngOnDestroy() {
         for (const kind of ASSET_KINDS) this.releasePendingAsset(kind);
+        this.stopBackupInstallPoll();
     }
 
     public async alert(message: string, status: string = 'error') {
@@ -307,15 +315,41 @@ export class Component implements OnInit, OnDestroy {
     public async refreshBackupSystem() {
         if (this.backupBusy()) return;
         this.backupBusy.set(true);
+        await this.service.render();
         const { code, data } = await wiz.call('backup_status', {});
         this.backupBusy.set(false);
         if (code === 200) {
             this.backupSystem = data.backup_system || this.backupSystem;
+            this.backupHealth = {
+                status: this.backupSystem.status,
+                checked_at: new Date().toISOString(),
+                message: this.backupSystem.last_error || ''
+            };
             this.syncBackupPolicy();
             await this.service.render();
             return;
         }
         await this.alert(data?.message || '백업 시스템 상태를 갱신할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async installBackupSystem() {
+        if (this.backupInstalling()) return;
+        this.backupBusy.set(true);
+        this.backupInstallOperation = null;
+        this.backupInstallLog = '설치 요청을 시작합니다.\n';
+        await this.service.render();
+        const { code, data } = await wiz.call('start_backup_system', { background: true });
+        this.backupBusy.set(false);
+        if (code === 200) {
+            this.backupSystem = data.backup_system || this.backupSystem;
+            this.backupInstallOperation = data.operation || null;
+            this.backupInstallLog = this.operationOutputText(this.backupInstallOperation) || this.backupInstallLog;
+            this.pollBackupOperation(this.backupInstallOperation?.id);
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || '백업 시스템 설치를 시작할 수 없습니다.');
         await this.service.render();
     }
 
@@ -337,6 +371,63 @@ export class Component implements OnInit, OnDestroy {
             return;
         }
         await this.alert(data?.message || `백업 시스템을 ${labels[action]}할 수 없습니다.`);
+        await this.service.render();
+    }
+
+    public async applyBackupRegistryNodes() {
+        if (this.backupNodeRegistryBusy()) return;
+        const ok = await this.confirm('등록된 서버의 Docker daemon 설정을 갱신합니다. 설정 변경이 필요한 서버는 Docker가 재시작됩니다.', '노드 설정 적용', 'warning');
+        if (!ok) return;
+        this.backupNodeRegistryBusy.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call('apply_backup_registry_nodes', {});
+        this.backupNodeRegistryBusy.set(false);
+        if (code === 200) {
+            this.backupNodeRegistryResult = data;
+            const summary = data.operation?.result_payload?.summary || {};
+            const message = `노드 백업 설정 결과: 성공 ${summary.ok || 0}개, 건너뜀 ${summary.skipped || 0}개, 실패 ${summary.failed || 0}개`;
+            await this.alert(message, summary.failed ? 'warning' : 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || '노드 백업 설정을 적용할 수 없습니다.');
+        await this.service.render();
+    }
+
+    private pollBackupOperation(operationId: string) {
+        if (!operationId) return;
+        this.stopBackupInstallPoll();
+        this.fetchBackupOperation(operationId);
+        this.backupInstallTimer = window.setInterval(() => this.fetchBackupOperation(operationId), 1500);
+    }
+
+    private stopBackupInstallPoll() {
+        if (!this.backupInstallTimer) return;
+        window.clearInterval(this.backupInstallTimer);
+        this.backupInstallTimer = null;
+    }
+
+    private async fetchBackupOperation(operationId: string) {
+        if (!operationId || this.backupOperationPolling) return;
+        this.backupOperationPolling = true;
+        const { code, data } = await wiz.call('backup_operation_status', { operation_id: operationId });
+        this.backupOperationPolling = false;
+        if (code !== 200) {
+            this.backupInstallLog += `설치 상태를 확인할 수 없습니다: ${data?.message || 'unknown error'}\n`;
+            this.stopBackupInstallPoll();
+            await this.service.render();
+            return;
+        }
+        this.backupInstallOperation = data.operation || this.backupInstallOperation;
+        this.backupInstallLog = this.operationOutputText(this.backupInstallOperation) || this.backupInstallLog;
+        if (this.backupInstallDone()) {
+            this.stopBackupInstallPoll();
+            const status = await wiz.call('backup_status', {});
+            if (status.code === 200) {
+                this.backupSystem = status.data.backup_system || this.backupSystem;
+                this.syncBackupPolicy();
+            }
+        }
         await this.service.render();
     }
 
@@ -378,7 +469,17 @@ export class Component implements OnInit, OnDestroy {
     public async saveBackupPolicy() {
         if (this.savingBackupPolicy()) return;
         this.savingBackupPolicy.set(true);
-        const { code, data } = await wiz.call('save_backup_policy', this.backupPolicy);
+        const payload = {
+            ...this.backupPolicy,
+            schedule_type: this.backupPolicy.schedule_type || 'weekly',
+            schedule_weekday: Number(this.backupPolicy.schedule_weekday ?? 0),
+            schedule_month_day: Number(this.backupPolicy.schedule_month_day ?? 1),
+            schedule_time: this.backupPolicy.schedule_time || '02:00',
+            window_start: '00:00',
+            window_end: '00:00',
+            snapshot_pause: true,
+        };
+        const { code, data } = await wiz.call('save_backup_policy', payload);
         this.savingBackupPolicy.set(false);
         if (code === 200) {
             this.backupSystem = data.backup_system || this.backupSystem;
@@ -826,7 +927,10 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public backupStatusLabel() {
-        const status = this.backupSystem?.status || 'disabled';
+        return this.backupStatusText(this.backupSystem?.status || 'disabled');
+    }
+
+    public backupStatusText(status: string) {
         const labels: any = {
             disabled: '사용 안 함',
             pending_install: '설치 필요',
@@ -835,6 +939,48 @@ export class Component implements OnInit, OnDestroy {
             failed: '오류',
         };
         return labels[status] || status;
+    }
+
+    public backupHealthLabel() {
+        if (!this.backupHealth?.checked_at) return '아직 확인하지 않음';
+        const status = this.backupStatusText(this.backupHealth.status || this.backupSystem?.status || 'disabled');
+        const checkedAt = new Date(this.backupHealth.checked_at);
+        const time = Number.isNaN(checkedAt.getTime()) ? '' : ` · ${checkedAt.toLocaleTimeString()}`;
+        return `${status}${time}`;
+    }
+
+    public backupInstalling() {
+        const status = this.backupInstallOperation?.status;
+        return this.backupBusy() || status === 'running' || status === 'pending';
+    }
+
+    public backupInstallVisible() {
+        return Boolean(this.backupInstallOperation || this.backupInstallLog);
+    }
+
+    public backupInstallDone() {
+        return ['succeeded', 'failed', 'canceled'].includes(this.backupInstallOperation?.status);
+    }
+
+    public backupInstallStatusLabel() {
+        const status = this.backupInstallOperation?.status;
+        if (status === 'succeeded') return '완료';
+        if (status === 'failed') return '실패';
+        if (status === 'canceled') return '취소됨';
+        if (status === 'running') return '진행 중';
+        if (status === 'pending') return '대기 중';
+        return this.backupBusy() ? '준비 중' : '대기';
+    }
+
+    public backupInstallOutput() {
+        const output = this.operationOutputText(this.backupInstallOperation) || this.backupInstallLog;
+        return output || '설치 로그를 기다리고 있습니다.\n';
+    }
+
+    public operationOutputText(operation: any) {
+        const output = operation?.output;
+        if (!Array.isArray(output)) return '';
+        return output.map((item: any) => String(item?.message || '')).join('');
     }
 
     public formatBytes(value: any) {
@@ -905,6 +1051,54 @@ export class Component implements OnInit, OnDestroy {
         const date = new Date(value);
         if (Number.isNaN(date.getTime())) return '없음';
         return date.toLocaleString();
+    }
+
+    public backupScheduleTypes() {
+        return [
+            { key: 'weekly', label: '매주', icon: 'fa-calendar-week' },
+            { key: 'monthly', label: '매월', icon: 'fa-calendar-days' },
+        ];
+    }
+
+    public weekdayOptions() {
+        return [
+            { value: 0, label: '월' },
+            { value: 1, label: '화' },
+            { value: 2, label: '수' },
+            { value: 3, label: '목' },
+            { value: 4, label: '금' },
+            { value: 5, label: '토' },
+            { value: 6, label: '일' },
+        ];
+    }
+
+    public setBackupScheduleType(type: string) {
+        this.backupPolicy.schedule_type = type === 'monthly' ? 'monthly' : 'weekly';
+    }
+
+    public setBackupWeekday(day: number) {
+        this.backupPolicy.schedule_weekday = Number(day);
+    }
+
+    public backupScheduleSummary() {
+        if (!this.backupPolicy?.enabled) return '자동 백업이 꺼져 있습니다.';
+        const time = this.backupPolicy.schedule_time || '02:00';
+        if (this.backupPolicy.schedule_type === 'monthly') {
+            const day = Math.max(1, Math.min(31, Number(this.backupPolicy.schedule_month_day || 1)));
+            return `매월 ${day}일 ${time}에 실행`;
+        }
+        return `매주 ${this.backupWeekdayLabel(this.backupPolicy.schedule_weekday)}요일 ${time}에 실행`;
+    }
+
+    public backupRetentionSummary() {
+        const keep = Number(this.backupPolicy?.retention_keep_per_service || 1);
+        const snapshot = this.backupPolicy?.snapshot_enabled ? '컨테이너 상태 포함' : '이미지만 백업';
+        return `서비스별 최근 ${keep}개 보존 · ${snapshot}`;
+    }
+
+    private backupWeekdayLabel(value: any) {
+        const item = this.weekdayOptions().find((option: any) => option.value === Number(value));
+        return item?.label || '월';
     }
 
     public backupPolicyResultLabel() {
@@ -1041,9 +1235,13 @@ export class Component implements OnInit, OnDestroy {
         return {
             enabled: false,
             mode: 'manual',
+            schedule_type: 'weekly',
+            schedule_weekday: 0,
+            schedule_month_day: 1,
+            schedule_time: '02:00',
             interval_days: 7,
-            window_start: '02:00',
-            window_end: '05:00',
+            window_start: '00:00',
+            window_end: '00:00',
             max_items_per_run: 3,
             retention_keep_per_service: 10,
             cleanup_unused_days: 30,

@@ -194,3 +194,9 @@
 | 2026-05-14 | 192 | 이미지 tar 업로드와 서버 로컬 import 기능 추가 | [상세](devlog/2026-05-14/192-local-image-tar-upload-import.md) |
 | 2026-05-14 | 193 | 이미지 tar 업로드 413 차단 회피 | [상세](devlog/2026-05-14/193-local-image-upload-chunked.md) |
 | 2026-05-14 | 194 | 이미지 tar chunk 업로드 롤백 | [상세](devlog/2026-05-14/194-local-image-upload-single-request-rollback.md) |
+| 2026-05-14 | 195 | 서비스 백업 Harbor 설치 설정과 실패 상태 보존 수정 | [상세](devlog/2026-05-14/195-backup-harbor-install-logic-fix.md) |
+| 2026-05-14 | 196 | 백업 시스템 설치 진행 로그와 설정 화면 단순화 | [상세](devlog/2026-05-14/196-backup-install-progress-simplified-ui.md) |
+| 2026-05-14 | 197 | 자동 백업 UI 개선과 실제 백업 기능 검증 | [상세](devlog/2026-05-14/197-backup-policy-ui-functional-verification.md) |
+| 2026-05-14 | 198 | 백업 레지스트리 insecure registry 노드 자동 적용 | [상세](devlog/2026-05-14/198-backup-insecure-registry-node-setup.md) |
+| 2026-05-14 | 199 | 이미지 관리 Harbor 컴팩트 UI 재구성 | [상세](devlog/2026-05-14/199-harbor-compact-ui-redesign.md) |
+| 2026-05-14 | 200 | 이미지 관리 서버 로컬 저장소 UI 통일 | [상세](devlog/2026-05-14/200-local-image-ui-unification.md) |

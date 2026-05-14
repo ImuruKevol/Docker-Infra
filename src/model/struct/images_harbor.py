@@ -172,6 +172,23 @@ class HarborImages:
             raise ImageError(status, "Harbor 이미지를 삭제할 수 없습니다.", "HARBOR_DELETE_FAILED")
         return True
 
+    def delete_tag(self, project_name, repository_name, reference, tag=None, env=None):
+        config = _config(env=env)
+        tag = str(tag if tag is not None else reference or "").strip()
+        try:
+            status, _ = _request_json(
+                config,
+                f"/api/v2.0/projects/{urlparse.quote(str(project_name or '').strip(), safe='')}/repositories/{encode_repository_name(repository_name)}/artifacts/{urlparse.quote(str(reference or '').strip(), safe=':')}/tags/{urlparse.quote(tag, safe='')}",
+                method="DELETE",
+            )
+        except ImageError as exc:
+            if exc.status_code == 404:
+                return False
+            raise
+        if status not in {200, 202, 204}:
+            raise ImageError(status, "Harbor 이미지 태그를 삭제할 수 없습니다.", "HARBOR_TAG_DELETE_FAILED")
+        return True
+
     def delete_repository(self, project_name, repository_name, env=None):
         config = _config(env=env)
         status, _ = _request_json(

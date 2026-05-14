@@ -101,7 +101,7 @@ class ServiceImageBackupCleanup:
         for item in plan["candidates"]:
             parts = item["harbor"]
             try:
-                harbor.delete_artifact(parts["project"], parts["repository"], parts["reference"], env=env)
+                harbor.delete_tag(parts["project"], parts["repository"], parts["reference"], parts["reference"], env=env)
                 deleted.append(item["id"])
                 self._mark_deleted(item, operation["id"], env=env)
             except Exception as exc:

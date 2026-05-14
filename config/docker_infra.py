@@ -40,6 +40,7 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "backup.harbor.up",
     "backup.harbor.down",
     "backup.harbor.restart",
+    "docker.daemon.insecure_registries.ensure",
     "monitoring.node_exporter.ensure",
     "monitoring.node_exporter.status",
     "monitoring.metrics_collector.ensure",

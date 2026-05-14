@@ -1,3 +1,4 @@
+import json
 import os
 import tarfile
 import urllib.request
@@ -25,23 +26,48 @@ def harbor_url(env=None):
     return f"http://127.0.0.1:{ports['http']}"
 
 
+def _yaml_string(value):
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _harbor_version(env=None):
+    return str(config.backup_harbor_version(env) or "").strip().lstrip("v") or "2.15.0"
+
+
+def _harbor_hostname(env=None):
+    configured = ""
+    try:
+        configured = config.runtime_env(env).get("DOCKER_INFRA_BACKUP_HARBOR_HOSTNAME") or ""
+    except Exception:
+        configured = ""
+    hostname = str(configured or config.advertise_address(env) or "").strip()
+    if "://" in hostname:
+        hostname = hostname.split("://", 1)[1].split("/", 1)[0]
+    if hostname.count(":") == 1:
+        hostname = hostname.split(":", 1)[0]
+    if hostname in {"", "127.0.0.1", "0.0.0.0", "::1"}:
+        return "localhost"
+    return hostname
+
+
 def write_harbor_yml(data_path, admin_password, database_password, env=None):
     ports = config.backup_harbor_ports(env)
-    version = config.backup_harbor_version(env)
+    version = _harbor_version(env)
     resolved = paths(data_path)
     for key in ["data", "logs", "installer_root"]:
         resolved[key].mkdir(parents=True, exist_ok=True)
     resolved["harbor_yml"].parent.mkdir(parents=True, exist_ok=True)
     content = f"""
-hostname: 127.0.0.1
+hostname: {_yaml_string(_harbor_hostname(env))}
+external_url: {_yaml_string(harbor_url(env))}
 
 http:
   port: {ports['http']}
 
-harbor_admin_password: {admin_password}
+harbor_admin_password: {_yaml_string(admin_password)}
 
 database:
-  password: {database_password}
+  password: {_yaml_string(database_password)}
   max_idle_conns: 100
   max_open_conns: 900
   conn_max_lifetime: 5m
@@ -53,18 +79,24 @@ trivy:
   ignore_unfixed: false
   skip_update: false
   skip_java_db_update: false
+  db_repository: ghcr.io/aquasecurity/trivy-db
+  java_db_repository: ghcr.io/aquasecurity/trivy-java-db
   offline_scan: false
   security_check: vuln
   insecure: false
+  timeout: 5m0s
 
 jobservice:
   max_job_workers: 10
+  max_job_duration_hours: 24
   job_loggers:
     - STD_OUTPUT
     - FILE
+  logger_sweeper_duration: 1
 
 notification:
-  webhook_job_max_retry: 10
+  webhook_job_max_retry: 3
+  webhook_job_http_client_timeout: 3
 
 chart:
   absolute_url: disabled
@@ -95,6 +127,7 @@ upload_purging:
 
 cache:
   enabled: false
+  expire_hours: 24
 """
     resolved["harbor_yml"].write_text(content.strip() + "\n", encoding="utf-8")
     os.chmod(resolved["harbor_yml"], 0o600)

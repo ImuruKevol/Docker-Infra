@@ -10,6 +10,7 @@ MAX_TIMEOUT_SECONDS = 1800
 MAX_CAPTURE_CHARS = 20000
 NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$")
+REGISTRY_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,255}$")
 METRICS_COLLECTOR_AGENT_VERSION = "2026-05-13-container-labels-v1"
 
 
@@ -381,6 +382,117 @@ def _backup_harbor_ps_command(params):
     return _backup_harbor_compose_command(params, "ps")
 
 
+def _registry_params(params):
+    raw = (params or {}).get("registries")
+    if raw is None:
+        raw = [(params or {}).get("registry")]
+    if isinstance(raw, str):
+        raw = [raw]
+    if isinstance(raw, list) is False:
+        raise LocalCommandError(400, "registries는 list여야 합니다.", "INVALID_REGISTRIES")
+    registries = []
+    for item in raw:
+        registry = str(item or "").strip()
+        if not registry:
+            continue
+        if "://" in registry or "/" in registry or REGISTRY_RE.match(registry) is None:
+            raise LocalCommandError(400, "registry 형식이 올바르지 않습니다.", "INVALID_REGISTRY")
+        if registry not in registries:
+            registries.append(registry)
+    if not registries:
+        raise LocalCommandError(400, "registry가 필요합니다.", "REGISTRY_REQUIRED")
+    return registries
+
+
+def _docker_daemon_insecure_registries_command(params):
+    registries = _registry_params(params)
+    script = (
+        "set -eu\n"
+        f"REGISTRIES_JSON={shlex.quote(json.dumps(registries))}\n"
+        "TARGET=/etc/docker/daemon.json\n"
+        "SUDO=''\n"
+        "if [ \"$(id -u)\" != '0' ]; then\n"
+        "  if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then\n"
+        "    SUDO='sudo -n'\n"
+        "  else\n"
+        "    echo 'root or passwordless sudo is required to update Docker daemon settings' >&2\n"
+        "    exit 42\n"
+        "  fi\n"
+        "fi\n"
+        "if ! command -v python3 >/dev/null 2>&1; then\n"
+        "  echo 'python3 is required to update Docker daemon settings' >&2\n"
+        "  exit 43\n"
+        "fi\n"
+        "TMP_CURRENT=$(mktemp)\n"
+        "TMP_NEXT=$(mktemp)\n"
+        "cleanup() { rm -f \"$TMP_CURRENT\" \"$TMP_NEXT\"; }\n"
+        "trap cleanup EXIT\n"
+        "$SUDO mkdir -p /etc/docker\n"
+        "if $SUDO test -f \"$TARGET\"; then\n"
+        "  $SUDO cat \"$TARGET\" > \"$TMP_CURRENT\"\n"
+        "else\n"
+        "  printf '{}\\n' > \"$TMP_CURRENT\"\n"
+        "fi\n"
+        "python3 - \"$TMP_CURRENT\" \"$TMP_NEXT\" \"$REGISTRIES_JSON\" <<'PY'\n"
+        "import json\n"
+        "import sys\n"
+        "current_path, next_path, registries_json = sys.argv[1:4]\n"
+        "registries = json.loads(registries_json)\n"
+        "try:\n"
+        "    with open(current_path, 'r', encoding='utf-8') as handle:\n"
+        "        text = handle.read().strip()\n"
+        "    data = json.loads(text or '{}')\n"
+        "    if not isinstance(data, dict):\n"
+        "        data = {}\n"
+        "except Exception:\n"
+        "    data = {}\n"
+        "existing = data.get('insecure-registries')\n"
+        "if not isinstance(existing, list):\n"
+        "    existing = []\n"
+        "merged = []\n"
+        "for item in existing + registries:\n"
+        "    value = str(item or '').strip()\n"
+        "    if value and value not in merged:\n"
+        "        merged.append(value)\n"
+        "data['insecure-registries'] = merged\n"
+        "with open(next_path, 'w', encoding='utf-8') as handle:\n"
+        "    json.dump(data, handle, indent=2, sort_keys=True)\n"
+        "    handle.write('\\n')\n"
+        "print('configured insecure registries: ' + ', '.join(registries))\n"
+        "PY\n"
+        "if $SUDO test -f \"$TARGET\" && $SUDO cmp -s \"$TMP_NEXT\" \"$TARGET\"; then\n"
+        "  echo 'Docker daemon insecure registries already configured'\n"
+        "  CHANGED=0\n"
+        "else\n"
+        "  if $SUDO test -f \"$TARGET\"; then\n"
+        "    $SUDO cp \"$TARGET\" \"$TARGET.bak.$(date +%Y%m%d%H%M%S)\"\n"
+        "  fi\n"
+        "  $SUDO install -m 0644 \"$TMP_NEXT\" \"$TARGET\"\n"
+        "  echo 'Docker daemon configuration updated'\n"
+        "  CHANGED=1\n"
+        "fi\n"
+        "if [ \"$CHANGED\" = '1' ]; then\n"
+        "  if command -v systemctl >/dev/null 2>&1; then\n"
+        "    $SUDO systemctl restart docker\n"
+        "  else\n"
+        "    $SUDO service docker restart\n"
+        "  fi\n"
+        "fi\n"
+        "attempt=1\n"
+        "while [ \"$attempt\" -le 30 ]; do\n"
+        "  if docker info >/dev/null 2>&1; then\n"
+        "    echo 'Docker daemon is ready'\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  sleep 2\n"
+        "  attempt=$((attempt + 1))\n"
+        "done\n"
+        "echo 'Docker daemon did not become ready after registry configuration' >&2\n"
+        "exit 44\n"
+    )
+    return ["sh", "-lc", script]
+
+
 def _service_stack_deploy_command(params):
     compose_path = _path_param(params, "compose_path")
     stack_name = _stack_name_param(params)
@@ -602,6 +714,7 @@ COMMAND_SPECS = {
     "backup.harbor.down": {"category": "backup", "factory": _backup_harbor_down_command, "destructive": True, "default_timeout_seconds": 300},
     "backup.harbor.restart": {"category": "backup", "factory": _backup_harbor_restart_command, "destructive": True, "default_timeout_seconds": 300},
     "backup.harbor.ps": {"category": "backup", "factory": _backup_harbor_ps_command},
+    "docker.daemon.insecure_registries.ensure": {"category": "docker", "factory": _docker_daemon_insecure_registries_command, "destructive": True, "default_timeout_seconds": 180},
     "monitoring.node_exporter.ensure": {"category": "monitoring", "factory": _node_exporter_ensure_command, "destructive": True, "default_timeout_seconds": 120},
     "monitoring.node_exporter.status": {"category": "monitoring", "factory": _node_exporter_status_command, "default_timeout_seconds": 20},
     "monitoring.metrics_collector.ensure": {"category": "monitoring", "factory": _metrics_collector_ensure_command, "destructive": True, "default_timeout_seconds": 120},
@@ -641,6 +754,7 @@ class LocalCommandCatalog:
     METRICS_COLLECTOR_AGENT_VERSION = METRICS_COLLECTOR_AGENT_VERSION
     LocalCommandError = LocalCommandError
     COMMAND_SPECS = COMMAND_SPECS
+    docker_daemon_insecure_registries_command = staticmethod(_docker_daemon_insecure_registries_command)
     AI_RESOURCE_SCRIPT = AI_RESOURCE_SCRIPT
     AI_OLLAMA_SCAN_SCRIPT = AI_OLLAMA_SCAN_SCRIPT
 
