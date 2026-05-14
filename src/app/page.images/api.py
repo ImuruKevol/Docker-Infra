@@ -111,6 +111,36 @@ def local_detail():
     wiz.response.status(code, **payload)
 
 
+def upload_local():
+    from flask import request
+
+    images_model = wiz.model("struct").images
+    node_id = str(request.form.get("node_id") or "").strip()
+    file_storage = request.files.get("file")
+    if not node_id:
+        wiz.response.status(400, message="node_id가 필요합니다.", error_code="NODE_ID_REQUIRED")
+        return
+    if file_storage is None:
+        wiz.response.status(400, message="업로드할 이미지 tar 파일이 필요합니다.", error_code="LOCAL_IMAGE_IMPORT_FILE_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = images_model.import_local_image({"node_id": node_id}, file_storage)
+    except images_model.ImageError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code = 400
+        payload = {"message": str(exc), "error_code": "LOCAL_IMAGE_IMPORT_FAILED"}
+
+    wiz.response.status(code, **payload)
+
+
 def delete_harbor():
     images_model = wiz.model("struct").images
     code = 200

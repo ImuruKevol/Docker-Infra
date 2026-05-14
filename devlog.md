@@ -191,3 +191,6 @@
 | 2026-05-14 | 189 | Docker prune 추정 정확도 개선과 위험 정리 버튼 추가 | [상세](devlog/2026-05-14/189-docker-prune-estimate-and-danger-actions.md) |
 | 2026-05-14 | 190 | 이미지 정리 버튼 문구 개선과 system prune 제거 | [상세](devlog/2026-05-14/190-image-cleanup-label-system-prune-removal.md) |
 | 2026-05-14 | 191 | 로컬 이미지 정리 확인 모달 대상 목록 표시 | [상세](devlog/2026-05-14/191-local-image-confirm-list.md) |
+| 2026-05-14 | 192 | 이미지 tar 업로드와 서버 로컬 import 기능 추가 | [상세](devlog/2026-05-14/192-local-image-tar-upload-import.md) |
+| 2026-05-14 | 193 | 이미지 tar 업로드 413 차단 회피 | [상세](devlog/2026-05-14/193-local-image-upload-chunked.md) |
+| 2026-05-14 | 194 | 이미지 tar chunk 업로드 롤백 | [상세](devlog/2026-05-14/194-local-image-upload-single-request-rollback.md) |

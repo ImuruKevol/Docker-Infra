@@ -1,9 +1,16 @@
 import json
+import re
+import shlex
+import subprocess
+import time
+import uuid
+from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
 
 connect = wiz.model("db/postgres").connect
+config = wiz.config("docker_infra")
 nodes = wiz.model("struct/nodes")
 local_executor = wiz.model("struct/local_executor")
 local_catalog = wiz.model("struct/local_command_catalog")
@@ -25,6 +32,9 @@ DOCKER_IMAGE_STORAGE_COMMAND = ["python3", "-c", local_catalog.DOCKER_IMAGE_STOR
 DOCKER_IMAGE_DELETE_ESTIMATE_COMMAND = ["python3", "-c", local_catalog.DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT]
 DOCKER_PRUNE_ESTIMATE_COMMAND = ["python3", "-c", local_catalog.DOCKER_PRUNE_ESTIMATE_SCRIPT]
 DOCKER_IMAGE_PRUNE_COMMAND = ["docker", "image", "prune", "-a", "-f"]
+IMAGE_ARCHIVE_EXTENSIONS = (".tar", ".tar.gz", ".tgz")
+IMAGE_IMPORT_TIMEOUT_SECONDS = 1800
+REMOTE_IMAGE_IMPORT_DIR = "/tmp/docker-infra-image-imports"
 
 
 class ImagesLocalMixin:
@@ -311,6 +321,199 @@ class ImagesLocalMixin:
         )
         return self.local_node_detail(node_id, env=env)
 
+    def _safe_import_filename(self, filename):
+        raw = Path(str(filename or "")).name.strip()
+        if not raw:
+            raise ImageError(400, "업로드할 이미지 tar 파일이 필요합니다.", "LOCAL_IMAGE_IMPORT_FILE_REQUIRED")
+        if not raw.lower().endswith(IMAGE_ARCHIVE_EXTENSIONS):
+            raise ImageError(400, "tar 형식의 Docker image archive만 업로드할 수 있습니다.", "LOCAL_IMAGE_IMPORT_FILE_INVALID")
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip(".-")
+        return safe or "image.tar"
+
+    def _save_import_archive(self, file_storage, env=None):
+        filename = self._safe_import_filename(getattr(file_storage, "filename", ""))
+        root = Path(config.data_dir(env)) / "image-imports"
+        root.mkdir(parents=True, exist_ok=True)
+        target = root / f"{uuid.uuid4().hex}-{filename}"
+        file_storage.save(str(target))
+        size = target.stat().st_size if target.exists() else 0
+        if size <= 0:
+            try:
+                target.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise ImageError(400, "빈 파일은 import할 수 없습니다.", "LOCAL_IMAGE_IMPORT_FILE_EMPTY")
+        return {"path": target, "filename": filename, "size": size}
+
+    def _subprocess_result(self, argv, timeout_seconds=IMAGE_IMPORT_TIMEOUT_SECONDS):
+        started = time.monotonic()
+        try:
+            completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_seconds, check=False)
+            duration_ms = int((time.monotonic() - started) * 1000)
+            status = "ok" if completed.returncode == 0 else "error"
+            return {
+                "command": argv,
+                "command_display": shlex.join(argv),
+                "status": status,
+                "exit_code": completed.returncode,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+                "duration_ms": duration_ms,
+            }
+        except FileNotFoundError as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            return {
+                "command": argv,
+                "command_display": shlex.join(argv),
+                "status": "missing",
+                "exit_code": None,
+                "stdout": "",
+                "stderr": str(exc),
+                "duration_ms": duration_ms,
+            }
+        except subprocess.TimeoutExpired as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            return {
+                "command": argv,
+                "command_display": shlex.join(argv),
+                "status": "timeout",
+                "exit_code": None,
+                "stdout": exc.stdout or "",
+                "stderr": exc.stderr or f"command timed out after {timeout_seconds}s",
+                "duration_ms": duration_ms,
+                "timed_out": True,
+            }
+
+    def _scp_upload_to_node(self, node, local_path, remote_path, env=None):
+        credential = node.get("credential") or {}
+        key_file = credential.get("key_file") or (credential.get("metadata") or {}).get("key_file")
+        username = credential.get("username")
+        if not username:
+            raise ImageError(409, "서버 SSH 계정 정보가 없습니다. 서버를 다시 등록해주세요.", "NODE_SSH_USERNAME_MISSING")
+        if not key_file:
+            raise ImageError(409, "서버 SSH key file 정보가 없습니다. 서버를 다시 등록해주세요.", "NODE_SSH_KEY_MISSING")
+        known_hosts = nodes.ssh_executor.known_hosts_for_run(node["host"], port=node.get("ssh_port"), env=env)
+        argv = [
+            "scp",
+            "-q",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            f"UserKnownHostsFile={known_hosts}",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "LogLevel=ERROR",
+            "-o",
+            "ConnectTimeout=30",
+        ]
+        if node.get("ssh_port"):
+            argv.extend(["-P", str(node.get("ssh_port"))])
+        argv.extend(["-i", str(key_file), "-o", "IdentitiesOnly=yes", str(local_path), f"{username}@{node['host']}:{remote_path}"])
+        return self._subprocess_result(argv, timeout_seconds=IMAGE_IMPORT_TIMEOUT_SECONDS)
+
+    def _copy_import_archive_to_remote(self, node, staged, env=None):
+        remote_dir = f"{REMOTE_IMAGE_IMPORT_DIR}/{uuid.uuid4().hex}"
+        result = nodes._run_ssh_command(node, ["mkdir", "-p", remote_dir], timeout_seconds=20, env=env)
+        if result.get("status") != "ok":
+            raise ImageError(409, self._command_failure(result), "LOCAL_IMAGE_IMPORT_TRANSFER_FAILED", check=serialize(result))
+        remote_path = f"{remote_dir}/{staged['filename']}"
+        transfer = self._scp_upload_to_node(node, staged["path"], remote_path, env=env)
+        if transfer.get("status") != "ok":
+            nodes._run_ssh_command(node, ["rm", "-rf", remote_dir], timeout_seconds=20, env=env)
+            raise ImageError(409, self._command_failure(transfer), "LOCAL_IMAGE_IMPORT_TRANSFER_FAILED", check=serialize(transfer))
+        return remote_path, remote_dir, transfer
+
+    def _cleanup_remote_import(self, node, remote_dir, env=None):
+        if not remote_dir:
+            return
+        try:
+            nodes._run_ssh_command(node, ["rm", "-rf", remote_dir], timeout_seconds=20, env=env)
+        except Exception:
+            pass
+
+    def _parse_image_load_result(self, result):
+        stdout = str(result.get("stdout") or "").strip()
+        stderr = str(result.get("stderr") or "").strip()
+        loaded_images = []
+        loaded_image_ids = []
+        for line in f"{stdout}\n{stderr}".splitlines():
+            text = line.strip()
+            lower = text.lower()
+            if lower.startswith("loaded image:"):
+                loaded_images.append(text.split(":", 1)[1].strip())
+            elif lower.startswith("loaded image id:"):
+                loaded_image_ids.append(text.split(":", 1)[1].strip())
+        return {
+            "command": result.get("command_display") or " ".join(result.get("command") or []),
+            "stdout": stdout,
+            "stderr": stderr,
+            "loaded_images": loaded_images,
+            "loaded_image_ids": loaded_image_ids,
+            "duration_ms": result.get("duration_ms") or 0,
+        }
+
+    def _import_staged_local_image(self, node_id, staged, env=None):
+        node = nodes.detail(node_id, env=env)
+        operation_payload = {"node_id": node_id, "filename": staged["filename"], "size": staged["size"]}
+        remote_dir = ""
+        operation_recorded = False
+        try:
+            import_path = str(staged["path"])
+            transfer_result = None
+            if not self._is_local_master_node(node):
+                import_path, remote_dir, transfer_result = self._copy_import_archive_to_remote(node, staged, env=env)
+            result = self._run_image_load_command(node, import_path, env=env)
+            import_result = {
+                "filename": staged["filename"],
+                "size": staged["size"],
+                "load": self._parse_image_load_result(result),
+            }
+            if transfer_result:
+                import_result["transfer"] = serialize(transfer_result)
+            if result.get("status") != "ok":
+                raise ImageError(409, self._command_failure(result), "LOCAL_IMAGE_IMPORT_FAILED", check=serialize(result))
+            self._record_operation(
+                "image.local.import",
+                target_type="node",
+                target_id=node_id,
+                payload=operation_payload,
+                result=import_result,
+                env=env,
+            )
+            operation_recorded = True
+            detail = self.local_node_detail(node_id, env=env)
+            detail["import_result"] = import_result
+            return detail
+        except ImageError as exc:
+            if not operation_recorded:
+                self._record_operation(
+                    "image.local.import",
+                    target_type="node",
+                    target_id=node_id,
+                    payload=operation_payload,
+                    result={"message": exc.message, "error_code": exc.error_code, **serialize(exc.extra)},
+                    status="failed",
+                    env=env,
+                )
+            raise
+        finally:
+            self._cleanup_remote_import(node, remote_dir, env=env)
+            try:
+                staged["path"].unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def import_local_image(self, payload, file_storage, env=None):
+        node_id = str((payload or {}).get("node_id") or "").strip()
+        if not node_id:
+            raise ImageError(400, "node_id가 필요합니다.", "NODE_ID_REQUIRED")
+        if file_storage is None:
+            raise ImageError(400, "업로드할 이미지 tar 파일이 필요합니다.", "LOCAL_IMAGE_IMPORT_FILE_REQUIRED")
+
+        staged = self._save_import_archive(file_storage, env=env)
+        return self._import_staged_local_image(node_id, staged, env=env)
+
     def _run_node_command(self, node, remove_ref="", env=None):
         if self._is_local_master_node(node):
             command_id = "docker.image.remove" if remove_ref else "docker.images"
@@ -349,6 +552,16 @@ class ImagesLocalMixin:
         if self._is_local_master_node(node):
             return local_executor.run("docker.image.prune", timeout_seconds=300, env=env)
         return nodes._run_ssh_command(node, DOCKER_IMAGE_PRUNE_COMMAND, timeout_seconds=300, env=env)
+
+    def _run_image_load_command(self, node, image_path, env=None):
+        if self._is_local_master_node(node):
+            return local_executor.run(
+                "docker.image.load",
+                params={"path": image_path},
+                timeout_seconds=IMAGE_IMPORT_TIMEOUT_SECONDS,
+                env=env,
+            )
+        return nodes._run_ssh_command(node, ["docker", "load", "-i", image_path], timeout_seconds=IMAGE_IMPORT_TIMEOUT_SECONDS, env=env)
 
     def _command_failure(self, result):
         output = str(result.get("stderr") or result.get("stdout") or "").strip()

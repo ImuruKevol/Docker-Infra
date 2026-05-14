@@ -325,6 +325,13 @@ def _docker_image_prune_command(params):
     return ["docker", "image", "prune", "-a", "-f"]
 
 
+def _docker_image_load_command(params):
+    image_path = str((params or {}).get("path") or "").strip()
+    if not image_path:
+        raise LocalCommandError(400, "path가 필요합니다.", "IMAGE_LOAD_PATH_REQUIRED")
+    return ["docker", "load", "-i", image_path]
+
+
 def _stack_name_param(params):
     stack_name = str((params or {}).get("stack_name") or "").strip()
     if NETWORK_NAME_RE.match(stack_name) is None:
@@ -577,6 +584,7 @@ COMMAND_SPECS = {
     "docker.images.delete_estimate": {"category": "docker", "factory": _docker_image_delete_estimate_command, "default_timeout_seconds": 45},
     "docker.prune.estimate": {"category": "docker", "factory": _docker_prune_estimate_command, "default_timeout_seconds": 20},
     "docker.image.prune": {"category": "docker", "factory": _docker_image_prune_command, "destructive": True, "default_timeout_seconds": 300},
+    "docker.image.load": {"category": "docker", "factory": _docker_image_load_command, "destructive": True, "default_timeout_seconds": 1800},
     "docker.container.start": {"category": "docker", "factory": _docker_container_start_command, "destructive": True},
     "docker.container.stop": {"category": "docker", "factory": _docker_container_stop_command, "destructive": True},
     "docker.container.restart": {"category": "docker", "factory": _docker_container_restart_command, "destructive": True},

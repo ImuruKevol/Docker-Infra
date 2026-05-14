@@ -42,6 +42,10 @@ export class Component implements OnInit {
     public localDeleteEstimateBusy = signal<boolean>(false);
     public localPruneBusy = signal<boolean>(false);
     public localPruneEstimateBusy = signal<boolean>(false);
+    public localUploadBusy = signal<boolean>(false);
+    public localUploadProgress = signal<number>(0);
+    public localUploadPhase = signal<string>('');
+    public localUploadFileName = signal<string>('');
     public showLocalImageConfirmModal = signal<boolean>(false);
     public localImageConfirmMode = signal<LocalImageConfirmMode>('');
     public localImageConfirmTitle = signal<string>('');
@@ -237,6 +241,101 @@ export class Component implements OnInit {
 
     public closeFileTree() {
         this.fileTreeOpen.set(false);
+    }
+
+    public openLocalImageUpload() {
+        if (!this.selectedNodeId() || this.localUploadBusy()) return;
+        (document.getElementById('local-image-upload-input') as HTMLInputElement | null)?.click();
+    }
+
+    private isLocalImageArchiveName(name: string) {
+        const lower = String(name || '').trim().toLowerCase();
+        return lower.endsWith('.tar') || lower.endsWith('.tar.gz') || lower.endsWith('.tgz');
+    }
+
+    private resetLocalUploadState() {
+        this.localUploadBusy.set(false);
+        this.localUploadProgress.set(0);
+        this.localUploadPhase.set('');
+        this.localUploadFileName.set('');
+    }
+
+    public localUploadPhaseLabel() {
+        if (this.localUploadPhase() === 'importing') return '업로드 완료, Docker import 실행 중';
+        if (this.localUploadPhase() === 'uploading') return '이미지 tar 업로드 중';
+        return '업로드 준비 중';
+    }
+
+    public localUploadProgressLabel() {
+        const progress = this.localUploadProgress();
+        const normalized = Math.max(0, Math.min(100, Number(progress || 0)));
+        return `${normalized.toFixed(normalized % 1 ? 1 : 0)}%`;
+    }
+
+    public localUploadProgressBarWidth() {
+        if (this.localUploadPhase() === 'importing') return 100;
+        const progress = Math.max(0, Math.min(100, Number(this.localUploadProgress() || 0)));
+        return this.localUploadBusy() ? Math.max(2, progress) : progress;
+    }
+
+    private localImportResultText(result: any) {
+        const refs = result?.load?.loaded_images || [];
+        const ids = result?.load?.loaded_image_ids || [];
+        const loaded = refs.length ? refs.join(', ') : (ids.length ? ids.join(', ') : this.localUploadFileName());
+        return `${loaded || '이미지'} import를 완료했습니다.`;
+    }
+
+    private applyLocalDetail(data: any) {
+        this.localDetail.set(data);
+        this.localSummaryByNode.set({
+            ...this.localSummaryByNode(),
+            [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
+        });
+        this.selectedLocalItems.set([]);
+        this.localDeleteEstimate.set(null);
+    }
+
+    public async uploadLocalImageArchive(event: Event) {
+        const input = event.target as HTMLInputElement;
+        const file = input?.files && input.files[0];
+        if (input) input.value = '';
+        if (!file) return;
+        if (!this.selectedNodeId()) {
+            await this.alert('먼저 서버를 선택해주세요.');
+            return;
+        }
+        if (!this.isLocalImageArchiveName(file.name)) {
+            await this.alert('Docker image archive tar 파일만 업로드할 수 있습니다.');
+            return;
+        }
+
+        const fd = new FormData();
+        fd.append('node_id', this.selectedNodeId());
+        fd.append('file', file, file.name);
+        this.localUploadBusy.set(true);
+        this.localUploadProgress.set(0);
+        this.localUploadPhase.set('uploading');
+        this.localUploadFileName.set(file.name);
+        await this.service.render();
+
+        const response: any = await this.service.file.upload(wiz.url('upload_local'), fd, async (percent: number) => {
+            this.localUploadProgress.set(percent);
+            if (percent >= 100) this.localUploadPhase.set('importing');
+            await this.service.render();
+        });
+        const code = response?.code || 500;
+        const data = response?.data || response;
+        if (code === 200) {
+            const message = this.localImportResultText(data.import_result);
+            this.applyLocalDetail(data);
+            this.resetLocalUploadState();
+            await this.alert(message, 'success');
+            await this.service.render();
+            return;
+        }
+        this.resetLocalUploadState();
+        await this.alert(data?.message || response?.message || '이미지 tar를 import할 수 없습니다.');
+        await this.service.render();
     }
 
     public imageFileTreeContext() {
