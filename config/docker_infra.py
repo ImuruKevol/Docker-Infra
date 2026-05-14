@@ -28,6 +28,7 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "docker.container.restart",
     "docker.container.delete",
     "docker.image.remove",
+    "docker.image.prune",
     "service.stack.deploy",
     "service.stack.remove",
     "service.stack.volumes.remove",

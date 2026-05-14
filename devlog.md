@@ -187,3 +187,7 @@
 | 2026-05-14 | 185 | 서비스 상세 구성 탭 관리자 친화 UI 정리 | [상세](devlog/2026-05-14/185-service-detail-admin-friendly-ui.md) |
 | 2026-05-14 | 186 | 서비스 상세 탭 카드와 헤더 디자인 통일 | [상세](devlog/2026-05-14/186-service-detail-tab-design-unification.md) |
 | 2026-05-14 | 187 | 서비스 관리 API 상세/목록 경량화와 지연 로딩 최적화 | [상세](devlog/2026-05-14/187-service-management-api-optimization.md) |
+| 2026-05-14 | 188 | 이미지 관리 Harbor 토글 숨김, 로컬 용량 표시와 삭제 예상 확보량 계산 보강 | [상세](devlog/2026-05-14/188-images-management-ux-capacity-delete-estimate.md) |
+| 2026-05-14 | 189 | Docker prune 추정 정확도 개선과 위험 정리 버튼 추가 | [상세](devlog/2026-05-14/189-docker-prune-estimate-and-danger-actions.md) |
+| 2026-05-14 | 190 | 이미지 정리 버튼 문구 개선과 system prune 제거 | [상세](devlog/2026-05-14/190-image-cleanup-label-system-prune-removal.md) |
+| 2026-05-14 | 191 | 로컬 이미지 정리 확인 모달 대상 목록 표시 | [상세](devlog/2026-05-14/191-local-image-confirm-list.md) |

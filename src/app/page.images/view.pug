@@ -19,7 +19,7 @@ main(class="space-y-5 px-5 py-5")
                 button(type="button", (click)="setTab('local')", class="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold", [ngClass]="activeTab() === 'local' ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200'")
                     i(class="fa-solid fa-hard-drive")
                     span 서버 로컬 저장소
-                button(type="button", (click)="setTab('harbor')", class="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold", [ngClass]="activeTab() === 'harbor' ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200'")
+                button(*ngIf="harbor().enabled", type="button", (click)="setTab('harbor')", class="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold", [ngClass]="activeTab() === 'harbor' ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200'")
                     i(class="fa-solid fa-boxes-stacked")
                     span Harbor
 
@@ -174,15 +174,40 @@ main(class="space-y-5 px-5 py-5")
                             span(*ngIf="localBusy()", class="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400")
                                 i(class="fa-solid fa-spinner fa-spin")
                                 span 로컬 저장소 조회 중
+                            span(*ngIf="localPruneBusy() || localPruneEstimateBusy()", class="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400")
+                                i(class="fa-solid fa-spinner fa-spin")
+                                span 미사용 이미지 정리 준비 중
                             button(type="button", (click)="openFileTree()", [disabled]="!selectedNodeId()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                 i(class="fa-solid fa-folder-tree")
                                 span 서버 파일
+                            button(type="button", (click)="runImagePrune()", [disabled]="!selectedNodeId() || localBusy() || localPruneBusy() || localPruneEstimateBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-amber-300 px-2.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-900/70 dark:text-amber-300 dark:hover:bg-amber-950/30")
+                                i(class="fa-solid fa-broom")
+                                span 미사용 이미지 정리
                     div(*ngIf="!selectedNodeId()", class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400") 왼쪽에서 서버를 선택하세요.
                     div(*ngIf="selectedNodeId()", class="space-y-4 p-4")
                         div(*ngIf="isLocalDockerUnavailable()", class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
                             i(class="fa-solid fa-triangle-exclamation mr-2")
                             | {{localDockerMessage()}}
                         div(*ngIf="isLocalDockerAvailable()", class="space-y-4")
+                            div(class="grid grid-cols-1 gap-3 lg:grid-cols-4")
+                                div(class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
+                                    p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 총 용량
+                                    p(class="mt-2 text-xl font-semibold text-zinc-950 dark:text-zinc-50") {{formatBytes(selectedNodeStorage().total_bytes)}}
+                                    p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400") {{localStoragePath()}}
+                                div(class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
+                                    p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 남은 용량
+                                    p(class="mt-2 text-xl font-semibold text-emerald-700 dark:text-emerald-300") {{formatBytes(selectedNodeStorage().available_bytes)}}
+                                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 사용률 {{localStorageUsedPercent().toFixed(1)}}%
+                                div(class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
+                                    p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 사용 중
+                                    p(class="mt-2 text-xl font-semibold text-zinc-950 dark:text-zinc-50") {{formatBytes(selectedNodeStorage().used_bytes)}}
+                                    div(class="mt-2 h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800")
+                                        div(class="h-full rounded-full bg-sky-500", [style.width.%]="localStorageUsedPercent()")
+                                div(class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
+                                    p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 이미지 용량
+                                    p(class="mt-2 text-xl font-semibold text-zinc-950 dark:text-zinc-50") {{formatBytes(localTotalImageSize())}}
+                                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 이미지 {{localImageCount()}}개 · 미사용 {{localUnusedCount()}}개
+                            div(*ngIf="!localStorageAvailable()", class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{localStorageMessage()}}
                             div(class="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_auto_auto]")
                                 label(class="block")
                                     span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 이미지 검색
@@ -198,8 +223,13 @@ main(class="space-y-5 px-5 py-5")
                                     select([ngModel]="localSort()", (ngModelChange)="setLocalSort($event)", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
                                         option(*ngFor="let option of localSortOptions()", [value]="option.value") {{option.label}}
                             div(class="flex flex-wrap items-center justify-between gap-2")
-                                p(class="text-xs text-zinc-500 dark:text-zinc-400") 보이는 이미지 {{filteredLocalImages().length}}개
-                                button(type="button", (click)="deleteSelectedLocalImages()", [disabled]="localBusy() || selectedLocalImageCount() === 0", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                div(class="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400")
+                                    span 보이는 이미지 {{filteredLocalImages().length}}개
+                                    span(*ngIf="localDeleteEstimateBusy()", class="inline-flex items-center gap-1")
+                                        i(class="fa-solid fa-spinner fa-spin")
+                                        span 확보 용량 계산 중
+                                    span(*ngIf="selectedLocalEstimateLabel()", class="font-semibold text-zinc-700 dark:text-zinc-200") {{selectedLocalEstimateLabel()}}
+                                button(type="button", (click)="deleteSelectedLocalImages()", [disabled]="localBusy() || localDeleteEstimateBusy() || selectedLocalImageCount() === 0", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                                     i(class="fa-solid fa-trash")
                                     span 선택 삭제 ({{selectedLocalImageCount()}})
                             div(class="overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800")
@@ -212,12 +242,12 @@ main(class="space-y-5 px-5 py-5")
                                             th(class="px-4 py-2 text-left font-semibold") Tag
                                             th(class="px-4 py-2 text-left font-semibold") 사용 상태
                                             th(class="px-4 py-2 text-left font-semibold") 최근 사용
-                                            th(class="px-4 py-2 text-left font-semibold") 생성일 / 용량
+                                            th(class="px-4 py-2 text-left font-semibold") 용량
                                             th(class="px-4 py-2 text-left font-semibold") 작업
                                     tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
                                         tr(*ngFor="let item of filteredLocalImages()")
                                             td(class="px-4 py-3")
-                                                input(type="checkbox", [checked]="isLocalImageSelected(item)", (change)="toggleLocalImageSelection(item, $any($event.target).checked)")
+                                                input(type="checkbox", [checked]="isLocalImageSelected(item)", [disabled]="!localImageSelectable(item)", (change)="toggleLocalImageSelection(item, $any($event.target).checked)", class="disabled:opacity-40")
                                             td(class="px-4 py-3 font-semibold text-zinc-950 dark:text-zinc-50") {{displayImageField(item.repository)}}
                                             td(class="px-4 py-3 text-zinc-700 dark:text-zinc-200") {{displayImageField(item.tag)}}
                                             td(class="px-4 py-3")
@@ -227,11 +257,9 @@ main(class="space-y-5 px-5 py-5")
                                                 div {{formatDate(item.last_used_at)}}
                                                 div(class="mt-1 text-xs") 연결 {{item.usage_count || 0}}개
                                             td(class="px-4 py-3 text-zinc-500 dark:text-zinc-400")
-                                                div {{formatDate(item.created_at)}}
-                                                div(class="mt-1 text-xs") {{item.size || '-'}}
-                                                div(class="mt-1 text-xs") {{item.created_since || '-'}}
+                                                div {{item.size || '-'}}
                                             td(class="px-4 py-3")
-                                                button(type="button", (click)="deleteLocalImage(item)", [disabled]="localBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                                button(type="button", (click)="deleteLocalImage(item)", [disabled]="localBusy() || !localImageSelectable(item)", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                                                     i(class="fa-solid fa-trash")
                                                     span 삭제
                                         tr(*ngIf="filteredLocalImages().length === 0")
@@ -254,6 +282,28 @@ div(*ngIf="showCreateProjectModal()", class="fixed inset-0 z-[80] flex items-cen
             button(type="button", (click)="createHarborProject()", [disabled]="createProjectBusy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-950 bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                 i(*ngIf="createProjectBusy()", class="fa-solid fa-spinner fa-spin")
                 span 생성
+
+div(*ngIf="showLocalImageConfirmModal()", class="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/70 px-4")
+    div(class="w-full max-w-2xl rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
+        div(class="border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{localImageConfirmTitle()}}
+            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{selectedNodeName()}} · {{selectedNodeHost()}}
+        div(class="space-y-4 px-5 py-4")
+            div(class="rounded-md border px-4 py-3 text-sm", [ngClass]="localImageConfirmMode() === 'prune' ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200' : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-200'")
+                p(class="font-semibold") {{localImageConfirmMessage()}}
+                p(class="mt-2 whitespace-pre-line text-xs") {{localImageConfirmEstimate()}}
+            div(class="rounded-md border border-zinc-200 dark:border-zinc-800")
+                div(class="border-b border-zinc-100 px-4 py-2 text-xs font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 대상 이미지 {{localImageConfirmItems().length}}개
+                p(*ngIf="localImageConfirmItems().length === 0", class="px-4 py-4 text-sm text-zinc-500 dark:text-zinc-400") 대상 이미지가 없습니다.
+                ul(*ngIf="localImageConfirmItems().length > 0", class="max-h-72 list-disc space-y-2 overflow-auto px-8 py-4 text-sm text-zinc-800 dark:text-zinc-100")
+                    li(*ngFor="let item of localImageConfirmItems()", class="pl-1")
+                        div(class="break-all font-semibold") {{item.label}}
+                        div(*ngIf="item.meta", class="mt-0.5 break-all text-xs text-zinc-500 dark:text-zinc-400") {{item.meta}}
+        div(class="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            button(type="button", (click)="closeLocalImageConfirm(false)", class="inline-flex h-9 items-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800") 취소
+            button(type="button", (click)="closeLocalImageConfirm(true)", class="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold text-white disabled:opacity-50", [ngClass]="localImageConfirmMode() === 'prune' ? 'border-amber-600 bg-amber-600 hover:bg-amber-700 dark:border-amber-500 dark:bg-amber-600 dark:hover:bg-amber-500' : 'border-rose-600 bg-rose-600 hover:bg-rose-700 dark:border-rose-500 dark:bg-rose-600 dark:hover:bg-rose-500'")
+                i(class="fa-solid fa-triangle-exclamation")
+                span {{localImageConfirmAction()}}
 
 div(*ngIf="fileTreeOpen()", class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 px-4 py-6")
     section(class="relative max-h-[calc(100vh-3rem)] w-full max-w-5xl overflow-auto rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")

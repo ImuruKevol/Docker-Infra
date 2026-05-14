@@ -307,6 +307,413 @@ fi
 docker inspect --format '{{json .}}' $ids
 """
 
+DOCKER_IMAGE_STORAGE_SCRIPT = r"""
+import json
+import os
+import shutil
+import subprocess
+
+
+def run(argv, timeout=8):
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        return {
+            "ok": completed.returncode == 0,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+    except Exception as exc:
+        return {"ok": False, "stdout": "", "stderr": str(exc)}
+
+
+def docker_root():
+    result = run(["docker", "info", "--format", "{{json .}}"], timeout=8)
+    if result["ok"] and result["stdout"]:
+        try:
+            payload = json.loads(result["stdout"])
+            value = str(payload.get("DockerRootDir") or "").strip()
+            if value:
+                return value
+        except Exception:
+            pass
+    return "/var/lib/docker"
+
+
+def probe_path(path):
+    current = os.path.abspath(os.path.expanduser(path or "/var/lib/docker"))
+    while current and not os.path.exists(current):
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return current or "/"
+
+
+root = docker_root()
+try:
+    usage = shutil.disk_usage(probe_path(root))
+    total = int(usage.total)
+    used = int(usage.used)
+    available = int(usage.free)
+    used_percent = round(used * 100.0 / total, 2) if total else 0.0
+    print(json.dumps({
+        "available": True,
+        "path": root,
+        "total_bytes": total,
+        "used_bytes": used,
+        "available_bytes": available,
+        "used_percent": used_percent,
+    }, ensure_ascii=False))
+except Exception as exc:
+    print(json.dumps({
+        "available": False,
+        "path": root,
+        "total_bytes": 0,
+        "used_bytes": 0,
+        "available_bytes": 0,
+        "used_percent": 0.0,
+        "message": str(exc),
+    }, ensure_ascii=False))
+"""
+
+DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = r"""
+import json
+import subprocess
+import sys
+
+
+SIZE_UNITS = {
+    "b": 1,
+    "kb": 1024,
+    "mb": 1024 ** 2,
+    "gb": 1024 ** 3,
+    "tb": 1024 ** 4,
+    "pb": 1024 ** 5,
+}
+
+
+def run(argv, timeout=30):
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        return {
+            "ok": completed.returncode == 0,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+            "exit_code": completed.returncode,
+        }
+    except Exception as exc:
+        return {"ok": False, "stdout": "", "stderr": str(exc), "exit_code": None}
+
+
+def parse_json_lines(stdout):
+    items = []
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            items.append(payload)
+    return items
+
+
+def docker_df_image_rows(stdout):
+    rows = []
+    for row in parse_json_lines(stdout):
+        images = row.get("Images")
+        if isinstance(images, list):
+            rows.extend([item for item in images if isinstance(item, dict)])
+        else:
+            rows.append(row)
+    return rows
+
+
+def parse_size_bytes(value):
+    text = str(value or "").strip().replace(" ", "").lower()
+    if "(" in text:
+        text = text.split("(", 1)[0].strip()
+    if not text or text in {"n/a", "-"}:
+        return 0
+    number = ""
+    unit = ""
+    for char in text:
+        if char.isdigit() or char == ".":
+            number += char
+        else:
+            unit += char
+    if not number:
+        return 0
+    try:
+        amount = float(number)
+    except Exception:
+        return 0
+    return int(amount * SIZE_UNITS.get(unit or "b", 1))
+
+
+def normalize_id(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text if text.startswith("sha256:") else f"sha256:{text}"
+
+
+def compact_id(value):
+    return normalize_id(value).replace("sha256:", "", 1)
+
+
+def row_refs(row):
+    repository = str(row.get("Repository") or row.get("repository") or "").strip()
+    tag = str(row.get("Tag") or row.get("tag") or "").strip()
+    digest = str(row.get("Digest") or row.get("digest") or "").strip()
+    image_id = normalize_id(row.get("ID") or row.get("Id") or row.get("id"))
+    digest_value = "" if digest == "<none>" else digest
+    refs = {image_id, compact_id(image_id)}
+    if repository not in {"", "<none>"} and tag not in {"", "<none>"}:
+        refs.add(f"{repository}:{tag}")
+        if digest_value:
+            refs.add(f"{repository}:{tag}@{digest_value}")
+    if repository not in {"", "<none>"} and digest_value:
+        refs.add(f"{repository}@{digest_value}")
+    if repository not in {"", "<none>"}:
+        refs.add(repository)
+    return {item for item in refs if item}
+
+
+def container_image_ids():
+    ids = run(["docker", "container", "ls", "-aq", "--no-trunc"], timeout=15)
+    if not ids["ok"] or not ids["stdout"].strip():
+        return set()
+    result = run(["docker", "inspect", "--format", "{{json .}}", *ids["stdout"].split()], timeout=30)
+    in_use = set()
+    for item in parse_json_lines(result["stdout"] if result["ok"] else ""):
+        image_id = normalize_id(item.get("Image"))
+        if image_id:
+            in_use.add(image_id)
+    return in_use
+
+
+def match_image_id(value, image_ids):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    normalized = normalize_id(raw)
+    if normalized in image_ids:
+        return normalized
+    compact = raw.replace("sha256:", "", 1)
+    matches = [image_id for image_id in image_ids if compact_id(image_id).startswith(compact)]
+    return matches[0] if len(matches) == 1 else ""
+
+
+def docker_df_unique_sizes(image_ids, ref_to_id):
+    result = run(["docker", "system", "df", "-v", "--format", "{{json .}}"], timeout=30)
+    if not result["ok"]:
+        return {}, result["stderr"] or result["stdout"] or "docker system df failed"
+    sizes = {}
+    rows = docker_df_image_rows(result["stdout"])
+    for row in rows:
+        image_id = match_image_id(row.get("ImageID") or row.get("Image ID") or row.get("ID"), image_ids)
+        if not image_id:
+            repository = str(row.get("Repository") or row.get("REPOSITORY") or "").strip()
+            tag = str(row.get("Tag") or row.get("TAG") or "").strip()
+            if repository and repository != "<none>" and tag and tag != "<none>":
+                image_id = ref_to_id.get(f"{repository}:{tag}", "")
+        if not image_id:
+            continue
+        value = row.get("UniqueSize") or row.get("Unique Size") or row.get("UNIQUE SIZE") or row.get("Unique")
+        size = parse_size_bytes(value)
+        if size > sizes.get(image_id, 0):
+            sizes[image_id] = size
+    return sizes, ""
+
+
+def estimate(requested_refs):
+    list_result = run(["docker", "image", "ls", "--digests", "--no-trunc", "--format", "{{json .}}"], timeout=20)
+    if not list_result["ok"]:
+        return {
+            "available": False,
+            "message": list_result["stderr"] or list_result["stdout"] or "docker image list failed",
+            "reclaimable_bytes": 0,
+        }
+    rows = parse_json_lines(list_result["stdout"])
+    image_ids = {normalize_id(row.get("ID") or row.get("Id") or row.get("id")) for row in rows}
+    image_ids = {image_id for image_id in image_ids if image_id}
+    selected_refs = {str(item or "").strip() for item in requested_refs if str(item or "").strip()}
+    selected_rows_by_id = {}
+    selected_display_size_by_id = {}
+    rows_by_id = {}
+    force_image_ids = set()
+    ref_to_id = {}
+    for row in rows:
+        image_id = normalize_id(row.get("ID") or row.get("Id") or row.get("id"))
+        if not image_id:
+            continue
+        rows_by_id[image_id] = rows_by_id.get(image_id, 0) + 1
+        row_size = parse_size_bytes(row.get("Size") or row.get("VirtualSize") or row.get("SIZE"))
+        for ref in row_refs(row):
+            ref_to_id[ref] = image_id
+        refs = row_refs(row)
+        if image_id in selected_refs or compact_id(image_id) in selected_refs:
+            force_image_ids.add(image_id)
+        if refs.intersection(selected_refs):
+            selected_rows_by_id[image_id] = selected_rows_by_id.get(image_id, 0) + 1
+            if row_size > selected_display_size_by_id.get(image_id, 0):
+                selected_display_size_by_id[image_id] = row_size
+    removable_ids = set()
+    for image_id, selected_count in selected_rows_by_id.items():
+        if image_id in force_image_ids or selected_count >= rows_by_id.get(image_id, 0):
+            removable_ids.add(image_id)
+    used_ids = container_image_ids()
+    blocked_ids = removable_ids.intersection(used_ids)
+    removable_ids = removable_ids.difference(blocked_ids)
+    unique_sizes, df_error = docker_df_unique_sizes(image_ids, ref_to_id)
+    if removable_ids and df_error:
+        return {
+            "available": False,
+            "message": df_error,
+            "requested_count": len(selected_refs),
+            "matched_image_count": len(selected_rows_by_id),
+            "removable_image_count": len(removable_ids),
+            "blocked_image_count": len(blocked_ids),
+            "reclaimable_bytes": 0,
+        }
+    missing_ids = [image_id for image_id in removable_ids if image_id not in unique_sizes]
+    reclaimable_bytes = sum(unique_sizes.get(image_id, 0) for image_id in removable_ids)
+    selected_size_bytes = sum(selected_display_size_by_id.get(image_id, 0) for image_id in selected_rows_by_id)
+    removable_size_bytes = sum(selected_display_size_by_id.get(image_id, 0) for image_id in removable_ids)
+    return {
+        "available": True,
+        "requested_count": len(selected_refs),
+        "matched_image_count": len(selected_rows_by_id),
+        "removable_image_count": len(removable_ids),
+        "blocked_image_count": len(blocked_ids),
+        "tag_only_count": max(0, len(selected_refs) - len(removable_ids)),
+        "missing_unique_count": len(missing_ids),
+        "reclaimable_bytes": int(max(0, reclaimable_bytes)),
+        "selected_size_bytes": int(max(0, selected_size_bytes)),
+        "removable_size_bytes": int(max(0, removable_size_bytes)),
+        "shared_or_retained_bytes": int(max(0, removable_size_bytes - reclaimable_bytes)),
+        "method": "docker_system_df_verbose",
+        "command": "docker system df -v --format '{{json .}}'",
+    }
+
+
+try:
+    refs = json.loads(sys.argv[1]) if len(sys.argv) > 1 else []
+except Exception:
+    refs = []
+
+print(json.dumps(estimate(refs), ensure_ascii=False))
+"""
+
+DOCKER_PRUNE_ESTIMATE_SCRIPT = r"""
+import json
+import subprocess
+import sys
+
+
+SIZE_UNITS = {
+    "b": 1,
+    "kb": 1024,
+    "mb": 1024 ** 2,
+    "gb": 1024 ** 3,
+    "tb": 1024 ** 4,
+    "pb": 1024 ** 5,
+}
+
+
+def run(argv, timeout=20):
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        return {
+            "ok": completed.returncode == 0,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+    except Exception as exc:
+        return {"ok": False, "stdout": "", "stderr": str(exc)}
+
+
+def parse_json_lines(stdout):
+    items = []
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            items.append(payload)
+    return items
+
+
+def parse_size_bytes(value):
+    text = str(value or "").strip().replace(" ", "").lower()
+    if "(" in text:
+        text = text.split("(", 1)[0].strip()
+    if not text or text in {"n/a", "-"}:
+        return 0
+    number = ""
+    unit = ""
+    for char in text:
+        if char.isdigit() or char == ".":
+            number += char
+        else:
+            unit += char
+    if not number:
+        return 0
+    try:
+        amount = float(number)
+    except Exception:
+        return 0
+    return int(amount * SIZE_UNITS.get(unit or "b", 1))
+
+
+def type_key(row):
+    return str(row.get("Type") or row.get("TYPE") or row.get("type") or "").strip().lower()
+
+
+def estimate(action):
+    result = run(["docker", "system", "df", "--format", "{{json .}}"], timeout=20)
+    if not result["ok"]:
+        return {
+            "available": False,
+            "message": result["stderr"] or result["stdout"] or "docker system df failed",
+            "reclaimable_bytes": 0,
+        }
+    rows = parse_json_lines(result["stdout"])
+    image_row = {}
+    for row in rows:
+        key = type_key(row)
+        if key == "images":
+            image_row = row
+            break
+    images = parse_size_bytes(image_row.get("Reclaimable") or image_row.get("RECLAIMABLE") or image_row.get("reclaimable"))
+    image_total = parse_size_bytes(image_row.get("Size") or image_row.get("SIZE") or image_row.get("size"))
+    command = "docker image prune -a -f"
+    return {
+        "available": True,
+        "action": "image",
+        "command": command,
+        "method": "docker_system_df",
+        "reclaimable_bytes": int(max(0, images)),
+        "image_total_bytes": int(max(0, image_total)),
+        "images_reclaimable_bytes": int(max(0, images)),
+        "total_count": image_row.get("TotalCount") or image_row.get("TOTAL COUNT") or image_row.get("total_count") or "",
+        "active_count": image_row.get("Active") or image_row.get("ACTIVE") or image_row.get("active") or "",
+    }
+
+
+action = str(sys.argv[1] if len(sys.argv) > 1 else "image").strip()
+if action != "image":
+    action = "image"
+print(json.dumps(estimate(action), ensure_ascii=False))
+"""
+
 AI_RESOURCE_SCRIPT = r"""
 python3 - <<'PY'
 import json
@@ -529,6 +936,9 @@ class LocalCommandScripts:
     SYSTEM_METRICS_SCRIPT = SYSTEM_METRICS_SCRIPT
     NODE_METRICS_AGENT_SCRIPT = NODE_METRICS_AGENT_SCRIPT
     DOCKER_IMAGE_USAGE_SCRIPT = DOCKER_IMAGE_USAGE_SCRIPT
+    DOCKER_IMAGE_STORAGE_SCRIPT = DOCKER_IMAGE_STORAGE_SCRIPT
+    DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT
+    DOCKER_PRUNE_ESTIMATE_SCRIPT = DOCKER_PRUNE_ESTIMATE_SCRIPT
     AI_RESOURCE_SCRIPT = AI_RESOURCE_SCRIPT
     AI_OLLAMA_SCAN_SCRIPT = AI_OLLAMA_SCAN_SCRIPT
 

@@ -1,3 +1,4 @@
+import json
 import re
 import shlex
 import sys
@@ -295,6 +296,35 @@ def _docker_image_remove_command(params):
     return ["docker", "image", "rm", "-f", image_ref]
 
 
+def _docker_image_refs(params):
+    refs = (params or {}).get("image_refs") or []
+    if isinstance(refs, list) is False or len(refs) == 0:
+        raise LocalCommandError(400, "image_refs가 필요합니다.", "IMAGE_REFS_REQUIRED")
+    image_refs = [str(item).strip() for item in refs if str(item).strip()]
+    if not image_refs:
+        raise LocalCommandError(400, "image_refs가 필요합니다.", "IMAGE_REFS_REQUIRED")
+    return image_refs
+
+
+def _docker_image_delete_estimate_command(params):
+    return ["python3", "-c", DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT, json.dumps(_docker_image_refs(params))]
+
+
+def _docker_prune_action(params):
+    action = str((params or {}).get("action") or "image").strip()
+    if action != "image":
+        raise LocalCommandError(400, "지원하지 않는 이미지 정리 작업입니다.", "INVALID_PRUNE_ACTION")
+    return action
+
+
+def _docker_prune_estimate_command(params):
+    return ["python3", "-c", DOCKER_PRUNE_ESTIMATE_SCRIPT, _docker_prune_action(params)]
+
+
+def _docker_image_prune_command(params):
+    return ["docker", "image", "prune", "-a", "-f"]
+
+
 def _stack_name_param(params):
     stack_name = str((params or {}).get("stack_name") or "").strip()
     if NETWORK_NAME_RE.match(stack_name) is None:
@@ -520,6 +550,9 @@ def _filesystem_read_command(params):
 SYSTEM_METRICS_SCRIPT = scripts.SYSTEM_METRICS_SCRIPT
 NODE_METRICS_AGENT_SCRIPT = scripts.NODE_METRICS_AGENT_SCRIPT
 DOCKER_IMAGE_USAGE_SCRIPT = scripts.DOCKER_IMAGE_USAGE_SCRIPT
+DOCKER_IMAGE_STORAGE_SCRIPT = scripts.DOCKER_IMAGE_STORAGE_SCRIPT
+DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = scripts.DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT
+DOCKER_PRUNE_ESTIMATE_SCRIPT = scripts.DOCKER_PRUNE_ESTIMATE_SCRIPT
 AI_RESOURCE_SCRIPT = scripts.AI_RESOURCE_SCRIPT
 AI_OLLAMA_SCAN_SCRIPT = scripts.AI_OLLAMA_SCAN_SCRIPT
 
@@ -540,6 +573,10 @@ COMMAND_SPECS = {
     "docker.containers": {"category": "docker", "argv": ["docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}"]},
     "docker.images": {"category": "docker", "argv": ["docker", "image", "ls", "--digests", "--no-trunc", "--format", "{{json .}}"]},
     "docker.images.usage": {"category": "docker", "argv": ["sh", "-lc", DOCKER_IMAGE_USAGE_SCRIPT]},
+    "docker.images.storage": {"category": "docker", "argv": ["python3", "-c", DOCKER_IMAGE_STORAGE_SCRIPT]},
+    "docker.images.delete_estimate": {"category": "docker", "factory": _docker_image_delete_estimate_command, "default_timeout_seconds": 45},
+    "docker.prune.estimate": {"category": "docker", "factory": _docker_prune_estimate_command, "default_timeout_seconds": 20},
+    "docker.image.prune": {"category": "docker", "factory": _docker_image_prune_command, "destructive": True, "default_timeout_seconds": 300},
     "docker.container.start": {"category": "docker", "factory": _docker_container_start_command, "destructive": True},
     "docker.container.stop": {"category": "docker", "factory": _docker_container_stop_command, "destructive": True},
     "docker.container.restart": {"category": "docker", "factory": _docker_container_restart_command, "destructive": True},
@@ -589,6 +626,10 @@ class LocalCommandCatalog:
     MAX_CAPTURE_CHARS = MAX_CAPTURE_CHARS
     SYSTEM_METRICS_SCRIPT = SYSTEM_METRICS_SCRIPT
     NODE_METRICS_AGENT_SCRIPT = NODE_METRICS_AGENT_SCRIPT
+    DOCKER_IMAGE_USAGE_SCRIPT = DOCKER_IMAGE_USAGE_SCRIPT
+    DOCKER_IMAGE_STORAGE_SCRIPT = DOCKER_IMAGE_STORAGE_SCRIPT
+    DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT
+    DOCKER_PRUNE_ESTIMATE_SCRIPT = DOCKER_PRUNE_ESTIMATE_SCRIPT
     METRICS_COLLECTOR_AGENT_VERSION = METRICS_COLLECTOR_AGENT_VERSION
     LocalCommandError = LocalCommandError
     COMMAND_SPECS = COMMAND_SPECS

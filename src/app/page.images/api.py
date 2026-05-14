@@ -173,3 +173,51 @@ def delete_local():
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
     wiz.response.status(code, **payload)
+
+
+def local_delete_estimate():
+    images_model = wiz.model("struct").images
+    code = 200
+    payload = {}
+    try:
+        payload = images_model.local_delete_estimate(wiz.request.query())
+    except images_model.ImageError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def local_prune_estimate():
+    images_model = wiz.model("struct").images
+    code = 200
+    payload = {}
+    try:
+        payload = images_model.local_prune_estimate(wiz.request.query())
+    except images_model.ImageError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def local_prune():
+    images_model = wiz.model("struct").images
+    code = 200
+    payload = {}
+    try:
+        payload = images_model.prune_local(wiz.request.query())
+    except images_model.ImageError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)

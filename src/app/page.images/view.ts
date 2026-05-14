@@ -3,7 +3,8 @@ import { Service } from '@wiz/libs/portal/season/service';
 
 type ImageTab = 'harbor' | 'local';
 type LocalUsageFilter = 'all' | 'used' | 'unused';
-type LocalSortKey = 'last_used_desc' | 'last_used_asc' | 'size_desc' | 'size_asc' | 'created_desc' | 'created_asc';
+type LocalSortKey = 'last_used_desc' | 'last_used_asc' | 'size_desc' | 'size_asc';
+type LocalImageConfirmMode = '' | 'prune' | 'delete';
 
 export class Component implements OnInit {
     public loading = signal<boolean>(true);
@@ -37,6 +38,18 @@ export class Component implements OnInit {
     public localUsageFilter = signal<LocalUsageFilter>('all');
     public localSort = signal<LocalSortKey>('last_used_desc');
     public selectedLocalItems = signal<string[]>([]);
+    public localDeleteEstimate = signal<any>(null);
+    public localDeleteEstimateBusy = signal<boolean>(false);
+    public localPruneBusy = signal<boolean>(false);
+    public localPruneEstimateBusy = signal<boolean>(false);
+    public showLocalImageConfirmModal = signal<boolean>(false);
+    public localImageConfirmMode = signal<LocalImageConfirmMode>('');
+    public localImageConfirmTitle = signal<string>('');
+    public localImageConfirmMessage = signal<string>('');
+    public localImageConfirmEstimate = signal<string>('');
+    public localImageConfirmAction = signal<string>('확인');
+    public localImageConfirmItems = signal<any[]>([]);
+    private localImageConfirmResolve: ((confirmed: boolean) => void) | null = null;
 
     constructor(public service: Service) { }
 
@@ -93,8 +106,10 @@ export class Component implements OnInit {
         this.selectedHarborRepositories.set([]);
         this.selectedHarborItems.set([]);
         this.selectedLocalItems.set([]);
+        this.localDeleteEstimate.set(null);
+        this.closeLocalImageConfirm(false);
         this.selectedNodeId.set(data.selected_node_id || '');
-        this.activeTab.set(this.selectedNodeId() ? 'local' : 'harbor');
+        this.activeTab.set(!this.selectedNodeId() && this.harbor().enabled ? 'harbor' : 'local');
         this.loading.set(false);
         await this.service.render();
 
@@ -106,6 +121,7 @@ export class Component implements OnInit {
     }
 
     public async setTab(tab: ImageTab) {
+        if (tab === 'harbor' && !this.harbor().enabled) return;
         this.activeTab.set(tab);
         await this.service.render();
         if (tab === 'harbor') {
@@ -198,12 +214,14 @@ export class Component implements OnInit {
         this.localBusy.set(true);
         this.selectedNodeId.set(nodeId);
         this.selectedLocalItems.set([]);
+        this.localDeleteEstimate.set(null);
+        this.closeLocalImageConfirm(false);
         const { code, data } = await wiz.call('local_detail', { node_id: nodeId });
         if (code === 200) {
             this.localDetail.set(data);
             this.localSummaryByNode.set({
                 ...this.localSummaryByNode(),
-                [nodeId]: data.summary || { image_count: 0, used_count: 0, unused_count: 0 },
+                [nodeId]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
             });
         } else if (!silent) {
             await this.alert(data?.message || '서버 로컬 이미지를 불러올 수 없습니다.');
@@ -244,7 +262,7 @@ export class Component implements OnInit {
 
     public selectedNodeSummary() {
         const nodeId = this.selectedNodeId();
-        const cached = this.localSummaryByNode()?.[nodeId] || { image_count: 0, used_count: 0, unused_count: 0 };
+        const cached = this.localSummaryByNode()?.[nodeId] || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 };
         return this.localDetail()?.summary || cached;
     }
 
@@ -258,6 +276,35 @@ export class Component implements OnInit {
 
     public localUnusedCount() {
         return this.selectedNodeSummary().unused_count || 0;
+    }
+
+    public localTotalImageSize() {
+        return this.selectedNodeSummary().total_size_bytes || 0;
+    }
+
+    public selectedNodeStorage() {
+        return this.localDetail()?.storage || {};
+    }
+
+    public localStorageAvailable() {
+        const storage = this.selectedNodeStorage();
+        return storage?.available !== false && Number(storage?.total_bytes || 0) > 0;
+    }
+
+    public localStorageUsedPercent() {
+        const storage = this.selectedNodeStorage();
+        const total = Number(storage?.total_bytes || 0);
+        if (!total) return 0;
+        const used = Number(storage?.used_bytes || 0);
+        return Math.max(0, Math.min(100, Number(storage?.used_percent ?? (used * 100 / total))));
+    }
+
+    public localStorageMessage() {
+        return this.selectedNodeStorage()?.message || '저장소 용량을 확인할 수 없습니다.';
+    }
+
+    public localStoragePath() {
+        return this.selectedNodeStorage()?.path || '-';
     }
 
     public harborRepositories() {
@@ -375,42 +422,64 @@ export class Component implements OnInit {
         return String(item?.remove_ref || item?.image_id || '').trim();
     }
 
+    public localImageSelectable(item: any) {
+        return Boolean(this.localImageKey(item)) && !item?.in_use;
+    }
+
     public isLocalImageSelected(item: any) {
-        return this.selectedLocalItems().includes(this.localImageKey(item));
+        return this.localImageSelectable(item) && this.selectedLocalItems().includes(this.localImageKey(item));
     }
 
     public toggleLocalImageSelection(item: any, checked: boolean) {
         const key = this.localImageKey(item);
+        if (!key || (checked && !this.localImageSelectable(item))) return;
         const items = new Set(this.selectedLocalItems());
         if (checked) items.add(key);
         else items.delete(key);
         this.selectedLocalItems.set(Array.from(items));
+        this.localDeleteEstimate.set(null);
     }
 
     public toggleAllLocalImages(checked: boolean) {
         if (!checked) {
             this.selectedLocalItems.set([]);
+            this.localDeleteEstimate.set(null);
             return;
         }
-        this.selectedLocalItems.set(this.filteredLocalImages().map((item: any) => this.localImageKey(item)).filter((item: string) => item));
+        this.selectedLocalItems.set(
+            this.filteredLocalImages()
+                .filter((item: any) => this.localImageSelectable(item))
+                .map((item: any) => this.localImageKey(item))
+                .filter((item: string) => item)
+        );
+        this.localDeleteEstimate.set(null);
     }
 
     public allVisibleLocalImagesSelected() {
-        const visible = this.filteredLocalImages();
+        const visible = this.filteredLocalImages().filter((item: any) => this.localImageSelectable(item));
         if (!visible.length) return false;
         const selected = new Set(this.selectedLocalItems());
         return visible.every((item: any) => selected.has(this.localImageKey(item)));
     }
 
     public selectedLocalImageCount() {
-        return this.selectedLocalItems().length;
+        return this.selectedLocalDeleteItems().length;
     }
 
     public selectedLocalDeleteItems() {
         const selected = new Set(this.selectedLocalItems());
-        return (this.localDetail()?.images || [])
-            .filter((item: any) => selected.has(this.localImageKey(item)))
+        return this.selectedLocalDeleteImageRows()
             .map((item: any) => ({ image_ref: item.remove_ref }));
+    }
+
+    public selectedLocalDeleteImageRows() {
+        const selected = new Set(this.selectedLocalItems());
+        return (this.localDetail()?.images || [])
+            .filter((item: any) => this.localImageSelectable(item) && selected.has(this.localImageKey(item)));
+    }
+
+    public localPruneCandidates() {
+        return (this.localDetail()?.images || []).filter((item: any) => this.localImageSelectable(item));
     }
 
     private compareLocalImages(left: any, right: any) {
@@ -419,10 +488,6 @@ export class Component implements OnInit {
                 return this.numberValue(left.size_bytes) - this.numberValue(right.size_bytes);
             case 'size_desc':
                 return this.numberValue(right.size_bytes) - this.numberValue(left.size_bytes);
-            case 'created_asc':
-                return this.dateValue(left.created_at) - this.dateValue(right.created_at);
-            case 'created_desc':
-                return this.dateValue(right.created_at) - this.dateValue(left.created_at);
             case 'last_used_asc':
                 return this.dateValue(left.last_used_at) - this.dateValue(right.last_used_at);
             case 'last_used_desc':
@@ -455,8 +520,6 @@ export class Component implements OnInit {
             { value: 'last_used_asc', label: '오래된 사용 순' },
             { value: 'size_desc', label: '용량 큰 순' },
             { value: 'size_asc', label: '용량 작은 순' },
-            { value: 'created_desc', label: '생성 최신 순' },
-            { value: 'created_asc', label: '생성 오래된 순' },
         ];
     }
 
@@ -621,7 +684,179 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
+    private localDeleteEstimateText(estimate: any) {
+        if (!estimate) return '예상 확보 용량을 계산하지 못했습니다.';
+        const method = estimate.method === 'docker_system_df_verbose' ? 'Docker system df -v 기준 실제 확보 용량' : 'Docker 명령 기준';
+        const displaySize = Number(estimate.removable_size_bytes || estimate.selected_size_bytes || 0);
+        const displayText = displaySize > 0 ? ` / 표시 용량 ${this.formatBytes(displaySize)}` : '';
+        const retained = Number(estimate.shared_or_retained_bytes || 0);
+        const retainedText = retained > 0 ? ` / 공유·유지 레이어 ${this.formatBytes(retained)} 제외` : '';
+        const blocked = Number(estimate.blocked_image_count || 0);
+        const blockedText = blocked > 0 ? ` / 사용 중 제외 ${blocked}개` : '';
+        const missing = Number(estimate.missing_unique_count || 0);
+        const missingText = missing > 0 ? ` / 고유 용량 미확인 ${missing}개` : '';
+        return `실제 확보 예상: ${this.formatBytes(estimate.reclaimable_bytes, '0 B')} (${method}${displayText}${retainedText}${blockedText}${missingText})`;
+    }
+
+    private async estimateSelectedLocalDelete(items: any[]) {
+        this.localDeleteEstimate.set(null);
+        this.localDeleteEstimateBusy.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call('local_delete_estimate', {
+            node_id: this.selectedNodeId(),
+            items,
+        });
+        this.localDeleteEstimateBusy.set(false);
+        if (code === 200) {
+            this.localDeleteEstimate.set(data.estimate || null);
+            await this.service.render();
+            return data.estimate || null;
+        }
+        await this.service.render();
+        return null;
+    }
+
+    private pruneEstimateText(estimate: any) {
+        if (!estimate) return '예상 확보 용량을 계산하지 못했습니다.';
+        const total = Number(estimate.image_total_bytes || 0);
+        const totalText = total > 0 ? ` / 이미지 표시 용량 ${this.formatBytes(total)}` : '';
+        return `미사용 이미지 정리 예상 확보: ${this.formatBytes(estimate.reclaimable_bytes, '0 B')}${totalText} (Docker image prune 기준)`;
+    }
+
+    private pruneResultText(result: any) {
+        if (!result) return '정리 작업을 완료했습니다.';
+        const reclaimed = result.reclaimed || this.formatBytes(result.reclaimed_bytes, '0 B');
+        return `정리 작업을 완료했습니다. 확보 용량: ${reclaimed || '0 B'}`;
+    }
+
+    private localImageDisplayLabel(item: any) {
+        const repository = String(item?.repository || '').trim();
+        const tag = String(item?.tag || '').trim();
+        if (repository && repository !== '<none>' && tag && tag !== '<none>') return `${repository}:${tag}`;
+        if (repository && repository !== '<none>') return repository;
+        return String(item?.image_id || item?.remove_ref || '-');
+    }
+
+    private shortImageId(value: any) {
+        const text = String(value || '').replace(/^sha256:/, '').trim();
+        if (!text) return '';
+        return text.length > 12 ? text.slice(0, 12) : text;
+    }
+
+    private localImageConfirmListItems(items: any[]) {
+        return (items || []).map((item: any) => {
+            const imageId = this.shortImageId(item?.image_id);
+            const meta = [
+                item?.size || '',
+                imageId ? `ID ${imageId}` : '',
+                item?.last_used_at ? `최근 사용 ${this.formatDate(item.last_used_at)}` : '',
+            ].filter((value: string) => value);
+            return {
+                key: this.localImageKey(item) || this.localImageDisplayLabel(item),
+                label: this.localImageDisplayLabel(item),
+                meta: meta.join(' · '),
+            };
+        });
+    }
+
+    private async confirmLocalImageAction(config: any) {
+        if (this.localImageConfirmResolve) {
+            this.localImageConfirmResolve(false);
+            this.localImageConfirmResolve = null;
+        }
+        this.localImageConfirmMode.set(config.mode || '');
+        this.localImageConfirmTitle.set(config.title || '');
+        this.localImageConfirmMessage.set(config.message || '');
+        this.localImageConfirmEstimate.set(config.estimate || '');
+        this.localImageConfirmAction.set(config.action || '확인');
+        this.localImageConfirmItems.set(this.localImageConfirmListItems(config.items || []));
+        this.showLocalImageConfirmModal.set(true);
+        const confirmed = new Promise<boolean>((resolve) => {
+            this.localImageConfirmResolve = resolve;
+        });
+        await this.service.render();
+        return await confirmed;
+    }
+
+    public closeLocalImageConfirm(confirmed: boolean = false) {
+        const resolve = this.localImageConfirmResolve;
+        this.localImageConfirmResolve = null;
+        this.showLocalImageConfirmModal.set(false);
+        this.localImageConfirmMode.set('');
+        this.localImageConfirmTitle.set('');
+        this.localImageConfirmMessage.set('');
+        this.localImageConfirmEstimate.set('');
+        this.localImageConfirmAction.set('확인');
+        this.localImageConfirmItems.set([]);
+        if (resolve) resolve(confirmed);
+    }
+
+    private async estimateLocalPrune() {
+        if (!this.selectedNodeId()) return null;
+        this.localPruneEstimateBusy.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call('local_prune_estimate', {
+            node_id: this.selectedNodeId(),
+            action: 'image',
+        });
+        this.localPruneEstimateBusy.set(false);
+        if (code === 200) {
+            await this.service.render();
+            return data.estimate || null;
+        }
+        await this.alert(data?.message || '미사용 이미지 정리 예상 확보 용량을 계산할 수 없습니다.');
+        await this.service.render();
+        return null;
+    }
+
+    private async applyLocalPruneResult(data: any) {
+        this.localDetail.set(data);
+        this.localSummaryByNode.set({
+            ...this.localSummaryByNode(),
+            [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
+        });
+        this.selectedLocalItems.set([]);
+        this.localDeleteEstimate.set(null);
+    }
+
+    private async executeLocalPrune() {
+        this.localPruneBusy.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call('local_prune', {
+            node_id: this.selectedNodeId(),
+            action: 'image',
+            confirmed: true,
+        });
+        if (code === 200) {
+            await this.applyLocalPruneResult(data);
+            await this.alert(this.pruneResultText(data.prune_result), 'success');
+        } else {
+            await this.alert(data?.message || '미사용 이미지 정리를 실행할 수 없습니다.');
+        }
+        this.localPruneBusy.set(false);
+        await this.service.render();
+    }
+
+    public async runImagePrune() {
+        if (!this.selectedNodeId()) return;
+        const estimate = await this.estimateLocalPrune();
+        const ok = await this.confirmLocalImageAction({
+            mode: 'prune',
+            title: '미사용 이미지 정리',
+            message: '사용 중이지 않은 모든 Docker 이미지가 삭제됩니다. 이 작업은 되돌릴 수 없습니다.',
+            estimate: `실행 명령: docker image prune -a -f\n${this.pruneEstimateText(estimate)}`,
+            action: '미사용 이미지 정리',
+            items: this.localPruneCandidates(),
+        });
+        if (!ok) return;
+        await this.executeLocalPrune();
+    }
+
     public async deleteLocalImage(item: any) {
+        if (!this.localImageSelectable(item)) {
+            await this.alert('사용 중인 이미지는 삭제할 수 없습니다.');
+            return;
+        }
         const label = item.repository && item.tag ? `${item.repository}:${item.tag}` : item.image_id;
         const ok = await this.confirm(`${label} 이미지를 이 서버 로컬 저장소에서 삭제합니다.`, '로컬 삭제');
         if (!ok) return;
@@ -634,9 +869,10 @@ export class Component implements OnInit {
             this.localDetail.set(data);
             this.localSummaryByNode.set({
                 ...this.localSummaryByNode(),
-                [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0 },
+                [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
             });
             this.selectedLocalItems.set(this.selectedLocalItems().filter((itemKey: string) => itemKey !== this.localImageKey(item)));
+            this.localDeleteEstimate.set(null);
             await this.alert('로컬 이미지를 삭제했습니다.', 'success');
         } else {
             await this.alert(data?.message || '로컬 이미지를 삭제할 수 없습니다.');
@@ -646,9 +882,18 @@ export class Component implements OnInit {
     }
 
     public async deleteSelectedLocalImages() {
-        const items = this.selectedLocalDeleteItems();
+        const rows = this.selectedLocalDeleteImageRows();
+        const items = rows.map((item: any) => ({ image_ref: item.remove_ref }));
         if (!items.length) return;
-        const ok = await this.confirm(`선택한 로컬 이미지 ${items.length}개를 삭제합니다.`, '로컬 삭제');
+        const estimate = await this.estimateSelectedLocalDelete(items);
+        const ok = await this.confirmLocalImageAction({
+            mode: 'delete',
+            title: '선택 이미지 삭제',
+            message: `선택한 로컬 이미지 ${items.length}개를 삭제합니다. 이 작업은 되돌릴 수 없습니다.`,
+            estimate: this.localDeleteEstimateText(estimate),
+            action: '선택 삭제',
+            items: rows,
+        });
         if (!ok) return;
         this.localBusy.set(true);
         const { code, data } = await wiz.call('delete_local', {
@@ -659,9 +904,10 @@ export class Component implements OnInit {
             this.localDetail.set(data);
             this.localSummaryByNode.set({
                 ...this.localSummaryByNode(),
-                [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0 },
+                [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
             });
             this.selectedLocalItems.set([]);
+            this.localDeleteEstimate.set(null);
             await this.alert('선택한 로컬 이미지를 삭제했습니다.', 'success');
         } else {
             await this.alert(data?.message || '로컬 이미지를 삭제할 수 없습니다.');
@@ -715,6 +961,12 @@ export class Component implements OnInit {
         return `실행 ${running}개 / 전체 ${usage}개`;
     }
 
+    public selectedLocalEstimateLabel() {
+        const estimate = this.localDeleteEstimate();
+        if (!estimate) return '';
+        return this.localDeleteEstimateText(estimate);
+    }
+
     public statusClass(status: any) {
         if (status === true || ['ok', 'active', 'enabled', 'configured'].includes(status)) {
             return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
@@ -735,9 +987,9 @@ export class Component implements OnInit {
         return date.toLocaleString();
     }
 
-    public formatBytes(value: any) {
+    public formatBytes(value: any, zeroLabel: string = '-') {
         const size = Number(value || 0);
-        if (!size) return '-';
+        if (!size) return zeroLabel;
         const units = ['B', 'KB', 'MB', 'GB', 'TB'];
         let current = size;
         let index = 0;
