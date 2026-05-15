@@ -10,6 +10,7 @@ export class Component implements OnInit, OnDestroy {
     public activeTab = signal<string>('general');
     public activeAiTab = signal<string>('codex');
     public savingGeneral = signal<boolean>(false);
+    public savingPassword = signal<boolean>(false);
     public savingAi = signal<boolean>(false);
     public savingAiSection = signal<string>('');
     public savingBackupPolicy = signal<boolean>(false);
@@ -22,6 +23,7 @@ export class Component implements OnInit, OnDestroy {
     public refreshingCodexStatus = signal<boolean>(false);
     public testingCodex = signal<boolean>(false);
     public general: any = { browser_title: 'Docker Infra', favicon_url: AppearanceRuntime.assetRoute('favicon'), logo_url: AppearanceRuntime.assetRoute('logo') };
+    public adminPassword: any = { current_password: '', new_password: '', confirm_password: '' };
     public aiSettings: any = this.defaultAiSettings();
     public aiTokens: any = { openai: {}, gemini: {} };
     public aiSecrets: any = { openai_api_token: '', gemini_api_token: '' };
@@ -309,6 +311,39 @@ export class Component implements OnInit, OnDestroy {
             return;
         }
         await this.alert(data?.message || '일반 설정을 저장할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async changeAdminPassword() {
+        if (this.savingPassword()) return;
+        if (!this.adminPassword.current_password) {
+            await this.alert('현재 비밀번호를 입력해주세요.');
+            return;
+        }
+        if (!this.adminPassword.new_password) {
+            await this.alert('새 비밀번호를 입력해주세요.');
+            return;
+        }
+        if (this.adminPassword.new_password !== this.adminPassword.confirm_password) {
+            await this.alert('새 비밀번호 확인이 일치하지 않습니다.');
+            return;
+        }
+
+        this.savingPassword.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call('change_admin_password', {
+            current_password: this.adminPassword.current_password,
+            new_password: this.adminPassword.new_password,
+            confirm_password: this.adminPassword.confirm_password
+        });
+        this.savingPassword.set(false);
+        if (code === 200) {
+            this.adminPassword = { current_password: '', new_password: '', confirm_password: '' };
+            await this.alert('관리자 비밀번호를 변경했습니다.', 'success');
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || '관리자 비밀번호를 변경할 수 없습니다.');
         await this.service.render();
     }
 

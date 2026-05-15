@@ -5,25 +5,13 @@ import { AppearanceRuntime } from '@wiz/libs/portal/season/appearance';
 export class Component implements OnInit {
     public loading = signal<boolean>(true);
     public setup = signal<any>(null);
-    public advancedSetup = signal<boolean>(false);
     public appearance: any = {
         browser_title: 'Docker Infra',
         favicon_url: '',
         logo_url: ''
     };
     public data: any = {
-        password: '',
-        setup: {
-            password: '',
-            confirm_password: '',
-            advertise_address: '',
-            proxy_type: 'nginx',
-            service_root: '.runtime/dev/services',
-            backup_system: {
-                enabled: false,
-                data_path: ''
-            }
-        }
+        password: ''
     };
 
     constructor(public service: Service) { }
@@ -56,6 +44,10 @@ export class Component implements OnInit {
     }
 
     public async login() {
+        if (this.requiresSetup()) {
+            await this.alert("설치 관리자에서 초기 설정을 먼저 완료해주세요.");
+            return;
+        }
         if (!this.data.password) {
             await this.alert("비밀번호를 입력해주세요.");
             return;
@@ -74,13 +66,8 @@ export class Component implements OnInit {
         const { code, data } = await wiz.call("setup_status", {});
         if (code === 200) {
             this.setup.set(data.setup);
-            const checks = data.setup?.checks || {};
-            this.data.setup.advertise_address = data.setup?.settings?.advertise_address || checks.advertise_address || '';
-            this.data.setup.service_root = data.setup?.settings?.service_root || '.runtime/dev/services';
-            this.data.setup.proxy_type = 'nginx';
-            const backup = data.setup?.backup_system || {};
-            this.data.setup.backup_system.enabled = backup.enabled === true;
-            this.data.setup.backup_system.data_path = backup.data_path || '';
+        } else {
+            this.setup.set({ requires_setup: true, database_configured: false });
         }
         this.loading.set(false);
         await this.service.render();
@@ -92,80 +79,28 @@ export class Component implements OnInit {
         return status.requires_setup !== false;
     }
 
-    public setupChecks() {
-        const checks = this.setup()?.checks || {};
-        const docker = checks.docker || {};
-        const swarm = docker.swarm || {};
-        const proxy = checks.proxy || {};
-        return [
-            { label: '서버', value: docker.daemon === 'ok' ? '정상' : '확인 필요', ok: docker.daemon === 'ok' },
-            { label: '클러스터', value: swarm.manager ? '준비됨' : '확인 필요', ok: !!swarm.manager },
-            { label: '웹 연결', value: proxy.nginx?.status === 'ok' ? '정상' : '확인 필요', ok: proxy.nginx?.status === 'ok' },
-        ];
+    public setupStatusLabel() {
+        const status = this.setup();
+        if (!status) return '확인 중';
+        if (status.database_configured === false) return '설치 필요';
+        return this.requiresSetup() ? '초기 설정 필요' : '접속 가능';
     }
 
-    public backupStatus() {
-        return this.setup()?.backup_system || {};
-    }
-
-    public backupPorts() {
-        return this.backupStatus()?.required_ports || [];
-    }
-
-    public backupStorageText() {
-        const storage = this.backupStatus()?.storage || {};
-        return `${this.formatBytes(storage.available_bytes)} 남음 / 전체 ${this.formatBytes(storage.total_bytes)}`;
-    }
-
-    public backupStatusLabel() {
-        const enabled = this.data.setup.backup_system.enabled;
-        const status = this.backupStatus()?.status || 'disabled';
-        if (!enabled) return '사용 안 함';
-        if (status === 'running') return '실행 중';
-        if (status === 'failed') return '설치 실패';
-        return '설치 준비';
-    }
-
-    public formatBytes(value: any) {
-        const bytes = Number(value || 0);
-        if (bytes <= 0) return '0 B';
-        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-        const amount = bytes / Math.pow(1024, index);
-        return `${amount.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
-    }
-
-    public toggleAdvancedSetup() {
-        this.advancedSetup.set(!this.advancedSetup());
-    }
-
-    public async completeSetup() {
-        if (!this.data.setup.password) {
-            await this.alert("관리자 비밀번호를 입력해주세요.");
-            return;
+    public setupStatusMessage() {
+        const status = this.setup();
+        if (!status || status.database_configured === false) {
+            return 'Docker Infra installer에서 DB 설치와 서비스 구성을 먼저 완료해야 합니다.';
         }
-        if (this.data.setup.password !== this.data.setup.confirm_password) {
-            await this.alert("비밀번호 확인이 일치하지 않습니다.");
-            return;
-        }
+        return '관리자 비밀번호와 초기 시스템 설정은 Docker Infra installer에서 완료해야 합니다.';
+    }
 
-        const { code, data } = await wiz.call("setup", this.data.setup);
-        if (code === 200) {
-            if (data?.backup_error) {
-                const disable = await this.service.modal.show({
-                    title: '서비스 백업 시스템 설치 실패',
-                    message: `서비스 백업 시스템은 건너뛰고 나중에 시스템 설정에서 다시 시작할 수 있습니다.\n${data.backup_error.message || ''}`,
-                    cancel: '대시보드로 이동',
-                    action: '사용 안 함으로 저장',
-                    actionBtn: 'warning',
-                    status: 'warning'
-                });
-                if (disable) await wiz.call('disable_backup_system', {});
-            }
-            location.href = "/dashboard";
-            return;
-        }
-        await this.alert(data.message || "설치를 완료할 수 없습니다.", 'error');
+    public installerUrl() {
+        const host = location.hostname || '127.0.0.1';
+        return `http://${host}:8088`;
+    }
+
+    public openInstaller() {
+        location.href = this.installerUrl();
     }
 
     public hasLogo() {

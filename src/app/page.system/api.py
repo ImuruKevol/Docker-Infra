@@ -51,6 +51,33 @@ def save_general():
     wiz.response.status(code, **payload)
 
 
+def change_admin_password():
+    auth = wiz.model("struct/auth")
+    body = wiz.request.query()
+    code = 200
+    payload = {}
+    try:
+        row = auth.change_password(
+            body.get("current_password", ""),
+            body.get("new_password", ""),
+            confirm_password=body.get("confirm_password", ""),
+            test_run_id=body.get("test_run_id"),
+        )
+        payload = {
+            "password": {
+                "changed": True,
+                "changed_at": row["password_changed_at"],
+            }
+        }
+    except auth.AuthError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
 def backup_status():
     backup_system = wiz.model("struct/backup_system")
     code = 200

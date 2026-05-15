@@ -104,6 +104,15 @@ WIZ 빌드:
 wiz_project_build
 ```
 
+운영 설치:
+
+```bash
+sudo project/main/installer/preinstall.sh
+sudo /opt/docker-infra/installer/install.sh --step all
+```
+
+`project/main/installer/`는 WIZ bundle과 custom Codex CLI payload를 포함하는 단독 설치 디렉터리입니다. 설치 과정에서 Node.js LTS/npm과 공식 `@openai/codex`도 함께 설치합니다. 초기 관리자 비밀번호와 local master 설정은 제품 `/access` 화면이 아니라 installer HTML에서 완료하며, `verify` 성공 후 installer HTML의 정리 단계로 설치 관리자 daemon과 HTML을 제거합니다. 중간 설치 실패 시 `installer/cleanup.sh --scope preinstall|install|all`로 file artifact만 정리할 수 있습니다.
+
 ## 보안 원칙
 
 - 관리자 password는 hash로 저장합니다.
@@ -116,6 +125,7 @@ wiz_project_build
 
 - 전체 설계: `docs/docker-infra-design.md`
 - 런타임 기준: `docs/docker-infra-runtime.md`
+- 배포 설치 기준: `docs/docker-infra-deployment.md`
 - 서비스 AI/Codex Agent 설계: `docs/service-ai-codex-agent-design.md`
 - 전체 TODO: `docs/docker-infra-development-todo.md`
 - 남은 TODO: `docs/docker-infra-remaining-todo.md`

@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docker Infra Installer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #171717;
+      --muted: #62666d;
+      --line: #d9dde3;
+      --dark: #171717;
+      --ok: #047857;
+      --warn: #b45309;
+      --bad: #b91c1c;
+      --blue: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+    .wrap {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 72px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    main {
+      padding: 24px 0 36px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    section, .step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    section {
+      padding: 16px;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+    .setup-subtitle {
+      margin-top: 16px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+    label.mt { margin-top: 10px; }
+    label.checkline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 12px 0 10px;
+      color: var(--text);
+    }
+    input {
+      width: 100%;
+      height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 10px;
+      font-size: 14px;
+      background: #fff;
+      color: var(--text);
+    }
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      padding: 0;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    button {
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 12px;
+      background: #fff;
+      color: var(--text);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.primary {
+      border-color: var(--dark);
+      background: var(--dark);
+      color: #fff;
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .55;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: #fff;
+    }
+    .status.ok { color: var(--ok); border-color: #86efac; background: #f0fdf4; }
+    .status.running { color: var(--blue); border-color: #93c5fd; background: #eff6ff; }
+    .status.fail { color: var(--bad); border-color: #fca5a5; background: #fef2f2; }
+    .steps {
+      display: grid;
+      gap: 10px;
+    }
+    .wizard-head {
+      display: grid;
+      grid-template-columns: 40px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    .wizard-count {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .hidden {
+      display: none;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 36px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+    }
+    .num {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      background: #eef2f7;
+      font-size: 12px;
+      font-weight: 800;
+      color: #30343a;
+    }
+    .step-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .step-desc {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    pre {
+      min-height: 380px;
+      max-height: 520px;
+      margin: 0;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #101114;
+      color: #e6edf3;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+    }
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .metric strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .top { align-items: flex-start; flex-direction: column; padding: 16px 0; }
+      .step { grid-template-columns: 32px 1fr; }
+      .step button { grid-column: 2; width: max-content; }
+      .meta { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap top">
+      <h1>Docker Infra Installer</h1>
+      <span id="overallStatus" class="status">대기 중</span>
+    </div>
+  </header>
+  <main class="wrap grid">
+    <div class="steps">
+      <section>
+        <div class="wizard-head">
+          <div id="stepNumber" class="num">1</div>
+          <div>
+            <h2 id="stepTitle">APT 패키지</h2>
+            <p id="stepDesc" class="step-desc">설치 단계를 준비합니다.</p>
+            <p id="stepCount" class="wizard-count">1 / 13</p>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="prevStep">이전</button>
+          <button id="runCurrent" class="primary">현재 단계 실행</button>
+          <button id="nextStep">다음</button>
+          <button id="refresh">새로고침</button>
+        </div>
+      </section>
+      <section id="setupPanel" class="hidden">
+        <h2>관리자 비밀번호 설정</h2>
+        <label for="adminPassword">관리자 비밀번호</label>
+        <input id="adminPassword" data-testid="installer-admin-password" type="password" autocomplete="new-password" placeholder="관리자 비밀번호">
+        <label for="adminPasswordConfirm" class="mt">비밀번호 확인</label>
+        <input id="adminPasswordConfirm" data-testid="installer-admin-password-confirm" type="password" autocomplete="new-password" placeholder="비밀번호 확인">
+        <h2 class="setup-subtitle">초기 시스템 설정</h2>
+        <label for="advertiseAddress" class="mt">서버 대표 IP</label>
+        <input id="advertiseAddress" type="text" placeholder="비우면 자동 감지">
+        <label for="serviceRoot" class="mt">서비스 파일 저장 경로</label>
+        <input id="serviceRoot" type="text" value="/var/lib/docker-infra/data/services">
+        <label class="checkline">
+          <input id="backupEnabled" type="checkbox">
+          <span>서비스 백업 저장소 사용</span>
+        </label>
+        <label for="backupDataPath">백업 저장소 경로</label>
+        <input id="backupDataPath" type="text" value="/var/lib/docker-infra/backup-harbor">
+      </section>
+    </div>
+    <section>
+      <h2>실행 상태</h2>
+      <div class="meta">
+        <div class="metric"><span>현재 단계</span><strong id="currentStep">-</strong></div>
+        <div class="metric"><span>시작</span><strong id="startedAt">-</strong></div>
+        <div class="metric"><span>종료</span><strong id="finishedAt">-</strong></div>
+        <div class="metric"><span>종료 코드</span><strong id="exitCode">-</strong></div>
+      </div>
+      <pre id="log">상태를 새로고침하거나 현재 단계를 실행하세요.</pre>
+    </section>
+  </main>
+  <script>
+    const steps = [
+      ['apt', 'APT 패키지', 'nginx, PostgreSQL, Docker, Codex 실행에 필요한 runtime 패키지를 설치합니다.'],
+      ['env', '환경변수 파일', '/etc/docker-infra/docker-infra.env를 생성하고 런타임 경로를 준비합니다.'],
+      ['postgres', 'PostgreSQL 초기화', '컨테이너 DB 대신 host PostgreSQL role, database, schema를 구성합니다.'],
+      ['python', 'PIP 패키지', 'requirements.txt 기준으로 WIZ 런타임 Python 패키지를 설치합니다.'],
+      ['node', 'Official Codex CLI', 'Node.js LTS와 npm을 설치하고 공식 @openai/codex package를 global 설치합니다.'],
+      ['codex', 'Custom Codex CLI', 'host architecture에 맞는 payload binary를 Docker Infra runtime 전용 경로에 등록합니다.'],
+      ['bundle', 'WIZ Bundle', 'installer payload의 WIZ bundle 파일만 설치 경로로 복사합니다.'],
+      ['migrate', 'DB Migration', 'Docker Infra 테이블과 기본 schema migration을 적용합니다.'],
+      ['service', 'WIZ Service', '환경변수 파일을 포함한 systemd daemon으로 WIZ를 실행합니다.'],
+      ['setup', '관리자 비밀번호 / 초기 시스템 설정', '관리자 비밀번호, local master, 백업 저장소 선택을 Docker Infra에 저장합니다.'],
+      ['nginx', 'nginx Proxy', 'nginx에서 Docker Infra 서비스로 reverse proxy를 연결합니다.'],
+      ['verify', '설치 확인', 'DB, WIZ service, 초기 설정 완료 상태를 확인합니다.'],
+      ['cleanup', '설치 관리자 정리', '설치 완료 후 installer daemon, HTML, 임시 설정 파일을 삭제합니다.']
+    ];
+    const adminPassword = document.getElementById('adminPassword');
+    const adminPasswordConfirm = document.getElementById('adminPasswordConfirm');
+    const advertiseAddress = document.getElementById('advertiseAddress');
+    const serviceRoot = document.getElementById('serviceRoot');
+    const backupEnabled = document.getElementById('backupEnabled');
+    const backupDataPath = document.getElementById('backupDataPath');
+    const setupPanel = document.getElementById('setupPanel');
+    const statusEl = document.getElementById('overallStatus');
+    const stepNumber = document.getElementById('stepNumber');
+    const stepTitle = document.getElementById('stepTitle');
+    const stepDesc = document.getElementById('stepDesc');
+    const stepCount = document.getElementById('stepCount');
+    const prevStep = document.getElementById('prevStep');
+    const nextStep = document.getElementById('nextStep');
+    const currentStep = document.getElementById('currentStep');
+    const startedAt = document.getElementById('startedAt');
+    const finishedAt = document.getElementById('finishedAt');
+    const exitCode = document.getElementById('exitCode');
+    const logEl = document.getElementById('log');
+    let pollTimer = null;
+    let currentIndex = 0;
+
+    function setStatus(label, kind) {
+      statusEl.textContent = label;
+      statusEl.className = `status ${kind || ''}`.trim();
+    }
+
+    function currentStepId() {
+      return steps[currentIndex][0];
+    }
+
+    function stepLabel(id) {
+      const item = steps.find(step => step[0] === id);
+      return item ? item[1] : (id || '작업');
+    }
+
+    function renderWizard() {
+      const step = steps[currentIndex];
+      stepNumber.textContent = currentIndex + 1;
+      stepTitle.textContent = step[1];
+      stepDesc.textContent = step[2];
+      stepCount.textContent = `${currentIndex + 1} / ${steps.length}`;
+      prevStep.disabled = currentIndex === 0;
+      nextStep.disabled = currentIndex === steps.length - 1;
+      setupPanel.classList.toggle('hidden', step[0] !== 'setup');
+    }
+
+    function setupPayload() {
+      return {
+        password: adminPassword.value,
+        confirm_password: adminPasswordConfirm.value,
+        advertise_address: advertiseAddress.value.trim(),
+        proxy_type: 'nginx',
+        service_root: serviceRoot.value.trim() || '/var/lib/docker-infra/data/services',
+        backup_system: {
+          enabled: backupEnabled.checked,
+          data_path: backupDataPath.value.trim() || '/var/lib/docker-infra/backup-harbor'
+        }
+      };
+    }
+
+    function validateSetup(step) {
+      if (!['all', 'setup'].includes(step)) return true;
+      const payload = setupPayload();
+      if (!payload.password) {
+        setStatus('관리자 비밀번호가 필요합니다.', 'fail');
+        adminPassword.focus();
+        return false;
+      }
+      if (payload.password !== payload.confirm_password) {
+        setStatus('비밀번호 확인이 일치하지 않습니다.', 'fail');
+        adminPasswordConfirm.focus();
+        return false;
+      }
+      return true;
+    }
+
+    async function api(path, options = {}) {
+      const headers = { ...(options.headers || {}) };
+      if (options.body) headers['Content-Type'] = 'application/json';
+      const response = await fetch(`/installer-api${path}`, { ...options, headers });
+      const payload = await response.json();
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.message || `HTTP ${response.status}`);
+      }
+      return payload;
+    }
+
+    function renderStatus(status) {
+      currentStep.textContent = status.step || '-';
+      startedAt.textContent = status.started_at || '-';
+      finishedAt.textContent = status.finished_at || '-';
+      exitCode.textContent = status.exit_code === null || status.exit_code === undefined ? '-' : status.exit_code;
+      const lines = status.log_tail || [];
+      if (!status.running && status.exit_code !== null && status.exit_code !== undefined) {
+        const hasFooter = lines.some(line => line.includes('단계 종료:'));
+        if (!hasFooter) {
+          const result = status.exit_code === 0 ? 'success' : 'failed';
+          lines.push(`[${status.finished_at || '-'}] 단계 종료: ${status.step || '-'} result=${result} exit_code=${status.exit_code}`);
+        }
+      }
+      logEl.textContent = lines.join('\n') || '아직 실행 로그가 없습니다.';
+      logEl.scrollTop = logEl.scrollHeight;
+      if (status.running) {
+        setStatus(`${stepLabel(status.step)} 실행 중`, 'running');
+      } else if (status.exit_code === 0) {
+        setStatus(`${stepLabel(status.step)} 완료`, 'ok');
+      } else if (status.exit_code !== null && status.exit_code !== undefined) {
+        setStatus(`${stepLabel(status.step)} 실패 (${status.exit_code})`, 'fail');
+      } else {
+        setStatus('대기 중', '');
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        const payload = await api('/status');
+        renderStatus(payload.status || {});
+        if ((payload.status || {}).running && !pollTimer) {
+          pollTimer = setInterval(refreshStatus, 2500);
+        }
+        if (!(payload.status || {}).running && pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      } catch (error) {
+        setStatus(error.message, 'fail');
+      }
+    }
+
+    async function runStep(step) {
+      try {
+        if (!validateSetup(step)) return;
+        currentStep.textContent = step;
+        startedAt.textContent = '-';
+        finishedAt.textContent = '-';
+        exitCode.textContent = '-';
+        logEl.textContent = '';
+        setStatus(`${step} 시작`, 'running');
+        await api('/run', { method: 'POST', body: JSON.stringify({ step, setup: setupPayload() }) });
+        if (step === 'cleanup') {
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          try {
+            const payload = await api('/status');
+            renderStatus(payload.status || {});
+            if ((payload.status || {}).exit_code !== 0) return;
+          } catch (error) {
+            // The installer API may already be stopped by the cleanup task.
+          }
+          setStatus('설치 관리자 정리 예약됨', 'ok');
+          logEl.textContent = `${logEl.textContent}\n설치 관리자 서비스와 HTML이 곧 제거됩니다.`;
+          logEl.scrollTop = logEl.scrollHeight;
+          return;
+        }
+        await refreshStatus();
+        if (!pollTimer) pollTimer = setInterval(refreshStatus, 2500);
+      } catch (error) {
+        setStatus(error.message, 'fail');
+      }
+    }
+
+    document.getElementById('refresh').addEventListener('click', refreshStatus);
+    document.getElementById('runCurrent').addEventListener('click', () => runStep(currentStepId()));
+    prevStep.addEventListener('click', () => {
+      if (currentIndex > 0) {
+        currentIndex -= 1;
+        renderWizard();
+      }
+    });
+    nextStep.addEventListener('click', () => {
+      if (currentIndex < steps.length - 1) {
+        currentIndex += 1;
+        renderWizard();
+      }
+    });
+    renderWizard();
+    refreshStatus();
+  </script>
+</body>
+</html>

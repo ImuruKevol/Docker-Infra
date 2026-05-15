@@ -9,15 +9,14 @@ test.describe('password-only access', () => {
 
   test('shows the password-only access screen', async ({ page }) => {
     await openAccessPage(page);
-    await expect(page.getByText(/운영자 접속|초기 설정/)).toBeVisible();
-    await expect(page.getByRole('button', { name: /접속|설정 완료/ })).toBeVisible();
+    await expect(page.getByText(/운영자 접속|설치 관리자 필요/)).toBeVisible();
+    await expect(page.getByRole('button', { name: /접속|설치 관리자 열기/ })).toBeVisible();
   });
 
   test('shows validation when password is empty', async ({ page }) => {
     await openAccessPage(page);
-    if (await page.getByTestId('setup-submit').isVisible().catch(() => false)) {
-      await page.getByTestId('setup-submit').click();
-      await expect(page.getByText('관리자 비밀번호를 입력해주세요.')).toBeVisible();
+    if (await page.getByTestId('installer-open').isVisible().catch(() => false)) {
+      await expect(page.getByText('설치 관리자 필요')).toBeVisible();
       return;
     }
     await page.getByTestId('login-submit').click();
@@ -27,7 +26,7 @@ test.describe('password-only access', () => {
   test('submits only a password for the login flow', async ({ page }) => {
     skipWithoutPassword();
     await openAccessPage(page);
-    test.skip(await page.getByTestId('setup-submit').isVisible().catch(() => false), 'Initial setup is not completed yet');
+    test.skip(await page.getByTestId('installer-open').isVisible().catch(() => false), 'Docker Infra installer setup is not completed yet');
     await submitPassword(page, e2eEnv.password || '');
     await expect(page).toHaveURL(/\/dashboard/);
     await expect(page.getByText('Docker Infra').first()).toBeVisible();

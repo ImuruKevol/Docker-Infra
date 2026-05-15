@@ -53,8 +53,9 @@ class PlaywrightSetupTest(unittest.TestCase):
 
         self.assertIn('data-testid="password-input"', view)
         self.assertIn('data-testid="login-submit"', view)
-        self.assertIn('data-testid="setup-password-input"', view)
-        self.assertIn('data-testid="setup-submit"', view)
+        self.assertIn('data-testid="installer-open"', view)
+        self.assertNotIn('data-testid="setup-password-input"', view)
+        self.assertNotIn('data-testid="setup-submit"', view)
         self.assertIn('aria-label="비밀번호"', view)
 
 

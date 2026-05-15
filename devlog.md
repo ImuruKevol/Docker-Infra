@@ -204,3 +204,16 @@
 | 2026-05-14 | 202 | 서비스 AI 검사 모달 모델 선택 배치 조정 | [상세](devlog/2026-05-14/202-service-ai-modal-model-placement.md) |
 | 2026-05-14 | 203 | 서비스 certbot SSL 적용 타이밍과 갱신 관리 보강 | [상세](devlog/2026-05-14/203-service-certbot-runtime-renewal.md) |
 | 2026-05-14 | 204 | 서비스 생성 AI Gemini 커스텀 Codex 완료와 진행 표시 수정 | [상세](devlog/2026-05-14/204-service-create-ai-gemini-progress-heartbeat.md) |
+| 2026-05-15 | 205 | Docker Infra 운영 배포 installer와 설치 문서 추가 | [상세](devlog/2026-05-15/205-docker-infra-deployment-installer.md) |
+| 2026-05-15 | 206 | 초기 설정 마법사를 installer로 통합하고 access 화면 단순화 | [상세](devlog/2026-05-15/206-installer-owned-initial-setup.md) |
+| 2026-05-15 | 207 | installer 단독 payload와 설치 관리자 self-cleanup 추가 | [상세](devlog/2026-05-15/207-self-contained-installer-payload-cleanup.md) |
+| 2026-05-15 | 208 | custom Codex CLI를 installer binary payload로 전환 | [상세](devlog/2026-05-15/208-codex-cli-binary-payload.md) |
+| 2026-05-15 | 209 | installer에 Node.js LTS와 공식 Codex npm 설치 단계 추가 | [상세](devlog/2026-05-15/209-official-codex-npm-installer-step.md) |
+| 2026-05-15 | 210 | installer 진행 단계별 file artifact cleanup script 추가 | [상세](devlog/2026-05-15/210-installer-file-artifact-cleanup-script.md) |
+| 2026-05-15 | 211 | installer token 제거와 단계형 wizard UI 적용 | [상세](devlog/2026-05-15/211-installer-tokenless-wizard-ui.md) |
+| 2026-05-15 | 212 | installer 관리자 비밀번호 단계 보강과 시스템 General 비밀번호 변경 추가 | [상세](devlog/2026-05-15/212-admin-password-general-and-installer-bundle.md) |
+| 2026-05-15 | 213 | installer 단계 종료 성공/실패 인지 보강 | [상세](devlog/2026-05-15/213-installer-step-finished-status.md) |
+| 2026-05-15 | 214 | 공식 Codex와 custom CLI 설치 경로 분리 및 architecture 검증 | [상세](devlog/2026-05-15/214-codex-official-custom-arch-separation.md) |
+| 2026-05-15 | 215 | custom Codex 설치 실패 원인 로그 보강 | [상세](devlog/2026-05-15/215-codex-step-failure-diagnostics.md) |
+| 2026-05-15 | 216 | custom Codex CLI aarch64 installer payload 추가 | [상세](devlog/2026-05-15/216-codex-aarch64-installer-payload.md) |
+| 2026-05-15 | 217 | WIZ service wrapper port와 bundle 인자 순서 수정 | [상세](devlog/2026-05-15/217-wiz-service-wrapper-port-bundle-order.md) |

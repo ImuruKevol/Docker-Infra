@@ -241,7 +241,7 @@
                                 "example": {
                                     "code": 423,
                                     "data": {
-                                        "message": "설치 마법사를 먼저 완료해주세요.",
+                                        "message": "초기 설정을 먼저 완료해주세요.",
                                         "error_code": "SETUP_REQUIRED"
                                     }
                                 }
@@ -522,7 +522,7 @@
                                 "example": {
                                     "code": 423,
                                     "data": {
-                                        "message": "설치 마법사를 먼저 완료해주세요.",
+                                        "message": "초기 설정을 먼저 완료해주세요.",
                                         "error_code": "SETUP_REQUIRED"
                                     }
                                 }
@@ -648,7 +648,7 @@
         },
         "/api/system/setup": {
             "get": {
-                "summary": "Return setup wizard status",
+                "summary": "Return installer setup status",
                 "tags": [
                     "system"
                 ],
@@ -749,7 +749,7 @@
                 }
             },
             "post": {
-                "summary": "Complete the initial setup wizard",
+                "summary": "Complete the initial installer setup",
                 "tags": [
                     "system"
                 ],

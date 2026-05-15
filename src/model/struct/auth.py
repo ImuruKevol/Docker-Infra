@@ -111,6 +111,34 @@ class AuthService:
         with connect(env=env) as conn:
             return write(conn)
 
+    def change_password(
+        self,
+        current_password,
+        new_password,
+        confirm_password=None,
+        test_run_id=None,
+        metadata=None,
+        env=None,
+    ):
+        if not current_password:
+            raise AuthError(400, "현재 비밀번호를 입력해주세요.", "CURRENT_PASSWORD_REQUIRED")
+        if confirm_password is not None and new_password != confirm_password:
+            raise AuthError(400, "새 비밀번호 확인이 일치하지 않습니다.", "PASSWORD_CONFIRM_MISMATCH")
+
+        with connect(env=env) as connection:
+            stored_hash = self.get_password_hash(connection)
+            if stored_hash is None:
+                raise AuthError(423, "초기 설정을 먼저 완료해주세요.", "SETUP_REQUIRED")
+            if not verify_password(current_password, stored_hash):
+                raise AuthError(401, "현재 비밀번호가 올바르지 않습니다.", "INVALID_CURRENT_PASSWORD")
+
+            return self.set_password(
+                new_password,
+                test_run_id=test_run_id,
+                metadata={**(metadata or {}), "source": "system_general_password_change"},
+                connection=connection,
+            )
+
     def _scope(self, remote_addr):
         return remote_addr or "unknown"
 

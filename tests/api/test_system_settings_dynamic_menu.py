@@ -13,6 +13,9 @@ ASSET_ROUTE = ROOT / "src" / "route" / "api-system-assets" / "controller.py"
 AUTH_ROUTE = ROOT / "src" / "portal" / "season" / "route" / "auth" / "controller.py"
 DOMAINS_API = ROOT / "src" / "app" / "page.domains" / "api.py"
 SYSTEM_API = ROOT / "src" / "app" / "page.system" / "api.py"
+SYSTEM_VIEW = ROOT / "src" / "app" / "page.system" / "view.pug"
+SYSTEM_TS = ROOT / "src" / "app" / "page.system" / "view.ts"
+AUTH_MODEL = ROOT / "src" / "model" / "struct" / "auth.py"
 SETUP_MODEL = ROOT / "src" / "model" / "struct" / "setup.py"
 DASHBOARD_VIEW = ROOT / "src" / "app" / "page.dashboard" / "view.pug"
 APP_MODULE = ROOT / "src" / "angular" / "app" / "app.module.ts"
@@ -29,6 +32,9 @@ class SystemSettingsStaticContractTest(unittest.TestCase):
         auth_route = AUTH_ROUTE.read_text(encoding="utf-8")
         domains_api = DOMAINS_API.read_text(encoding="utf-8")
         system_api = SYSTEM_API.read_text(encoding="utf-8")
+        system_view = SYSTEM_VIEW.read_text(encoding="utf-8")
+        system_ts = SYSTEM_TS.read_text(encoding="utf-8")
+        auth_model = AUTH_MODEL.read_text(encoding="utf-8")
         setup_model = SETUP_MODEL.read_text(encoding="utf-8")
         dashboard_view = DASHBOARD_VIEW.read_text(encoding="utf-8")
         app_module = APP_MODULE.read_text(encoding="utf-8")
@@ -47,8 +53,14 @@ class SystemSettingsStaticContractTest(unittest.TestCase):
         self.assertIn("def sync_zone():", domains_api)
         self.assertIn("def save_record():", domains_api)
         self.assertIn("def delete_record():", domains_api)
-        self.assertIn("def save_webserver():", system_api)
-        self.assertIn("def browse_local_files():", system_api)
+        self.assertIn("def change_admin_password():", system_api)
+        self.assertIn("auth.change_password", system_api)
+        self.assertIn("def change_password(", auth_model)
+        self.assertIn("INVALID_CURRENT_PASSWORD", auth_model)
+        self.assertIn("system-admin-current-password", system_view)
+        self.assertIn("system-admin-new-password", system_view)
+        self.assertIn("system-admin-password-save", system_view)
+        self.assertIn("changeAdminPassword()", system_ts)
         self.assertNotIn("public_url", setup_model)
         self.assertNotIn("public_url", dashboard_view)
 
@@ -87,20 +99,6 @@ class SystemSettingsLiveFlowTest(unittest.TestCase):
         self.assertIn("browser_title", appearance)
         self.assertIn("favicon_url", appearance)
         self.assertIn("logo_url", appearance)
-
-    def test_browse_local_files_accepts_file_path_and_opens_parent_directory(self):
-        file_path = str(ROOT / "src" / "app" / "page.system" / "view.ts")
-        response = self.client.post(
-            "/wiz/api/page.system/browse_local_files",
-            json={"path": file_path, "show_hidden": False},
-            validate=False,
-        )
-        self.assertEqual(response.status_code, 200, response.text[:500])
-        data = response.json()["data"]
-        self.assertEqual(data["path"], str((ROOT / "src" / "app" / "page.system").resolve()))
-        item_names = {item["name"] for item in data["items"]}
-        self.assertIn("view.ts", item_names)
-
 
 if __name__ == "__main__":
     unittest.main()
