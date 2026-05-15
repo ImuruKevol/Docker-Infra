@@ -72,17 +72,19 @@ class AIAssistant:
         payload = ai_settings.public_payload(env=env)
         config = payload.get("config") or {}
         cache = payload.get("model_cache") or {}
-        options = [
-            {
+        options = []
+        seen = set()
+        codex = config.get("codex") or {}
+        if codex.get("enabled") and codex.get("model"):
+            options.append({
                 "value": "codex",
                 "label": "Codex",
                 "description": "Codex CLI 로그인 세션으로 실행합니다.",
                 "badge": "로그인",
                 "badgeClass": "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-900/70 dark:bg-fuchsia-950/40 dark:text-fuchsia-300",
                 "cli_mode": "system",
-            }
-        ]
-        seen = {"codex"}
+            })
+            seen.add("codex")
         for item in self._selected_model_candidates(config, cache):
             provider = item["provider"]
             if provider == "codex":
@@ -118,11 +120,13 @@ class AIAssistant:
             )
         default_ref = self._default_model_ref(config)
         if default_ref not in seen:
-            default_ref = "codex"
+            default_ref = options[0]["value"] if options else ""
         return {
             "options": options,
             "default_model_ref": default_ref,
             "selected": default_ref,
+            "has_enabled_models": bool(options),
+            "message": "" if options else "시스템 설정에서 사용 중인 AI 모델이 없습니다.",
         }
 
     def _selected_model_candidates(self, config, cache):
@@ -2443,6 +2447,8 @@ class AIAssistant:
             raise AIAssistantError(400, "지원하지 않는 AI 모델 공급자입니다.", "AI_PROVIDER_NOT_SUPPORTED")
         if provider == "codex":
             codex = config.get("codex") or {}
+            if not codex.get("enabled"):
+                raise AIAssistantError(400, "선택한 Codex 모델을 사용하려면 Codex 로그인을 사용 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED")
             model = codex.get("model") if model in {"", "__default__"} else model
             model = model or "gpt-5.5"
             return {
@@ -2995,7 +3001,23 @@ class AIAssistant:
         }
 
     def _default_model_ref(self, config):
-        return "codex"
+        codex = config.get("codex") or {}
+        if codex.get("enabled") and codex.get("model"):
+            return "codex"
+        openai = config.get("openai") or {}
+        if openai.get("enabled") and openai.get("selected_model"):
+            return "openai::%s" % self._normalize_model_for_provider("openai", openai.get("selected_model"))
+        gemini = config.get("gemini") or {}
+        if gemini.get("enabled") and gemini.get("selected_model"):
+            return "gemini::%s" % self._normalize_model_for_provider("gemini", gemini.get("selected_model"))
+        runtime = config.get("runtime") or {}
+        runtime_mode = runtime.get("mode") or "cloud_api"
+        if runtime.get("enabled") and runtime_mode in {"external_ollama", "local_server", "registered_node"} and runtime.get("selected_model"):
+            return "ollama::%s" % self._normalize_model_for_provider("ollama", runtime.get("selected_model"))
+        ollama = config.get("ollama") or {}
+        if ollama.get("enabled") and ollama.get("selected_model"):
+            return "ollama::%s" % self._normalize_model_for_provider("ollama", ollama.get("selected_model"))
+        return ""
 
     def _provider_label(self, provider):
         labels = {

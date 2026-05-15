@@ -217,3 +217,6 @@
 | 2026-05-15 | 215 | custom Codex 설치 실패 원인 로그 보강 | [상세](devlog/2026-05-15/215-codex-step-failure-diagnostics.md) |
 | 2026-05-15 | 216 | custom Codex CLI aarch64 installer payload 추가 | [상세](devlog/2026-05-15/216-codex-aarch64-installer-payload.md) |
 | 2026-05-15 | 217 | WIZ service wrapper port와 bundle 인자 순서 수정 | [상세](devlog/2026-05-15/217-wiz-service-wrapper-port-bundle-order.md) |
+| 2026-05-15 | 218 | 서비스 AI 사용 가능 조건과 Codex 브라우저 로그인 추가 | [상세](devlog/2026-05-15/218-service-ai-availability-and-codex-device-login.md) |
+| 2026-05-15 | 219 | Codex 브라우저 로그인 PTY 처리와 Compose Monaco 편집 개선 | [상세](devlog/2026-05-15/219-codex-device-login-pty-and-compose-monaco.md) |
+| 2026-05-15 | 220 | installer WIZ bundle payload 갱신 관리 스크립트 추가 | [상세](devlog/2026-05-15/220-installer-wiz-bundle-update-script.md) |

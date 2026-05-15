@@ -1,3 +1,4 @@
+import hashlib
 import py_compile
 import stat
 import unittest
@@ -17,6 +18,7 @@ class InstallerContractTest(unittest.TestCase):
             "preinstall.sh",
             "install.sh",
             "cleanup.sh",
+            "update-wiz-bundle.sh",
             "installer_api.py",
             "installer.html",
             "docker-infra.env.example",
@@ -30,7 +32,7 @@ class InstallerContractTest(unittest.TestCase):
             self.assertTrue((INSTALLER / name).is_file(), name)
 
     def test_shell_scripts_are_executable(self):
-        for name in ["preinstall.sh", "install.sh", "cleanup.sh", "installer_api.py"]:
+        for name in ["preinstall.sh", "install.sh", "cleanup.sh", "update-wiz-bundle.sh", "installer_api.py"]:
             mode = (INSTALLER / name).stat().st_mode
             self.assertTrue(mode & stat.S_IXUSR, name)
 
@@ -153,6 +155,38 @@ class InstallerContractTest(unittest.TestCase):
             self.assertIn(str(codex_bin.relative_to(payload)), checksums)
         self.assertFalse((payload / "codex-bin/codex").exists())
         self.assertFalse((payload / "codex-custom.tar.zst").exists())
+
+    def test_payload_checksums_match_files(self):
+        payload = INSTALLER / "payload"
+        checksums = (payload / "checksums.sha256").read_text(encoding="utf-8")
+
+        for line in checksums.splitlines():
+            if not line.strip():
+                continue
+            expected, relative = line.split(None, 1)
+            target = payload / relative.strip()
+            self.assertTrue(target.is_file(), relative)
+            actual = hashlib.sha256(target.read_bytes()).hexdigest()
+            self.assertEqual(expected, actual, relative)
+
+    def test_wiz_bundle_update_script_refreshes_payload_and_checksums(self):
+        script = self.read("update-wiz-bundle.sh")
+
+        for token in [
+            "wiz project build",
+            "wiz bundle",
+            "wiz-bundle.tar.zst",
+            "checksums.sha256",
+            "tar --zstd -cf",
+            "tar --zstd -tf",
+            "sha256sum -c",
+            "codex-bin/linux-x86_64/codex",
+            "codex-bin/linux-aarch64/codex",
+            "--skip-build",
+            "--use-existing-bundle",
+            "/opt/conda/envs/docker-infra/bin/wiz",
+        ]:
+            self.assertIn(token, script)
 
     def test_cleanup_script_removes_file_artifacts_only(self):
         script = self.read("cleanup.sh")

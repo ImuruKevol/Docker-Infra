@@ -80,6 +80,8 @@ export class Component implements OnInit, OnDestroy {
     public runtimeAiModelRef = signal<string>('auto');
     public aiModelOptions = signal<any[]>([]);
     public aiDefaultModelRef = signal<string>('auto');
+    public aiAvailable = signal<boolean>(false);
+    public aiUnavailableMessage = signal<string>('');
     public editAiStreamEvents = signal<any[]>([]);
     public editAiOutputTokenCount = signal<number>(0);
     public nginxConfigDrafts: any = {};
@@ -96,6 +98,7 @@ export class Component implements OnInit, OnDestroy {
         this.syncAdvancedEditorTheme();
         this.startThemeObserver();
         this.refreshCompose(true);
+        await this.loadAiModelOptions();
         const params = new URLSearchParams(window.location.search || '');
         await this.load(params.get('service_id') || params.get('selected_service_id') || '');
     }
@@ -262,7 +265,8 @@ export class Component implements OnInit, OnDestroy {
         return (details || [])
             .filter((detail: any) => detail)
             .map((detail: any) => {
-                const message = detail.message || detail.error_code || '검사에 실패했습니다.';
+                if (typeof detail === 'string') return detail;
+                const message = detail.message || detail.reason || detail.error_code || '검사에 실패했습니다.';
                 return detail.path ? `- ${detail.path}: ${message}` : `- ${message}`;
             });
     }
@@ -271,7 +275,9 @@ export class Component implements OnInit, OnDestroy {
         const base = data?.error_code === 'COMPOSE_VALIDATION_FAILED'
             ? 'Compose 검사를 통과하지 못했습니다.'
             : (data?.message || fallback);
-        const details = this.validationDetails(data?.details || []);
+        const detailRows = Array.isArray(data?.details) ? data.details : [];
+        const details = this.validationDetails([data?.reason, ...detailRows])
+            .filter((detail: string, index: number, rows: string[]) => detail !== base && rows.indexOf(detail) === index);
         if (!details.length) return base;
         return `${base}\n\n${details.join('\n')}`;
     }
@@ -334,19 +340,28 @@ export class Component implements OnInit, OnDestroy {
     public async loadAiModelOptions() {
         const { code, data } = await wiz.call('ai_model_options', {});
         if (code === 200) {
-            this.aiModelOptions.set(data.options || []);
-            this.aiDefaultModelRef.set(data.default_model_ref || 'auto');
-            this.editAiModelRef.set(data.default_model_ref || 'auto');
-            this.runtimeAiModelRef.set(data.default_model_ref || 'auto');
+            const options = data.options || [];
+            this.aiModelOptions.set(options);
+            this.aiAvailable.set(options.length > 0);
+            this.aiUnavailableMessage.set(options.length ? '' : (data.message || '시스템 설정에서 사용 중인 AI 모델이 없습니다.'));
+            this.aiDefaultModelRef.set(data.default_model_ref || '');
+            this.editAiModelRef.set(data.default_model_ref || '');
+            this.runtimeAiModelRef.set(data.default_model_ref || '');
             this.aiModelOptionsLoaded = true;
-            return true;
+            return options.length > 0;
         }
+        this.aiAvailable.set(false);
+        this.aiUnavailableMessage.set(data?.message || 'AI 모델 목록을 불러올 수 없습니다.');
         return false;
     }
 
     private async ensureAiModelOptions() {
-        if (this.aiModelOptionsLoaded) return true;
+        if (this.aiModelOptionsLoaded) return this.hasAiModels();
         return await this.loadAiModelOptions();
+    }
+
+    public hasAiModels() {
+        return this.aiAvailable() && this.aiModelOptions().length > 0;
     }
 
     public async selectService(service: any, silent: boolean = false) {
@@ -1141,14 +1156,17 @@ export class Component implements OnInit, OnDestroy {
             { id: 'components' as EditSection, icon: 'fa-cubes', title: '구성', description: '이미지와 포트', badge: this.editComponents.length ? `${this.editComponents.length}개` : '' },
             { id: 'domain' as EditSection, icon: 'fa-globe', title: '도메인', description: '공개 주소와 대상', badge: domainBadge },
             { id: 'advanced' as EditSection, icon: 'fa-sliders', title: '고급', description: '환경변수와 볼륨', badge: advancedCount ? `${advancedCount}개` : '' },
-            { id: 'ai' as EditSection, icon: 'fa-wand-magic-sparkles', title: 'AI 수정안', description: '요청으로 초안 반영', badge: this.editAiBusy() ? '생성 중' : (this.editAiResult ? '적용됨' : '') },
+            ...(this.hasAiModels() ? [{ id: 'ai' as EditSection, icon: 'fa-wand-magic-sparkles', title: 'AI 수정안', description: '요청으로 초안 반영', badge: this.editAiBusy() ? '생성 중' : (this.editAiResult ? '적용됨' : '') }] : []),
         ];
     }
 
     public async setEditSection(section: EditSection) {
+        if (section === 'ai' && !(await this.ensureAiModelOptions())) {
+            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
+            return;
+        }
         this.editSection.set(section);
         if (section === 'ai') {
-            await this.ensureAiModelOptions();
             await this.service.render();
         }
     }
@@ -1569,7 +1587,10 @@ export class Component implements OnInit, OnDestroy {
             await this.alert('서비스 구성을 불러오지 못했습니다.');
             return;
         }
-        await this.ensureAiModelOptions();
+        if (!(await this.ensureAiModelOptions())) {
+            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
+            return;
+        }
         this.editAiBusy.set(true);
         this.resetEditAiStream();
         try {
@@ -2770,7 +2791,10 @@ export class Component implements OnInit, OnDestroy {
     public async runRuntimeAiRepair() {
         const serviceId = this.selected()?.id;
         if (!serviceId || this.runtimeAiBusy()) return;
-        await this.ensureAiModelOptions();
+        if (!(await this.ensureAiModelOptions())) {
+            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
+            return;
+        }
         this.runtimeAiIntent.set('');
         this.runtimeAiAllowContainerActions.set(true);
         this.runtimeAiAllowSshDiagnostics.set(true);
@@ -2811,7 +2835,10 @@ export class Component implements OnInit, OnDestroy {
     public async submitRuntimeAiRepair() {
         const serviceId = this.selected()?.id;
         if (!serviceId || this.runtimeAiBusy()) return;
-        await this.ensureAiModelOptions();
+        if (!(await this.ensureAiModelOptions())) {
+            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
+            return;
+        }
         this.runtimeAiBusy.set(true);
         this.resetRuntimeAiStream();
         try {

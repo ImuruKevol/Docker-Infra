@@ -1,10 +1,16 @@
 import json
 import datetime
+import errno
 import os
+import pty
+import re
+import select
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+import uuid
 from pathlib import Path
 
 nodes_model = wiz.model("struct/nodes")
@@ -58,6 +64,7 @@ CODEX_BUILD_TIMEOUT_SECONDS = 1800
 CODEX_BUILD_CHECK_INTERVAL_SECONDS = 60
 CODEX_STATUS_TIMEOUT_SECONDS = 15
 CODEX_TEST_TIMEOUT_SECONDS = 180
+CODEX_DEVICE_LOGIN_START_TIMEOUT_SECONDS = 5
 CODEX_LOGIN_DEFAULT_MODEL = "gpt-5.5"
 CODEX_LOGIN_DEFAULT_REASONING_EFFORT = "xhigh"
 CODEX_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
@@ -234,6 +241,8 @@ class CodexRuntime:
     def __init__(self):
         self._last_build_check_at = 0
         self._last_source_mtime = 0
+        self._device_login = None
+        self._device_login_lock = threading.Lock()
 
     def mcp_tools_for_scope(self, scope, allow_container_actions=False, allow_ssh_command=True):
         tools = list(MCP_TOOL_SCOPES.get(str(scope or ""), SERVICE_DRAFT_MCP_TOOLS))
@@ -297,6 +306,229 @@ class CodexRuntime:
             "text": result.get("text") or "",
             "metadata": result.get("metadata") or {},
             "status": self.status(config),
+        }
+
+    def start_device_login(self, config=None):
+        config = self._normalize_codex_config(config or {})
+        executable = self._codex_login_executable(config)
+        command = [executable, "login", "--device-auth"]
+        deduplicated_public = None
+        with self._device_login_lock:
+            current = self._device_login
+            if current and self._device_login_running(current):
+                deduplicated_public = self._device_login_public(current)
+            if deduplicated_public is None:
+                self._device_login = None
+        if deduplicated_public is not None:
+            return {"device_login": deduplicated_public, "codex_status": self.status(config), "deduplicated": True}
+
+        with self._device_login_lock:
+            session = {
+                "id": str(uuid.uuid4()),
+                "status": "starting",
+                "started_at": _utcnow(),
+                "finished_at": None,
+                "verification_uri": "",
+                "user_code": "",
+                "expires_in_seconds": 900,
+                "message": "Codex device 로그인을 시작합니다.",
+                "output": [],
+                "exit_code": None,
+                "command": "codex login --device-auth",
+            }
+            master_fd = None
+            slave_fd = None
+            try:
+                master_fd, slave_fd = pty.openpty()
+                process = subprocess.Popen(
+                    command,
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    close_fds=True,
+                    env=self._codex_env(config),
+                )
+            except Exception as exc:
+                for fd in [master_fd, slave_fd]:
+                    if fd is not None:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                raise CodexRuntimeError(
+                    502,
+                    "Codex device 로그인을 시작할 수 없습니다: %s" % exc,
+                    "CODEX_DEVICE_LOGIN_START_FAILED",
+                    {"command": command},
+                )
+            finally:
+                if slave_fd is not None:
+                    try:
+                        os.close(slave_fd)
+                    except OSError:
+                        pass
+            session["process"] = process
+            session["pty_master_fd"] = master_fd
+            self._device_login = session
+            threading.Thread(target=self._read_device_login_output, args=(session,), daemon=True).start()
+
+        deadline = time.time() + CODEX_DEVICE_LOGIN_START_TIMEOUT_SECONDS
+        while time.time() < deadline:
+            with self._device_login_lock:
+                current = self._device_login_public(self._device_login) if self._device_login else {}
+            if current.get("user_code") or current.get("status") in {"failed", "succeeded"}:
+                break
+            time.sleep(0.1)
+        return self.device_login_status(config)
+
+    def device_login_status(self, config=None):
+        config = self._normalize_codex_config(config or {})
+        with self._device_login_lock:
+            session = self._device_login
+            if session:
+                self._refresh_device_login_locked(session)
+                public = self._device_login_public(session)
+            else:
+                public = None
+        codex_status = self.status(config)
+        if public and (codex_status.get("login") or {}).get("logged_in") and public.get("status") in {"starting", "waiting_for_user"}:
+            with self._device_login_lock:
+                session = self._device_login
+                if session and session.get("id") == public.get("id"):
+                    session["status"] = "succeeded"
+                    session["message"] = "Codex 로그인이 완료되었습니다."
+                    public = self._device_login_public(session)
+        return {"device_login": public, "codex_status": codex_status}
+
+    def cancel_device_login(self, config=None):
+        config = self._normalize_codex_config(config or {})
+        with self._device_login_lock:
+            session = self._device_login
+            if session and self._device_login_running(session):
+                try:
+                    session["process"].terminate()
+                except Exception:
+                    pass
+                session["status"] = "canceled"
+                session["message"] = "Codex device 로그인을 취소했습니다."
+                session["finished_at"] = _utcnow()
+            public = self._device_login_public(session) if session else None
+        return {"device_login": public, "codex_status": self.status(config)}
+
+    def _device_login_running(self, session):
+        process = (session or {}).get("process")
+        return bool(process and process.poll() is None)
+
+    def _read_device_login_output(self, session):
+        process = session.get("process")
+        if not process:
+            return
+        master_fd = session.get("pty_master_fd")
+        if master_fd is not None:
+            self._read_device_login_pty(session, process, master_fd)
+        elif process.stdout:
+            self._read_device_login_pipe(session, process)
+        exit_code = process.wait()
+        with self._device_login_lock:
+            if self._device_login and self._device_login.get("id") == session.get("id"):
+                session["exit_code"] = exit_code
+                session["finished_at"] = _utcnow()
+                if session.get("status") != "canceled":
+                    session["status"] = "succeeded" if exit_code == 0 else "failed"
+                    session["message"] = "Codex 로그인이 완료되었습니다." if exit_code == 0 else "Codex device 로그인이 종료되었습니다."
+
+    def _read_device_login_pipe(self, session, process):
+        try:
+            for line in process.stdout:
+                self._append_device_login_output(session, line)
+        except Exception as exc:
+            self._append_device_login_output(session, "Codex device 로그인 출력 수집 오류: %s" % exc)
+
+    def _read_device_login_pty(self, session, process, master_fd):
+        buffer = ""
+        try:
+            while True:
+                timeout = 0 if process.poll() is not None else 0.2
+                ready, _, _ = select.select([master_fd], [], [], timeout)
+                if not ready:
+                    if process.poll() is not None:
+                        break
+                    continue
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except OSError as exc:
+                    if exc.errno in {errno.EIO, errno.EBADF}:
+                        break
+                    raise
+                if not chunk:
+                    break
+                buffer += chunk.decode("utf-8", "replace")
+                lines = buffer.replace("\r", "\n").split("\n")
+                buffer = lines.pop() or ""
+                for line in lines:
+                    self._append_device_login_output(session, line)
+        except Exception as exc:
+            self._append_device_login_output(session, "Codex device 로그인 출력 수집 오류: %s" % exc)
+        finally:
+            if buffer.strip():
+                self._append_device_login_output(session, buffer)
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+
+    def _append_device_login_output(self, session, line):
+        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(line or "")).rstrip()
+        if not text:
+            return
+        with self._device_login_lock:
+            if self._device_login and self._device_login.get("id") != session.get("id"):
+                return
+            output = session.setdefault("output", [])
+            output.append(text)
+            session["output"] = output[-80:]
+            url_match = re.search(r"https://\S+", text)
+            if url_match:
+                session["verification_uri"] = url_match.group(0).rstrip(".,)")
+            code_match = re.search(r"\b[A-Z0-9]{4,}-[A-Z0-9]{4,}\b", text)
+            if code_match:
+                session["user_code"] = code_match.group(0)
+            if session.get("user_code") or session.get("verification_uri"):
+                if session.get("status") == "starting":
+                    session["status"] = "waiting_for_user"
+                session["message"] = "브라우저에서 Codex device 로그인을 완료해주세요."
+
+    def _refresh_device_login_locked(self, session):
+        if not session:
+            return
+        process = session.get("process")
+        if not process:
+            return
+        exit_code = process.poll()
+        if exit_code is None:
+            return
+        session["exit_code"] = exit_code
+        if not session.get("finished_at"):
+            session["finished_at"] = _utcnow()
+        if session.get("status") in {"starting", "waiting_for_user"}:
+            session["status"] = "succeeded" if exit_code == 0 else "failed"
+            session["message"] = "Codex 로그인이 완료되었습니다." if exit_code == 0 else "Codex device 로그인이 종료되었습니다."
+
+    def _device_login_public(self, session):
+        if not session:
+            return None
+        return {
+            "id": session.get("id"),
+            "status": session.get("status"),
+            "started_at": session.get("started_at"),
+            "finished_at": session.get("finished_at"),
+            "verification_uri": session.get("verification_uri") or "https://auth.openai.com/codex/device",
+            "user_code": session.get("user_code") or "",
+            "expires_in_seconds": session.get("expires_in_seconds") or 900,
+            "message": session.get("message") or "",
+            "exit_code": session.get("exit_code"),
+            "command": session.get("command") or "codex login --device-auth",
+            "output": (session.get("output") or [])[-20:],
         }
 
     def _normalize_codex_config(self, config):

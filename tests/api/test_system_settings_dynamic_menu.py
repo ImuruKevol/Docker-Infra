@@ -15,6 +15,7 @@ DOMAINS_API = ROOT / "src" / "app" / "page.domains" / "api.py"
 SYSTEM_API = ROOT / "src" / "app" / "page.system" / "api.py"
 SYSTEM_VIEW = ROOT / "src" / "app" / "page.system" / "view.pug"
 SYSTEM_TS = ROOT / "src" / "app" / "page.system" / "view.ts"
+CODEX_RUNTIME_MODEL = ROOT / "src" / "model" / "struct" / "codex_runtime.py"
 AUTH_MODEL = ROOT / "src" / "model" / "struct" / "auth.py"
 SETUP_MODEL = ROOT / "src" / "model" / "struct" / "setup.py"
 DASHBOARD_VIEW = ROOT / "src" / "app" / "page.dashboard" / "view.pug"
@@ -34,6 +35,7 @@ class SystemSettingsStaticContractTest(unittest.TestCase):
         system_api = SYSTEM_API.read_text(encoding="utf-8")
         system_view = SYSTEM_VIEW.read_text(encoding="utf-8")
         system_ts = SYSTEM_TS.read_text(encoding="utf-8")
+        codex_runtime = CODEX_RUNTIME_MODEL.read_text(encoding="utf-8")
         auth_model = AUTH_MODEL.read_text(encoding="utf-8")
         setup_model = SETUP_MODEL.read_text(encoding="utf-8")
         dashboard_view = DASHBOARD_VIEW.read_text(encoding="utf-8")
@@ -61,6 +63,12 @@ class SystemSettingsStaticContractTest(unittest.TestCase):
         self.assertIn("system-admin-new-password", system_view)
         self.assertIn("system-admin-password-save", system_view)
         self.assertIn("changeAdminPassword()", system_ts)
+        for token in ["def ai_codex_device_login_start():", "def ai_codex_device_login_status():", "def ai_codex_device_login_cancel():"]:
+            self.assertIn(token, system_api)
+        for token in ["startCodexDeviceLogin()", "codexDeviceLogin()", "copyCodexDeviceCode()", "브라우저 로그인", "One-time code"]:
+            self.assertIn(token, system_view + system_ts)
+        for token in ["def start_device_login", "codex login --device-auth", "verification_uri", "user_code", "cancel_device_login", "pty.openpty", "_read_device_login_pty"]:
+            self.assertIn(token, codex_runtime)
         self.assertNotIn("public_url", setup_model)
         self.assertNotIn("public_url", dashboard_view)
 

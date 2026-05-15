@@ -20,6 +20,16 @@ export class Component implements OnInit {
     public zones = signal<any[]>([]);
     public baseContent = '';
     public manualCompose = '';
+    public manualComposeEditorOptions: any = {
+        language: 'yaml',
+        theme: 'vs',
+        fontSize: 13,
+        minimap: { enabled: false },
+        automaticLayout: true,
+        wordWrap: 'on',
+        scrollBeyondLastLine: false,
+        roundedSelection: false,
+    };
     public generatedSecretKeys: string[] = [];
     public draftMetadata: any = {};
     public imageChecks: any = {};
@@ -38,6 +48,8 @@ export class Component implements OnInit {
     public aiResult: any = null;
     public aiModelOptions = signal<any[]>([]);
     public aiDefaultModelRef = signal<string>('auto');
+    public aiAvailable = signal<boolean>(false);
+    public aiUnavailableMessage = signal<string>('');
     public aiStreamEvents = signal<any[]>([]);
     public aiOutputTokenCount = signal<number>(0);
     public preflightSignature = '';
@@ -50,6 +62,7 @@ export class Component implements OnInit {
 
     public async ngOnInit() {
         await this.service.init();
+        this.syncManualComposeEditorTheme();
         await this.load();
         await this.loadAiModelOptions();
         if (!this.error()) await this.loadImportFromQuery();
@@ -113,10 +126,25 @@ export class Component implements OnInit {
     public async loadAiModelOptions() {
         const { code, data } = await wiz.call('ai_model_options', {});
         if (code === 200) {
-            this.aiModelOptions.set(data.options || []);
-            this.aiDefaultModelRef.set(data.default_model_ref || 'auto');
-            this.aiForm.model_ref = data.default_model_ref || 'auto';
+            const options = data.options || [];
+            this.aiModelOptions.set(options);
+            this.aiAvailable.set(options.length > 0);
+            this.aiUnavailableMessage.set(options.length ? '' : (data.message || '시스템 설정에서 사용 중인 AI 모델이 없습니다.'));
+            this.aiDefaultModelRef.set(data.default_model_ref || '');
+            this.aiForm.model_ref = data.default_model_ref || '';
+            if (!options.length && !this.baseContent) {
+                this.manualComposeOpen.set(true);
+            }
+        } else {
+            this.aiModelOptions.set([]);
+            this.aiAvailable.set(false);
+            this.aiUnavailableMessage.set(data?.message || 'AI 모델 목록을 불러올 수 없습니다.');
+            if (!this.baseContent) this.manualComposeOpen.set(true);
         }
+    }
+
+    public hasAiModels() {
+        return this.aiAvailable() && this.aiModelOptions().length > 0;
     }
 
     private importQuery() {
@@ -150,8 +178,9 @@ export class Component implements OnInit {
     }
 
     public steps() {
+        const draftDescription = this.hasAiModels() ? 'AI 또는 Compose' : 'Compose 직접 작성';
         return [
-            { id: 1, title: '서비스 초안', description: 'AI 또는 Compose' },
+            { id: 1, title: '서비스 초안', description: draftDescription },
             { id: 2, title: '구성 확인', description: '이미지, 연결 포트, 고급 설정' },
             { id: 3, title: '도메인', description: '접속 주소' },
             { id: 4, title: '확인', description: '저장 또는 배포' },
@@ -233,7 +262,16 @@ export class Component implements OnInit {
 
     public async toggleManualCompose() {
         this.manualComposeOpen.set(!this.manualComposeOpen());
+        if (this.manualComposeOpen()) this.syncManualComposeEditorTheme();
         await this.service.render();
+    }
+
+    private syncManualComposeEditorTheme() {
+        const dark = document.documentElement.classList.contains('dark');
+        this.manualComposeEditorOptions = {
+            ...this.manualComposeEditorOptions,
+            theme: dark ? 'vs-dark' : 'vs',
+        };
     }
 
     private aiIntentText() {
@@ -485,6 +523,12 @@ export class Component implements OnInit {
     }
 
     public async generateServiceWithAi() {
+        if (!this.hasAiModels()) {
+            this.manualComposeOpen.set(true);
+            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
+            await this.service.render();
+            return;
+        }
         const intent = this.aiIntentText();
         if (!intent) {
             await this.alert('만들고 싶은 서비스를 한 줄 이상 입력해주세요.');
@@ -550,7 +594,7 @@ export class Component implements OnInit {
 
     public async validateStep(step: StepId = this.step()) {
         if (step === 1 && !this.baseContent.trim()) {
-            await this.alert('AI로 서비스 초안을 먼저 만들어주세요. Compose 직접 작성은 고급 사용자용입니다.');
+            await this.alert(this.hasAiModels() ? 'AI로 서비스 초안을 만들거나 Compose 초안을 직접 적용해주세요.' : 'Compose 초안을 직접 작성해 적용해주세요.');
             return false;
         }
         if (step === 1 && !String(this.form.name || '').trim()) {
@@ -803,7 +847,8 @@ export class Component implements OnInit {
         return (details || [])
             .filter((detail: any) => detail)
             .map((detail: any) => {
-                const message = detail.message || detail.error_code || '검사에 실패했습니다.';
+                if (typeof detail === 'string') return detail;
+                const message = detail.message || detail.reason || detail.error_code || '검사에 실패했습니다.';
                 return detail.path ? `- ${detail.path}: ${message}` : `- ${message}`;
             });
     }
@@ -812,7 +857,9 @@ export class Component implements OnInit {
         const base = data?.error_code === 'COMPOSE_VALIDATION_FAILED'
             ? 'Compose 검사를 통과하지 못했습니다.'
             : (data?.message || fallback);
-        const details = this.validationDetails(data?.details || []);
+        const detailRows = Array.isArray(data?.details) ? data.details : [];
+        const details = this.validationDetails([data?.reason, ...detailRows])
+            .filter((detail: string, index: number, rows: string[]) => detail !== base && rows.indexOf(detail) === index);
         if (!details.length) return base;
         return `${base}\n\n${details.join('\n')}`;
     }

@@ -22,6 +22,9 @@ export class Component implements OnInit, OnDestroy {
     public refreshingAiResources = signal<boolean>(false);
     public refreshingCodexStatus = signal<boolean>(false);
     public testingCodex = signal<boolean>(false);
+    public codexDeviceLoginBusy = signal<boolean>(false);
+    public codexDeviceLoginPolling = signal<boolean>(false);
+    public codexDeviceLogin = signal<any>(null);
     public general: any = { browser_title: 'Docker Infra', favicon_url: AppearanceRuntime.assetRoute('favicon'), logo_url: AppearanceRuntime.assetRoute('logo') };
     public adminPassword: any = { current_password: '', new_password: '', confirm_password: '' };
     public aiSettings: any = this.defaultAiSettings();
@@ -39,6 +42,7 @@ export class Component implements OnInit, OnDestroy {
     public backupInstallOperation: any = null;
     public backupInstallLog: string = '';
     public backupInstallTimer: any = null;
+    public codexDeviceLoginTimer: any = null;
     public backupOperationPolling: boolean = false;
     public backupHealth: any = null;
     public backupNodeRegistryResult: any = null;
@@ -63,6 +67,7 @@ export class Component implements OnInit, OnDestroy {
     public ngOnDestroy() {
         for (const kind of ASSET_KINDS) this.releasePendingAsset(kind);
         this.stopBackupInstallPoll();
+        this.stopCodexDeviceLoginPoll();
     }
 
     public async alert(message: string, status: string = 'error') {
@@ -234,6 +239,101 @@ export class Component implements OnInit, OnDestroy {
         }
         await this.alert(data?.message || 'Codex 로그인 실행 테스트에 실패했습니다.');
         await this.service.render();
+    }
+
+    private codexConfigPayload() {
+        return { ...(this.aiSettings.codex || {}), cli_mode: 'system' };
+    }
+
+    private syncCodexDeviceLogin(data: any) {
+        if (data?.codex_status) this.aiCodexStatus = data.codex_status || {};
+        if (data?.device_login) this.codexDeviceLogin.set(data.device_login);
+        else if (!this.codexDeviceLoginActive()) this.codexDeviceLogin.set(null);
+        if (this.codexDeviceLoginActive()) this.startCodexDeviceLoginPoll();
+        else this.stopCodexDeviceLoginPoll();
+    }
+
+    public codexDeviceLoginActive() {
+        const status = String(this.codexDeviceLogin()?.status || '');
+        return ['starting', 'waiting_for_user'].includes(status);
+    }
+
+    public codexDeviceLoginStatusLabel() {
+        const status = String(this.codexDeviceLogin()?.status || '');
+        const labels: any = {
+            starting: '시작 중',
+            waiting_for_user: '로그인 대기',
+            succeeded: '완료',
+            failed: '종료됨',
+            canceled: '취소됨',
+        };
+        return labels[status] || '대기';
+    }
+
+    public async startCodexDeviceLogin() {
+        if (this.codexDeviceLoginBusy()) return;
+        this.codexDeviceLoginBusy.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call('ai_codex_device_login_start', { codex: this.codexConfigPayload() });
+        this.codexDeviceLoginBusy.set(false);
+        if (code === 200) {
+            this.syncCodexDeviceLogin(data);
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || 'Codex 브라우저 로그인을 시작할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async refreshCodexDeviceLoginStatus() {
+        if (this.codexDeviceLoginPolling()) return;
+        this.codexDeviceLoginPolling.set(true);
+        const { code, data } = await wiz.call('ai_codex_device_login_status', { codex: this.codexConfigPayload() });
+        this.codexDeviceLoginPolling.set(false);
+        if (code === 200) {
+            this.syncCodexDeviceLogin(data);
+            await this.service.render();
+            return;
+        }
+        this.stopCodexDeviceLoginPoll();
+        await this.alert(data?.message || 'Codex 브라우저 로그인 상태를 확인할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async cancelCodexDeviceLogin() {
+        if (!this.codexDeviceLoginActive()) return;
+        const { code, data } = await wiz.call('ai_codex_device_login_cancel', { codex: this.codexConfigPayload() });
+        if (code === 200) {
+            this.syncCodexDeviceLogin(data);
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || 'Codex 브라우저 로그인을 취소할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async copyCodexDeviceCode() {
+        const code = String(this.codexDeviceLogin()?.user_code || '').trim();
+        if (!code) return;
+        try {
+            await navigator.clipboard.writeText(code);
+            await this.alert('Codex one-time code를 복사했습니다.', 'success');
+        } catch (error) {
+            await this.alert('브라우저에서 클립보드 복사를 허용하지 않았습니다.');
+        }
+    }
+
+    private startCodexDeviceLoginPoll() {
+        if (this.codexDeviceLoginTimer) return;
+        this.codexDeviceLoginTimer = setInterval(() => {
+            this.refreshCodexDeviceLoginStatus();
+        }, 2500);
+    }
+
+    private stopCodexDeviceLoginPoll() {
+        if (!this.codexDeviceLoginTimer) return;
+        clearInterval(this.codexDeviceLoginTimer);
+        this.codexDeviceLoginTimer = null;
     }
 
     public async refreshAiModels(provider: string) {
