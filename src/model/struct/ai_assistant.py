@@ -2624,6 +2624,8 @@ class AIAssistant:
     def _iter_with_heartbeat(self, iterator, interval=AI_STREAM_HEARTBEAT_SECONDS):
         events = queue.Queue()
         done = object()
+        started_at = time.time()
+        heartbeat_count = 0
 
         def consume():
             try:
@@ -2639,7 +2641,15 @@ class AIAssistant:
             try:
                 kind, payload = events.get(timeout=interval)
             except queue.Empty:
-                yield {"type": "heartbeat"}
+                heartbeat_count += 1
+                elapsed_seconds = max(0, int(time.time() - started_at))
+                yield {
+                    "type": "heartbeat",
+                    "label": "대기 중",
+                    "message": "Codex CLI가 선택한 모델 응답을 기다리는 중입니다. (%s초 경과)" % elapsed_seconds,
+                    "elapsed_seconds": elapsed_seconds,
+                    "heartbeat_count": heartbeat_count,
+                }
                 continue
             if kind == "event":
                 yield payload
@@ -2958,13 +2968,14 @@ class AIAssistant:
         provider_type = provider.get("type")
         cli_mode = metadata.get("cli_mode") or provider.get("cli_mode") or ("system" if provider_type == "codex" else "custom")
         uses_custom_cli = bool(metadata.get("uses_custom_cli")) if "uses_custom_cli" in metadata else cli_mode == "custom"
+        cli_label = "커스텀 Codex CLI" if uses_custom_cli else ("Codex 로그인" if provider_type == "codex" else "")
         return {
             "type": provider_type,
             "label": provider.get("label"),
             "model": metadata.get("model") or provider.get("model"),
             "reasoning_effort": metadata.get("reasoning_effort") or provider.get("reasoning_effort"),
             "cli_mode": cli_mode,
-            "cli_label": "Codex 로그인" if provider_type == "codex" else "",
+            "cli_label": cli_label,
             "uses_custom_cli": uses_custom_cli,
             "engine": metadata.get("engine") or "codex",
             "executable": metadata.get("executable") or "",
@@ -2972,8 +2983,8 @@ class AIAssistant:
 
     def _codex_execution_status_event(self, metadata):
         metadata = metadata or {}
-        cli_label = "Codex 실행"
-        bits = [cli_label, self._clean_text(metadata.get("model"))]
+        cli_label = "커스텀 Codex CLI" if metadata.get("uses_custom_cli") else "일반 Codex CLI"
+        bits = [cli_label, self._clean_text(metadata.get("provider_label")), self._clean_text(metadata.get("model"))]
         executable = self._clean_text(metadata.get("executable"))
         if executable:
             bits.append(executable)

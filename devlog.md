@@ -203,3 +203,4 @@
 | 2026-05-14 | 201 | 서비스 AI MCP scope와 백그라운드 모달 개선 | [상세](devlog/2026-05-14/201-service-ai-runtime-mcp-modal.md) |
 | 2026-05-14 | 202 | 서비스 AI 검사 모달 모델 선택 배치 조정 | [상세](devlog/2026-05-14/202-service-ai-modal-model-placement.md) |
 | 2026-05-14 | 203 | 서비스 certbot SSL 적용 타이밍과 갱신 관리 보강 | [상세](devlog/2026-05-14/203-service-certbot-runtime-renewal.md) |
+| 2026-05-14 | 204 | 서비스 생성 AI Gemini 커스텀 Codex 완료와 진행 표시 수정 | [상세](devlog/2026-05-14/204-service-create-ai-gemini-progress-heartbeat.md) |

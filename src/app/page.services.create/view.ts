@@ -293,11 +293,29 @@ export class Component implements OnInit {
         return latest ? `${stage} · ${latest}` : stage;
     }
 
+    private providerStreamMessage(provider: any) {
+        const label = String(provider?.label || provider?.type || 'AI').trim();
+        const model = String(provider?.model || '').trim();
+        const cliLabel = provider?.uses_custom_cli
+            ? '커스텀 Codex CLI'
+            : String(provider?.cli_label || '').trim();
+        const modelLabel = model ? `${label} / ${model}` : label;
+        return [modelLabel, cliLabel].filter((item) => !!item).join(' · ');
+    }
+
+    private heartbeatStreamMessage(event: any) {
+        if (event?.message) return String(event.message);
+        const elapsed = Number(event?.elapsed_seconds || 0);
+        if (elapsed > 0) return `Codex CLI가 선택한 모델 응답을 기다리는 중입니다. (${elapsed}초 경과)`;
+        return 'Codex CLI가 선택한 모델 응답을 기다리는 중입니다.';
+    }
+
     private compactAiStreamRows(events: any[]) {
         const rows: any[] = [];
         let thinkingBuffer = '';
         let deltaBuffer = '';
         let progressIndex = -1;
+        let heartbeatIndex = -1;
         const pushRow = (row: any) => {
             const message = row?.message || row?.text || row?.provider?.label;
             if (!message && row?.type !== 'provider') return;
@@ -311,6 +329,19 @@ export class Component implements OnInit {
             if (progressIndex >= 0) rows[progressIndex] = row;
             else {
                 progressIndex = rows.length;
+                rows.push(row);
+            }
+        };
+        const upsertHeartbeat = (event: any) => {
+            const row = {
+                ...event,
+                type: 'heartbeat',
+                label: event?.label || '대기 중',
+                message: this.heartbeatStreamMessage(event),
+            };
+            if (heartbeatIndex >= 0) rows[heartbeatIndex] = row;
+            else {
+                heartbeatIndex = rows.length;
                 rows.push(row);
             }
         };
@@ -330,10 +361,15 @@ export class Component implements OnInit {
             }
         };
         for (const event of events || []) {
-            if (!['provider', 'status', 'thinking', 'error', 'delta'].includes(event?.type)) continue;
+            if (!['provider', 'status', 'thinking', 'error', 'delta', 'heartbeat'].includes(event?.type)) continue;
             if (event.type === 'delta') {
                 deltaBuffer += String(event.text || '');
                 upsertProgress();
+                continue;
+            }
+            if (event.type === 'heartbeat') {
+                flushThinking(true);
+                upsertHeartbeat(event);
                 continue;
             }
             if (event.type === 'thinking') {
@@ -343,7 +379,7 @@ export class Component implements OnInit {
             }
             flushThinking(true);
             if (event.type === 'provider') {
-                pushRow(event);
+                pushRow({ ...event, message: this.providerStreamMessage(event.provider) });
                 continue;
             }
             for (const text of this.streamLines(event.message || event.text || '')) {
