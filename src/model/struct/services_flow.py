@@ -202,6 +202,8 @@ def _domain_target(domain, service_nodes):
 
 def _domain_ssl_label(domain):
     metadata = dict(domain.get("metadata") or {})
+    if metadata.get("ddns_endpoint_id"):
+        return "DDNS"
     mode = _text(metadata.get("nginx_ssl_mode") or domain.get("ssl_mode"))
     labels = {
         "existing": "업로드 인증서",
@@ -219,6 +221,9 @@ def _proxy_label(domain):
     target = metadata.get("target_port") or domain.get("port")
     node = _text(metadata.get("proxy_node_name"))
     base = f"{host}:{published} -> {target}"
+    if metadata.get("ddns_endpoint_id"):
+        status = _text(metadata.get("ddns_status") or "pending")
+        base = f"{base} · DDNS {status}"
     return f"{base} · {node}" if node else base
 
 

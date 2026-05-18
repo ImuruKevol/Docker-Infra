@@ -130,8 +130,9 @@ def edit_options():
 
     try:
         zones = []
-        for zone in domains_model.load().get("zones", []):
-            if zone.get("usable_for_service") is False or zone.get("enabled") is False:
+        for zone in domains_model.service_options().get("zones", []):
+            if zone.get("provider") == "ddns":
+                zones.append(zone)
                 continue
             certs = webserver.certificates_for_domain(zone.get("domain"), zone_id=zone.get("id"))
             zones.append({**zone, "certificate_summary": certs.get("summary") or {}})

@@ -5,6 +5,7 @@ connect = wiz.model("db/postgres").connect
 config = wiz.config("docker_infra")
 DomainError = wiz.model("struct/domains_shared")
 cloudflare = wiz.model("struct/domains_cloudflare")
+ddns = wiz.model("struct/domains_ddns")
 webserver = wiz.model("struct/webserver")
 operations = wiz.model("struct/operations")
 
@@ -225,6 +226,9 @@ class Domains(cloudflare):
             if not domain:
                 skipped.append({"service_domain_id": str(row.get("id") or ""), "reason": "domain_missing"})
                 continue
+            if metadata.get("dns_provider") == "ddns" or metadata.get("ddns_endpoint_id"):
+                skipped.append({"domain": domain, "reason": "ddns_managed"})
+                continue
 
             try:
                 with connect(env=env) as connection:
@@ -324,6 +328,19 @@ class Domains(cloudflare):
                 "record_count": sum(int(zone.get("record_count") or 0) for zone in zones),
             },
         }
+
+    def service_options(self, env=None):
+        payload = self.load(env=env)
+        zones = [
+            zone
+            for zone in payload.get("zones", [])
+            if zone.get("usable_for_service") is not False and zone.get("enabled") is not False
+        ]
+        for zone in zones:
+            zone["provider"] = "cloudflare"
+            zone["provider_label"] = "Cloudflare"
+        zones.extend(ddns.service_zone_options(env=env))
+        return {"zones": zones}
 
     def detail(self, zone_id, env=None):
         with connect(env=env) as connection:

@@ -209,7 +209,7 @@ main(class="space-y-5 px-5 py-5")
                     div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
                         p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 연결 미리보기
                         p(class="mt-2 break-all text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{domainPreview()}}
-                        p(class="mt-2 text-xs leading-5 text-zinc-600 dark:text-zinc-300") 도메인을 사용하면 nginx 연결과 SSL 방식은 배포 과정에서 자동으로 정리됩니다.
+                        p(class="mt-2 text-xs leading-5 text-zinc-600 dark:text-zinc-300") 도메인을 사용하면 배포 과정에서 로컬 nginx 연결 설정이 반영됩니다.
 
                 div(*ngIf="step() === 4", class="grid grid-cols-1 gap-4 lg:grid-cols-[360px_1fr]")
                     div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")

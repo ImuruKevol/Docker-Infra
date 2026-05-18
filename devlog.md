@@ -220,3 +220,9 @@
 | 2026-05-15 | 218 | 서비스 AI 사용 가능 조건과 Codex 브라우저 로그인 추가 | [상세](devlog/2026-05-15/218-service-ai-availability-and-codex-device-login.md) |
 | 2026-05-15 | 219 | Codex 브라우저 로그인 PTY 처리와 Compose Monaco 편집 개선 | [상세](devlog/2026-05-15/219-codex-device-login-pty-and-compose-monaco.md) |
 | 2026-05-15 | 220 | installer WIZ bundle payload 갱신 관리 스크립트 추가 | [상세](devlog/2026-05-15/220-installer-wiz-bundle-update-script.md) |
+| 2026-05-15 | 221 | WIZ root bundle 업데이트 스크립트 단순화 | [상세](devlog/2026-05-15/221-remote-wiz-service-bundle-update.md) |
+| 2026-05-17 | 222 | DDNS Edge 서버 분리 등록 흐름 추가 | [상세](devlog/2026-05-17/222-ddns-edge-gateway.md) |
+| 2026-05-18 | 223 | DDNS 스키마 미적용 시 도메인 관리 화면 복구 | [상세](devlog/2026-05-18/223-domain-ddns-schema-pending-fallback.md) |
+| 2026-05-18 | 224 | DDNS API 등록을 와일드카드 프록시 suffix 방식으로 전환 | [상세](devlog/2026-05-18/224-wildcard-proxy-domain-suffix.md) |
+| 2026-05-18 | 225 | 중간 DDNS 관리 시스템 API 등록 방식 복원 | [상세](devlog/2026-05-18/225-ddns-management-api-registration.md) |
+| 2026-05-18 | 226 | DDNS 서버 등록 모달 입력 항목 단순화 | [상세](devlog/2026-05-18/226-ddns-modal-api-url-simplification.md) |

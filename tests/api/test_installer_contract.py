@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE = ROOT.parents[1]
 INSTALLER = ROOT / "installer"
 
 
@@ -18,7 +19,6 @@ class InstallerContractTest(unittest.TestCase):
             "preinstall.sh",
             "install.sh",
             "cleanup.sh",
-            "update-wiz-bundle.sh",
             "installer_api.py",
             "installer.html",
             "docker-infra.env.example",
@@ -32,8 +32,11 @@ class InstallerContractTest(unittest.TestCase):
             self.assertTrue((INSTALLER / name).is_file(), name)
 
     def test_shell_scripts_are_executable(self):
-        for name in ["preinstall.sh", "install.sh", "cleanup.sh", "update-wiz-bundle.sh", "installer_api.py"]:
+        for name in ["preinstall.sh", "install.sh", "cleanup.sh", "installer_api.py"]:
             mode = (INSTALLER / name).stat().st_mode
+            self.assertTrue(mode & stat.S_IXUSR, name)
+        for name in ["update-wiz-bundle.sh", "update-wiz-service.sh"]:
+            mode = (WORKSPACE / name).stat().st_mode
             self.assertTrue(mode & stat.S_IXUSR, name)
 
     def test_install_script_covers_production_deployment_steps(self):
@@ -170,11 +173,11 @@ class InstallerContractTest(unittest.TestCase):
             self.assertEqual(expected, actual, relative)
 
     def test_wiz_bundle_update_script_refreshes_payload_and_checksums(self):
-        script = self.read("update-wiz-bundle.sh")
+        script = (WORKSPACE / "update-wiz-bundle.sh").read_text(encoding="utf-8")
 
         for token in [
-            "wiz project build",
-            "wiz bundle",
+            "WORKSPACE_ROOT=",
+            "BUNDLE_ROOT=\"$WORKSPACE_ROOT/bundle\"",
             "wiz-bundle.tar.zst",
             "checksums.sha256",
             "tar --zstd -cf",
@@ -182,11 +185,28 @@ class InstallerContractTest(unittest.TestCase):
             "sha256sum -c",
             "codex-bin/linux-x86_64/codex",
             "codex-bin/linux-aarch64/codex",
-            "--skip-build",
-            "--use-existing-bundle",
-            "/opt/conda/envs/docker-infra/bin/wiz",
         ]:
             self.assertIn(token, script)
+
+    def test_wiz_service_update_script_applies_archive_to_existing_install(self):
+        script = (WORKSPACE / "update-wiz-service.sh").read_text(encoding="utf-8")
+
+        for token in [
+            "ARCHIVE=\"${1:-$WIZ_ROOT/wiz-bundle.tar.zst}\"",
+            "SERVICE_UNIT=\"wiz.$SERVICE_NAME.service\"",
+            "WIZ_ROOT=\"$SCRIPT_DIR\"",
+            "systemctl stop \"$SERVICE_UNIT\"",
+            "systemctl start \"$SERVICE_UNIT\"",
+            "rsync -a --delete \"$bundle_root/config/\"",
+            "rsync -a --delete \"$project_bundle/\"",
+            "ln -sfn \"$ENV_FILE\" \"$WIZ_ROOT/config.env\"",
+        ]:
+            self.assertIn(token, script)
+        self.assertNotIn("apt-get install", script)
+        self.assertNotIn("npm install", script)
+        self.assertNotIn("createuser", script)
+        self.assertNotIn("BACKUP_ROOT", script)
+        self.assertNotIn("--migrate", script)
 
     def test_cleanup_script_removes_file_artifacts_only(self):
         script = self.read("cleanup.sh")

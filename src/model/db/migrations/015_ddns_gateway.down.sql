@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS ddns_registrations CASCADE;
+DROP TABLE IF EXISTS ddns_endpoints CASCADE;

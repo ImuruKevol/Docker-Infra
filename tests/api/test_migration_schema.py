@@ -15,6 +15,8 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
         for table in [
             "system_settings",
             "cloudflare_dns_records",
+            "ddns_endpoints",
+            "ddns_registrations",
             "nodes",
             "node_credentials",
             "node_metrics",

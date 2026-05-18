@@ -9,6 +9,7 @@ local_executor = wiz.model("struct/local_executor")
 webserver = wiz.model("struct/webserver")
 certificates = wiz.model("struct/service_nginx_certificates")
 domains_model = wiz.model("struct/domains")
+ddns_model = wiz.model("struct/domains_ddns")
 config = wiz.config("docker_infra")
 
 DOMAIN_RE = re.compile(r"^[A-Za-z0-9*.][A-Za-z0-9.*-]{0,251}[A-Za-z0-9]$")
@@ -194,13 +195,16 @@ class ServiceNginx:
             metadata = dict(row.get("metadata") or {})
             if not domain:
                 continue
-            result = domains_model.ensure_service_dns_record(
-                domain,
-                zone_config_id=metadata.get("zone_id"),
-                content=config.advertise_address(env),
-                proxied=metadata.get("dns_proxied") is True,
-                env=env,
-            )
+            if self._uses_ddns_provider(row):
+                result = {"status": "skipped", "domain": domain, "reason": "ddns_managed"}
+            else:
+                result = domains_model.ensure_service_dns_record(
+                    domain,
+                    zone_config_id=metadata.get("zone_id"),
+                    content=config.advertise_address(env),
+                    proxied=metadata.get("dns_proxied") is True,
+                    env=env,
+                )
             ensured.append(result)
             commands.append({
                 "step": f"dns {domain}",
@@ -213,37 +217,65 @@ class ServiceNginx:
             })
         return ensured
 
+    def _uses_ddns_provider(self, domain_row):
+        metadata = dict(domain_row.get("metadata") or {})
+        return metadata.get("dns_provider") == "ddns" or bool(metadata.get("ddns_endpoint_id"))
+
+    def _ddns_domains(self, domains):
+        return [row for row in domains if self._uses_ddns_provider(row)]
+
     def apply(self, service_id, env=None):
         service, domains = self._domain_rows(service_id, env=env)
         if not service:
             return {"status": "skipped", "message": "서비스를 찾을 수 없습니다.", "applied": []}
         if not domains:
             return {"status": "skipped", "message": "연결된 도메인이 없습니다.", "applied": []}
+        nginx_domains = domains
         applied = []
         active_applied = []
         commands = []
         try:
-            for domain in domains:
+            for domain in nginx_domains:
                 applied.append(self._write_domain(domain, env=env))
             active_applied = list(applied)
-            self._check_and_reload(commands, "nginx", env=env)
-            dns_records = self._ensure_dns_records(domains, commands, env=env)
-            certbot_targets = self._certbot_targets(domains, env=env)
+            dns_records = []
+            ddns_result = {"status": "skipped", "registered": [], "skipped": [], "failures": []}
+            if nginx_domains:
+                self._check_and_reload(commands, "nginx", env=env)
+                dns_records = self._ensure_dns_records(nginx_domains, commands, env=env)
+                ddns_domains = self._ddns_domains(nginx_domains)
+                if ddns_domains:
+                    ddns_result = ddns_model.register_service_domains(service_id, domain_rows=ddns_domains, env=env)
+                    commands.append({
+                        "step": "ddns register",
+                        "result": {
+                            "status": "ok" if ddns_result.get("status") in {"ok", "skipped"} else "error",
+                            "stdout": ddns_result,
+                            "stderr": "",
+                            "exit_code": 0 if ddns_result.get("status") in {"ok", "skipped"} else 1,
+                        },
+                    })
+            certbot_targets = self._certbot_targets(nginx_domains, env=env)
             if certbot_targets:
                 self._issue_certificates(certbot_targets, commands, env=env)
                 active_applied = []
-                for domain in domains:
+                for domain in nginx_domains:
                     reapplied = self._write_domain(domain, env=env)
                     applied.append(reapplied)
                     active_applied.append(reapplied)
                 self._check_and_reload(commands, "nginx ssl", env=env)
             self._mark_domains(active_applied, env=env)
             public_applied = [{key: value for key, value in item.items() if key != "snapshot"} for item in active_applied]
-            return {"status": "ok", "message": "nginx 설정을 적용했습니다.", "applied": public_applied, "dns_records": dns_records, "commands": commands}
+            message = "nginx 설정을 적용했습니다."
+            if ddns_result.get("status") == "ok":
+                message = "nginx 설정과 DDNS DNS 등록을 적용했습니다."
+            return {"status": "ok", "message": message, "applied": public_applied, "dns_records": dns_records, "ddns": ddns_result, "commands": commands}
         except Exception as exc:
             for item in reversed(applied):
                 self._restore_domain(item)
-            rollback = local_executor.run("proxy.nginx.configtest", timeout_seconds=20, env=env)
+            rollback = {"status": "skipped", "stdout": "", "stderr": "", "exit_code": 0}
+            if applied:
+                rollback = local_executor.run("proxy.nginx.configtest", timeout_seconds=20, env=env)
             commands.append({"step": "nginx rollback configtest", "result": rollback})
             public_applied = [{key: value for key, value in item.items() if key != "snapshot"} for item in applied]
             return {"status": "error", "message": str(exc), "applied": public_applied, "commands": commands}

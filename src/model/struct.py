@@ -48,6 +48,10 @@ class Struct:
         return self._load("domains")
 
     @property
+    def domains_ddns(self):
+        return self._load("domains_ddns")
+
+    @property
     def infra_catalog(self):
         return self._load("infra_catalog_registry")
 

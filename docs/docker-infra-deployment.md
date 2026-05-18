@@ -9,10 +9,17 @@
 
 `project/main/installer/`는 단독 반출 가능한 설치 단위다. `payload/`에는 WIZ bundle archive, `linux-x86_64`/`linux-aarch64`용 빌드 완료 custom Codex CLI binary, Python requirements, checksum 파일이 포함되며, 운영 host는 개발 workspace 없이 이 디렉터리만으로 설치를 진행한다. 설치 중 payload를 사용하기 전 `sha256sum -c`로 무결성을 확인한다.
 
-소스 변경 후 installer의 WIZ bundle payload만 최신 코드로 갱신할 때는 개발 workspace에서 다음 관리 스크립트를 실행한다. 이 스크립트는 `wiz project build`, `wiz bundle`, `payload/wiz-bundle.tar.zst` 재생성, `payload/checksums.sha256` 갱신과 검증을 한 번에 처리한다.
+소스 변경 후 installer의 WIZ bundle payload만 최신 코드로 갱신할 때는 WIZ root에서 다음 관리 스크립트를 실행한다. 이 스크립트는 현재 `bundle/` directory를 `payload/wiz-bundle.tar.zst`로 다시 묶고 `payload/checksums.sha256`을 갱신한다.
 
 ```bash
-project/main/installer/update-wiz-bundle.sh
+./update-wiz-bundle.sh
+```
+
+이미 Docker Infra가 설치된 원격 서버는 전체 installer를 다시 가져가지 않고 갱신된 archive만 복사해 WIZ service 파일과 service process만 교체할 수 있다. `update-wiz-service.sh`도 WIZ root에 둔다.
+
+```bash
+scp project/main/installer/payload/wiz-bundle.tar.zst user@host:/tmp/
+ssh user@host 'cd /root/docker-infra && sudo ./update-wiz-service.sh /tmp/wiz-bundle.tar.zst'
 ```
 
 ```bash

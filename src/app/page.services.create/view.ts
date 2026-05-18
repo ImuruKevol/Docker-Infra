@@ -189,6 +189,15 @@ export class Component implements OnInit {
 
     public zoneSelectorItems() {
         return this.zones().map((zone: any) => {
+            if (zone.provider === 'ddns') {
+                return {
+                    value: zone.id,
+                    label: zone.domain,
+                    description: 'DDNS 관리 서버로 DNS 레코드를 등록합니다.',
+                    badge: 'DDNS',
+                    badgeClass: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300',
+                };
+            }
             const summary = zone.certificate_summary || {};
             const hasCert = Number(summary.valid || 0) > 0;
             return {

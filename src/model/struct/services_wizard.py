@@ -13,6 +13,7 @@ import yaml
 connect = wiz.model("db/postgres").connect
 services = wiz.model("struct/services")
 webserver = wiz.model("struct/webserver")
+ddns_model = wiz.model("struct/domains_ddns")
 validator = wiz.model("struct/compose_validator")
 preflight_model = wiz.model("struct/services_preflight")
 
@@ -382,11 +383,21 @@ class ServicesWizard:
                 "published_port": _safe_int(item.get("published_port") or target_port, target_port),
             })
             zone_id = item.get("zone_id") or body.get("zone_id") or metadata.get("zone_id")
-            if zone_id:
+            ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env)
+            if ddns_endpoint:
+                metadata.pop("zone_id", None)
+                metadata.update({
+                    "dns_provider": "ddns",
+                    "routing_provider": "nginx",
+                    "ddns_endpoint_id": str(ddns_endpoint["id"]),
+                    "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                    "ddns_mode": "ddns_management",
+                })
+            elif zone_id:
                 metadata["zone_id"] = zone_id
             ssl_mode = str(item.get("ssl_mode") or "").strip()
             if not ssl_mode:
-                ssl_info = webserver.certificates_for_domain(domain, zone_id=zone_id, env=env)
+                ssl_info = webserver.certificates_for_domain(domain, zone_id=None if ddns_endpoint else zone_id, env=env)
                 ssl_mode = "existing" if int((ssl_info.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
             entries.append({"domain": domain, "port": target_port, "ssl_mode": ssl_mode, "metadata": metadata})
         if not entries and str(body.get("domain") or "").strip():
@@ -397,9 +408,19 @@ class ServicesWizard:
             metadata.update(selection)
             metadata["source"] = metadata.get("source") or "service_wizard"
             zone_id = body.get("zone_id") or metadata.get("zone_id")
-            if zone_id:
+            ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env)
+            if ddns_endpoint:
+                metadata.pop("zone_id", None)
+                metadata.update({
+                    "dns_provider": "ddns",
+                    "routing_provider": "nginx",
+                    "ddns_endpoint_id": str(ddns_endpoint["id"]),
+                    "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                    "ddns_mode": "ddns_management",
+                })
+            elif zone_id:
                 metadata["zone_id"] = zone_id
-            ssl_info = webserver.certificates_for_domain(domain, zone_id=zone_id, env=env)
+            ssl_info = webserver.certificates_for_domain(domain, zone_id=None if ddns_endpoint else zone_id, env=env)
             ssl_mode = "existing" if int((ssl_info.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
             entries.append({"domain": domain, "port": port, "ssl_mode": ssl_mode, "metadata": metadata})
         deduped = []

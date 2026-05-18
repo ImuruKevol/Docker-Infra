@@ -27,14 +27,18 @@ export class Component implements OnInit {
     public syncLoading = signal<boolean>(false);
     public error = signal<string>('');
     public zones = signal<any[]>([]);
+    public ddnsEndpoints = signal<any[]>([]);
+    public ddnsWarning = signal<string>('');
     public selectedZoneId = signal<string>('');
     public detail = signal<any>(this.emptyDetail());
     public zoneModalOpen = signal<boolean>(false);
+    public ddnsModalOpen = signal<boolean>(false);
     public recordModalOpen = signal<boolean>(false);
     public recordDetailModalOpen = signal<boolean>(false);
     public certificateModalOpen = signal<boolean>(false);
     public certificateBusy = signal<boolean>(false);
     public zoneForm: any = this.emptyZoneForm();
+    public ddnsForm: any = this.emptyDdnsForm();
     public recordForm: any = this.emptyRecordForm();
     public recordDetail: any = null;
     public certificateForm: any = this.emptyCertificateForm();
@@ -61,6 +65,9 @@ export class Component implements OnInit {
         const { code, data } = await wiz.call('load', {});
         if (code === 200) {
             const zones = data.zones || [];
+            const ddns = data.ddns || {};
+            this.ddnsEndpoints.set(ddns.endpoints || []);
+            this.ddnsWarning.set(ddns.available === false ? (ddns.message || 'DDNS 관리 서버 정보를 불러올 수 없습니다.') : '');
             this.zones.set(zones);
             const currentZoneId = this.selectedZoneId();
             const nextZoneId = selectZoneId || (zones.some((zone: any) => zone.id === currentZoneId) ? currentZoneId : '') || zones[0]?.id || '';
@@ -69,9 +76,48 @@ export class Component implements OnInit {
             else this.detail.set(this.emptyDetail());
         } else {
             this.error.set(data?.message || '도메인 정보를 불러올 수 없습니다.');
+            this.ddnsWarning.set('');
         }
         this.loading.set(false);
         await this.service.render();
+    }
+
+    public openDdnsModal(endpoint: any = null) {
+        this.ddnsForm = this.emptyDdnsForm(endpoint || {});
+        this.ddnsModalOpen.set(true);
+    }
+
+    public closeDdnsModal() {
+        this.ddnsModalOpen.set(false);
+        this.ddnsForm = this.emptyDdnsForm();
+    }
+
+    public async saveDdnsEndpoint() {
+        const { code, data } = await wiz.call('save_ddns_endpoint', { ...this.ddnsForm });
+        if (code === 200) {
+            this.closeDdnsModal();
+            await this.load(this.selectedZoneId());
+            await this.alert('DDNS 관리 서버 설정을 저장했습니다.', 'success');
+            return;
+        }
+        await this.alert(data?.message || 'DDNS 관리 서버 설정을 저장할 수 없습니다.');
+    }
+
+    public async deleteDdnsEndpoint(endpoint: any) {
+        const ok = await this.confirm(`${endpoint.domain_suffix} DDNS 관리 서버 설정을 삭제합니다. 등록 이력도 함께 제거됩니다.`, '삭제');
+        if (!ok) return;
+        const { code, data } = await wiz.call('delete_ddns_endpoint', { endpoint_id: endpoint.id });
+        if (code === 200) {
+            await this.load(this.selectedZoneId());
+            await this.alert('DDNS 관리 서버 설정을 삭제했습니다.', 'success');
+            return;
+        }
+        await this.alert(data?.message || 'DDNS 관리 서버 설정을 삭제할 수 없습니다.');
+    }
+
+    public ddnsStatusLabel(endpoint: any) {
+        const labels: any = { active: '사용 중', pending: '등록됨', error: '오류', disabled: '사용 안 함' };
+        return labels[endpoint?.status] || endpoint?.status || '-';
     }
 
     public async loadDetail(zoneId: string) {
@@ -501,6 +547,21 @@ export class Component implements OnInit {
             enabled: zone.enabled !== false,
             usable_for_service: zone.usable_for_service !== false,
             token_visible: false
+        };
+    }
+
+    private emptyDdnsForm(endpoint: any = {}) {
+        const apiBaseUrl = String(endpoint.api_base_url || '').replace(/\/+$/, '');
+        const registrationPath = String(endpoint.registration_path || '/api/ddns/records');
+        const apiUrl = endpoint.api_url || (apiBaseUrl ? `${apiBaseUrl}${registrationPath.startsWith('/') ? registrationPath : `/${registrationPath}`}` : '');
+        return {
+            id: endpoint.id || '',
+            name: endpoint.name || '',
+            domain_suffix: endpoint.domain_suffix || '',
+            api_url: apiUrl,
+            token_value: '',
+            tls_verify: endpoint.tls_verify !== false,
+            token_visible: false,
         };
     }
 

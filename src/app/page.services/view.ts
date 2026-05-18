@@ -449,9 +449,13 @@ export class Component implements OnInit, OnDestroy {
         return this.zones().map((zone: any) => ({
             value: zone.id,
             label: zone.domain,
-            description: `DNS 레코드 ${zone.record_count || 0}개 · ${zone.secret_configured ? 'Cloudflare 연결됨' : '토큰 없음'}`,
-            badge: zone.status || 'domain',
-            badgeClass: this.statusClass(zone.status || 'draft'),
+            description: zone.provider === 'ddns'
+                ? 'DDNS 관리 서버로 DNS 레코드를 등록합니다.'
+                : `DNS 레코드 ${zone.record_count || 0}개 · ${zone.secret_configured ? 'Cloudflare 연결됨' : '토큰 없음'}`,
+            badge: zone.provider === 'ddns' ? 'DDNS' : (zone.status || 'domain'),
+            badgeClass: zone.provider === 'ddns'
+                ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300'
+                : this.statusClass(zone.status || 'draft'),
         }));
     }
 

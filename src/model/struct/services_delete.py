@@ -8,6 +8,7 @@ local_executor = wiz.model("struct/local_executor")
 operations = wiz.model("struct/operations")
 webserver = wiz.model("struct/webserver")
 domains_model = wiz.model("struct/domains")
+ddns_model = wiz.model("struct/domains_ddns")
 ServiceError = wiz.model("struct/services_shared").ServiceError
 
 
@@ -123,6 +124,29 @@ class ServiceDeleteMixin:
         )
         return result
 
+    def _remove_ddns_records(self, domains, operation_id, env=None):
+        if not domains:
+            return {"status": "ok", "unregistered": [], "skipped": [], "failures": []}
+        try:
+            result = ddns_model.unregister_service_domains(domains, env=env)
+        except ddns_model.DomainError as exc:
+            metadata = {"step": "ddns unregister", "error_code": exc.error_code, **exc.extra}
+            operations.append_output(operation_id, exc.message, stream="stderr", metadata=metadata, env=env)
+            raise ServiceError(
+                409,
+                "DDNS DNS 레코드를 삭제할 수 없습니다.",
+                "SERVICE_DDNS_RECORD_REMOVE_FAILED",
+                ddns={"message": exc.message, "error_code": exc.error_code, **exc.extra},
+            )
+        operations.append_output(
+            operation_id,
+            f"checked DDNS registrations: unregistered={len(result.get('unregistered') or [])}, skipped={len(result.get('skipped') or [])}",
+            stream="system",
+            metadata={"step": "ddns unregister", "result": result},
+            env=env,
+        )
+        return result
+
     def _remove_service_files(self, service, operation_id, env=None):
         root = self._service_root(service)
         service_roots = [self.service_root().resolve(), self.legacy_service_root().resolve()]
@@ -160,6 +184,7 @@ class ServiceDeleteMixin:
             stack_result = self._remove_stack(service, operation_id, env=env)
             volume_result = self._remove_volumes(service, operation_id, env=env)
             nginx_result = self._remove_nginx_configs(domains, operation_id, env=env)
+            ddns_result = self._remove_ddns_records(domains, operation_id, env=env)
             dns_result = self._remove_dns_records(domains, operation_id, env=env)
             removed_path = self._remove_service_files(service, operation_id, env=env)
             with connect(env=env) as connection:
@@ -169,7 +194,7 @@ class ServiceDeleteMixin:
                 operation_id,
                 "succeeded",
                 message="서비스 삭제를 완료했습니다.",
-                result_payload={"service_id": service_id, "stack": stack_result, "volumes": volume_result, "nginx": nginx_result, "dns": dns_result, "removed_path": removed_path},
+                result_payload={"service_id": service_id, "stack": stack_result, "volumes": volume_result, "nginx": nginx_result, "ddns": ddns_result, "dns": dns_result, "removed_path": removed_path},
                 env=env,
             )
             return {"deleted_service_id": service_id, "operation": operation}

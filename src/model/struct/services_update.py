@@ -11,6 +11,7 @@ connect = wiz.model("db/postgres").connect
 validator = wiz.model("struct/compose_validator")
 preflight_model = wiz.model("struct/services_preflight")
 webserver = wiz.model("struct/webserver")
+ddns_model = wiz.model("struct/domains_ddns")
 image_backups = wiz.model("struct/service_image_backups")
 shared = wiz.model("struct/services_shared")
 ServiceError = shared.ServiceError
@@ -33,11 +34,21 @@ class ServiceUpdateMixin:
         metadata = dict(payload.get("domain_metadata") or {})
         metadata["source"] = "service_update"
         zone_id = payload.get("zone_id") or metadata.get("zone_id")
+        ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env)
+        if ddns_endpoint:
+            metadata.pop("zone_id", None)
+            metadata.update({
+                "dns_provider": "ddns",
+                "routing_provider": "nginx",
+                "ddns_endpoint_id": str(ddns_endpoint["id"]),
+                "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                "ddns_mode": "ddns_management",
+            })
         if zone_id:
             metadata["zone_id"] = zone_id
         ssl_mode = "none"
         if domain:
-            certs = webserver.certificates_for_domain(domain, zone_id=zone_id, env=env)
+            certs = webserver.certificates_for_domain(domain, zone_id=None if ddns_endpoint else zone_id, env=env)
             ssl_mode = "existing" if int((certs.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
         return ssl_mode, metadata
 
@@ -86,11 +97,24 @@ class ServiceUpdateMixin:
                 "published_port": _safe_int(item.get("published_port") or metadata.get("published_port") or port, port),
             })
             zone_id = item.get("zone_id") or payload.get("zone_id") or metadata.get("zone_id")
-            if zone_id:
+            ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env)
+            if ddns_endpoint:
+                metadata.pop("zone_id", None)
+                metadata.update({
+                    "dns_provider": "ddns",
+                    "routing_provider": "nginx",
+                    "ddns_endpoint_id": str(ddns_endpoint["id"]),
+                    "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                    "ddns_mode": "ddns_management",
+                })
+            elif zone_id:
                 metadata["zone_id"] = zone_id
             ssl_mode = item.get("ssl_mode")
             if not ssl_mode:
-                ssl_mode, metadata = self._domain_payload({**payload, "domain_metadata": metadata, "zone_id": zone_id}, domain, port, env=env)
+                if ddns_endpoint:
+                    ssl_mode, metadata = self._domain_payload({**payload, "domain_metadata": metadata, "zone_id": zone_id}, domain, port, env=env)
+                else:
+                    ssl_mode, metadata = self._domain_payload({**payload, "domain_metadata": metadata, "zone_id": zone_id}, domain, port, env=env)
             rows.append({"domain": domain, "port": port, "ssl_mode": ssl_mode, "metadata": metadata})
         if not rows and str(payload.get("domain") or "").strip():
             domain = str(payload.get("domain") or "").strip().lower()

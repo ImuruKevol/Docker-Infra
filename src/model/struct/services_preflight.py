@@ -10,6 +10,7 @@ connect = wiz.model("db/postgres").connect
 validator = wiz.model("struct/compose_validator")
 service_ports = wiz.model("struct/services_ports")
 webserver = wiz.model("struct/webserver")
+ddns_model = wiz.model("struct/domains_ddns")
 nodes_model = wiz.model("struct").nodes
 ssh_executor = wiz.model("struct/ssh_executor")
 placement_selector = wiz.model("struct/services_placement")
@@ -362,13 +363,28 @@ class ServicesPreflight:
         details = []
         nginx = webserver.nginx_defaults()
         for item in domains:
+            item = item or {}
             domain = str((item or {}).get("domain") or "").strip().lower()
             if not domain:
                 continue
             if DOMAIN_RE.match(domain) is None:
                 issues.append(_item("domain.format", "도메인 연결", "error", f"{domain} 도메인 형식이 올바르지 않습니다."))
                 continue
-            certs = webserver.certificates_for_domain(domain, zone_id=(item or {}).get("zone_id") or payload.get("zone_id"), env=env)
+            metadata = dict(item.get("metadata") or {})
+            zone_id = item.get("zone_id") or payload.get("zone_id") or metadata.get("zone_id")
+            ddns_endpoint_id = metadata.get("ddns_endpoint_id") or (zone_id if not metadata.get("zone_id") else None)
+            ddns_endpoint = None
+            if metadata.get("routing_provider") == "ddns" or metadata.get("dns_provider") == "ddns" or ddns_endpoint_id:
+                ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=ddns_endpoint_id, env=env)
+            elif not zone_id:
+                ddns_endpoint = ddns_model.match_domain(domain, env=env)
+            dns_provider = ""
+            external_proxy = ""
+            ssl_mode = ""
+            if ddns_endpoint:
+                dns_provider = "ddns"
+                external_proxy = "ddns_management"
+            certs = webserver.certificates_for_domain(domain, zone_id=None if ddns_endpoint else ((item or {}).get("zone_id") or payload.get("zone_id")), env=env)
             ssl_mode = "existing" if int((certs.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
             if ssl_mode == "certbot" and shutil.which("certbot") is None:
                 issues.append(_item("domain.certbot", "SSL 인증서", "warning", f"{domain} 인증서가 없어 무료 인증서 발급 대상입니다. certbot 설치 여부는 배포 단계에서 다시 확인합니다."))
@@ -378,10 +394,21 @@ class ServicesPreflight:
             config_path = Path(nginx.get("available_site_path") or "/etc/nginx/sites-available") / f"docker-infra-{safe_domain}.conf"
             if config_path.exists():
                 issues.append(_item("nginx.config", "nginx 설정", "warning", f"{domain} nginx 설정 파일이 이미 있습니다. 배포 시 Docker Infra 관리 설정인지 확인합니다.", [{"path": str(config_path)}]))
-            details.append({"domain": domain, "ssl_mode": ssl_mode, "config_path": str(config_path)})
+            detail = {"domain": domain, "routing_provider": "nginx", "ssl_mode": ssl_mode, "config_path": str(config_path)}
+            if ddns_endpoint:
+                detail.update({
+                    "dns_provider": dns_provider,
+                    "ddns_mode": external_proxy,
+                    "endpoint_id": str(ddns_endpoint["id"]),
+                    "endpoint": ddns_endpoint.get("domain_suffix"),
+                    "api_base_url": ddns_endpoint.get("api_base_url"),
+                })
+            details.append(detail)
         if issues:
             return issues
-        return [_item("domain", "도메인과 nginx", "ok", "도메인 중복, SSL 방식, nginx 설정 경로를 확인했습니다.", details)]
+        if details and all(item.get("dns_provider") == "ddns" for item in details):
+            return [_item("domain", "DDNS 도메인", "ok", "DDNS 관리 서버 등록과 로컬 nginx 연결 대상 도메인을 확인했습니다.", details)]
+        return [_item("domain", "도메인 연결", "ok", "도메인 중복과 연결 방식을 확인했습니다.", details)]
 
     def check(self, payload, content, namespace, validation=None, env=None):
         payload = payload or {}

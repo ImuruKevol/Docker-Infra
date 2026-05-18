@@ -6,6 +6,9 @@ ROOT = Path("/root/docker-infra/project/main")
 DOMAINS_TEMPLATE = ROOT / "src" / "app" / "page.domains" / "view.pug"
 DOMAINS_VIEW = ROOT / "src" / "app" / "page.domains" / "view.ts"
 DOMAINS_CLOUDFLARE = ROOT / "src" / "model" / "struct" / "domains_cloudflare.py"
+DOMAINS_DDNS = ROOT / "src" / "model" / "struct" / "domains_ddns.py"
+SERVICE_NGINX = ROOT / "src" / "model" / "struct" / "service_nginx.py"
+SERVICES_PREFLIGHT = ROOT / "src" / "model" / "struct" / "services_preflight.py"
 SEARCH_SELECT_TEMPLATE = ROOT / "src" / "app" / "component.search.select" / "view.html"
 SEARCH_SELECT_VIEW = ROOT / "src" / "app" / "component.search.select" / "view.ts"
 
@@ -51,6 +54,55 @@ class DomainManagementUiStaticContractTest(unittest.TestCase):
         self.assertIn("fa-arrow-right", template)
         self.assertIn("상세", template)
         self.assertIn("/services?service_id=", view)
+
+    def test_ddns_management_server_is_separate_from_cloudflare_zone_flow(self):
+        template = DOMAINS_TEMPLATE.read_text(encoding="utf-8")
+        view = DOMAINS_VIEW.read_text(encoding="utf-8")
+        api = (ROOT / "src" / "app" / "page.domains" / "api.py").read_text(encoding="utf-8")
+        ddns = DOMAINS_DDNS.read_text(encoding="utf-8")
+        nginx = SERVICE_NGINX.read_text(encoding="utf-8")
+        preflight = SERVICES_PREFLIGHT.read_text(encoding="utf-8")
+
+        self.assertIn("DDNS 관리 서버", template)
+        self.assertIn("DDNS 서버 API", template)
+        self.assertIn("*.sub.season.co.kr", template)
+        self.assertIn("sub.season.co.kr만 입력하세요", template)
+        self.assertIn("ddnsForm.api_url", template)
+        self.assertIn("ddnsForm.token_value", template)
+        self.assertIn("HTTPS 인증서 검증", template)
+        self.assertIn("자체 서명/사설 인증서", template)
+        self.assertNotIn("API Base URL", template)
+        self.assertNotIn("등록/갱신 경로", template)
+        self.assertNotIn("Health 경로", template)
+        self.assertNotIn("서비스 도메인 선택에 사용", template)
+        self.assertNotIn("ddnsForm.registration_path", template)
+        self.assertNotIn("ddnsForm.health_path", template)
+        self.assertNotIn("ddnsForm.enabled", template)
+        self.assertNotIn('(click)="checkDdnsEndpoint(endpoint)"', template)
+        self.assertIn("save_ddns_endpoint", api)
+        self.assertIn("ddns_unavailable", api)
+        self.assertIn("api_url", view)
+        self.assertNotIn("checkDdnsEndpoint", view)
+        self.assertNotIn("registration_path: endpoint.registration_path", view)
+        self.assertNotIn("health_path: endpoint.health_path", view)
+        self.assertNotIn("enabled: endpoint.enabled", view)
+        self.assertIn("ddnsEndpoints", view)
+        self.assertIn("ddnsWarning", view)
+        self.assertIn("ddnsWarning()", template)
+        self.assertIn("class DomainDdns", ddns)
+        self.assertIn("ddns_endpoints", ddns)
+        self.assertIn("ddns_registrations", ddns)
+        self.assertIn("DDNS_SCHEMA_PENDING", ddns)
+        self.assertIn("to_regclass('ddns_endpoints')", ddns)
+        self.assertIn("def _api_endpoint", ddns)
+        self.assertIn("\"api_url\"", ddns)
+        self.assertIn("ddns_management", ddns)
+        self.assertIn("register_service_domains", ddns)
+        self.assertIn("unregister_service_domains", ddns)
+        self.assertNotIn("_split_domains", nginx)
+        self.assertIn("ddns_model.register_service_domains", nginx)
+        self.assertIn("ddns_managed", nginx)
+        self.assertIn("DDNS 관리 서버 등록", preflight)
 
     def test_search_select_applies_selection_on_first_click(self):
         template = SEARCH_SELECT_TEMPLATE.read_text(encoding="utf-8")

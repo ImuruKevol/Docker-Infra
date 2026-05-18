@@ -113,7 +113,9 @@ sudo /opt/docker-infra/installer/install.sh --step all
 
 `project/main/installer/`는 WIZ bundle과 custom Codex CLI payload를 포함하는 단독 설치 디렉터리입니다. 설치 과정에서 Node.js LTS/npm과 공식 `@openai/codex`도 함께 설치합니다. 초기 관리자 비밀번호와 local master 설정은 제품 `/access` 화면이 아니라 installer HTML에서 완료하며, `verify` 성공 후 installer HTML의 정리 단계로 설치 관리자 daemon과 HTML을 제거합니다. 중간 설치 실패 시 `installer/cleanup.sh --scope preinstall|install|all`로 file artifact만 정리할 수 있습니다.
 
-소스 변경 후 installer의 `payload/wiz-bundle.tar.zst`만 최신 코드로 갱신할 때는 `project/main/installer/update-wiz-bundle.sh`를 실행합니다.
+소스 변경 후 installer의 `payload/wiz-bundle.tar.zst`만 최신 코드로 갱신할 때는 WIZ root의 `./update-wiz-bundle.sh`를 실행합니다.
+
+이미 설치된 원격 서버는 갱신된 `wiz-bundle.tar.zst`만 복사한 뒤 WIZ root의 `sudo ./update-wiz-service.sh /tmp/wiz-bundle.tar.zst`로 WIZ service만 교체할 수 있습니다.
 
 ## 보안 원칙
 

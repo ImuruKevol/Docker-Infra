@@ -17,6 +17,7 @@ shared = wiz.model("struct/services_shared")
 service_compose = wiz.model("struct/services_compose")
 image_backups = wiz.model("struct/service_image_backups")
 placement_selector = wiz.model("struct/services_placement")
+ddns_model = wiz.model("struct/domains_ddns")
 ServiceRuntimeMixin = wiz.model("struct/services_runtime")
 ServiceDeployMixin = wiz.model("struct/services_deploy")
 ServiceDeleteMixin = wiz.model("struct/services_delete")
@@ -225,6 +226,16 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
                     item_port = _safe_int((item or {}).get("port"), port)
                     item_ssl_mode = (item or {}).get("ssl_mode") or ssl_mode
                     item_metadata = {"source": "ui_wizard", **dict((item or {}).get("metadata") or {})}
+                    if not item_metadata.get("zone_id"):
+                        ddns_endpoint = ddns_model.match_domain(item_domain, endpoint_id=item_metadata.get("ddns_endpoint_id"), env=env)
+                        if ddns_endpoint:
+                            item_metadata.update({
+                                "dns_provider": "ddns",
+                                "routing_provider": "nginx",
+                                "ddns_endpoint_id": str(ddns_endpoint["id"]),
+                                "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                                "ddns_mode": "ddns_management",
+                            })
                     cursor.execute(
                         """
                         INSERT INTO service_domains(service_id, domain, port, proxy_type, ssl_mode, test_run_id, metadata)

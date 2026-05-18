@@ -148,6 +148,12 @@ class ServiceStatusMixin:
             rows.append({
                 "domain": domain.get("domain"),
                 "ssl_mode": domain.get("ssl_mode"),
+                "routing_provider": metadata.get("routing_provider") or "nginx",
+                "dns_provider": metadata.get("dns_provider") or ("ddns" if metadata.get("ddns_endpoint_id") else ""),
+                "ddns_mode": metadata.get("ddns_mode") or ("ddns_management" if metadata.get("ddns_endpoint_id") else ""),
+                "ddns_status": metadata.get("ddns_status"),
+                "ddns_registered": metadata.get("ddns_status") == "registered",
+                "ddns_endpoint_id": metadata.get("ddns_endpoint_id"),
                 "nginx_ssl_mode": metadata.get("nginx_ssl_mode"),
                 "nginx_configured": bool(metadata.get("nginx_config_path")),
                 "published_port": metadata.get("published_port") or domain.get("port"),
@@ -161,6 +167,7 @@ class ServiceStatusMixin:
             "summary": {
                 "total": len(rows),
                 "nginx_configured": len([item for item in rows if item["nginx_configured"]]),
+                "ddns_registered": len([item for item in rows if item.get("ddns_registered")]),
                 "ssl": len([item for item in rows if item.get("nginx_ssl_mode") in {"existing", "certbot", "self_signed"}]),
             },
         }
