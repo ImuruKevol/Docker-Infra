@@ -2839,13 +2839,56 @@ export class Component implements OnInit, OnDestroy {
             const text = String(value || '').trim();
             if (text && !values.includes(text)) values.push(text);
         };
+        for (const container of this.runtimeContainers()) {
+            push(container?.node_name);
+            if (!container?.node_name) push(container?.node_host);
+        }
         for (const domain of this.runtimeDomains()) {
-            push(domain?.proxy_node_name);
+            push(domain?.proxy_node_display_name);
+            push(domain?.proxy_registered_node_name);
         }
         for (const task of this.runtimeStatus()?.stack?.tasks || []) {
-            push(task?.Node || task?.node || task?.Hostname || task?.hostname);
+            push(task?.registered_node_label);
+            push(task?.registered_node_name);
+            push(task?.registered_node_host);
+            push(task?.registered_node?.label);
         }
         return values;
+    }
+
+    public runtimeServerLinks() {
+        const values: any[] = [];
+        const push = (id: any, label: any) => {
+            const nodeId = String(id || '').trim();
+            if (!nodeId || values.some((item: any) => item.id === nodeId)) return;
+            const text = String(label || '').trim();
+            values.push({ id: nodeId, label: text || nodeId });
+        };
+        for (const container of this.runtimeContainers()) {
+            push(container?.node_id, container?.node_name || container?.node_host);
+        }
+        for (const domain of this.runtimeDomains()) {
+            push(domain?.proxy_registered_node_id || domain?.proxy_node_id, domain?.proxy_node_display_name || domain?.proxy_registered_node_name || domain?.proxy_registered_node_host);
+        }
+        for (const task of this.runtimeStatus()?.stack?.tasks || []) {
+            const node = task?.registered_node || {};
+            push(task?.registered_node_id || node?.id, task?.registered_node_label || node?.label || task?.registered_node_name || task?.registered_node_host || node?.name || node?.host);
+        }
+        return values;
+    }
+
+    public runtimeServerDetailNodeId() {
+        return this.runtimeServerLinks()[0]?.id || '';
+    }
+
+    public runtimeServerDetailQueryParams() {
+        const nodeId = this.runtimeServerDetailNodeId();
+        return nodeId ? { node_id: nodeId } : {};
+    }
+
+    public runtimeServerDetailLinkTitle() {
+        const target = this.runtimeServerLinks()[0];
+        return target?.label ? `${target.label} 서버 상세로 이동` : '서버 상세로 이동';
     }
 
     public runtimeServerSummaryText() {
@@ -2900,7 +2943,8 @@ export class Component implements OnInit, OnDestroy {
     public runtimeDomainProxyText(domain: any) {
         const host = domain?.proxy_host || '127.0.0.1';
         const port = domain?.published_port || domain?.target_port || '-';
-        const node = domain?.proxy_node_name ? ` · ${domain.proxy_node_name}` : '';
+        const nodeName = domain?.proxy_node_display_name || domain?.proxy_registered_node_name || '';
+        const node = nodeName ? ` · ${nodeName}` : '';
         return `${host}:${port}${node}`;
     }
 

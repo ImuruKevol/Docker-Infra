@@ -253,3 +253,6 @@
 | 2026-05-19 | 251 | 서비스 관리 상태 표시와 적용 버튼 문구 정리 | [상세](devlog/2026-05-19/251-service-management-status-label-cleanup.md) |
 | 2026-05-19 | 252 | 서비스 상세 헤더 버튼 정리와 스냅샷 백업 위치 이동 | [상세](devlog/2026-05-19/252-service-header-actions-cleanup.md) |
 | 2026-05-19 | 253 | 서비스 버전 이력을 수동 릴리즈 전용으로 전환 | [상세](devlog/2026-05-19/253-service-manual-release-version-policy.md) |
+| 2026-05-19 | 254 | 서비스 상세 서버 표시를 Docker Infra 등록 정보 기준으로 보정 | [상세](devlog/2026-05-19/254-service-detail-registered-server-label.md) |
+| 2026-05-19 | 255 | 서비스 상세 서버 요약에서 서버 상세 링크 추가 | [상세](devlog/2026-05-19/255-service-detail-server-link.md) |
+| 2026-05-19 | 256 | 서비스 상세 상단 서버 버튼 배치와 요약 카드 제거 | [상세](devlog/2026-05-19/256-service-detail-header-server-button.md) |

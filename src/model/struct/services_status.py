@@ -29,6 +29,151 @@ def _json_lines(stdout):
     return rows
 
 
+def _text(value):
+    return str(value or "").strip()
+
+
+def _node_display_label(node):
+    if not node:
+        return ""
+    return _text(node.get("name")) or _text(node.get("host")) or _text(node.get("id"))
+
+
+def _node_public_ref(node):
+    if not node:
+        return None
+    return {
+        "id": _text(node.get("id")),
+        "name": _text(node.get("name")),
+        "host": _text(node.get("host")),
+        "swarm_node_id": _text(node.get("swarm_node_id")),
+        "label": _node_display_label(node),
+    }
+
+
+def _node_lookup_maps(env=None, include_swarm=False):
+    maps = {
+        "by_id": {},
+        "by_swarm_id": {},
+        "by_name": {},
+        "by_host": {},
+        "by_task_node": {},
+        "swarm_check": {"status": "skipped", "exit_code": None},
+    }
+
+    def add(bucket, key, node):
+        key = _text(key)
+        if key and node is not None:
+            maps[bucket][key] = node
+
+    try:
+        node_rows = nodes.list(env=env)
+    except Exception:
+        node_rows = []
+
+    for node in node_rows:
+        node_id = _text(node.get("id"))
+        swarm_id = _text(node.get("swarm_node_id"))
+        name = _text(node.get("name"))
+        host = _text(node.get("host"))
+        add("by_id", node_id, node)
+        add("by_swarm_id", swarm_id, node)
+        add("by_swarm_id", swarm_id[:12], node)
+        add("by_name", name, node)
+        add("by_host", host, node)
+        for candidate in [node_id, swarm_id, swarm_id[:12], name, host]:
+            add("by_task_node", candidate, node)
+
+    if not include_swarm:
+        return maps
+
+    try:
+        result = local_executor.run("swarm.nodes", timeout_seconds=10, env=env)
+        maps["swarm_check"] = {"status": result.get("status"), "exit_code": result.get("exit_code")}
+        if result.get("status") == "ok":
+            for row in _json_lines(result.get("stdout")):
+                hostname = _text(row.get("Hostname"))
+                swarm_id = _text(row.get("ID"))
+                registered = maps["by_swarm_id"].get(swarm_id) or maps["by_swarm_id"].get(swarm_id[:12])
+                if registered is None:
+                    continue
+                add("by_task_node", hostname, registered)
+                add("by_task_node", swarm_id, registered)
+                add("by_task_node", swarm_id[:12], registered)
+    except Exception:
+        maps["swarm_check"] = {"status": "error", "exit_code": None}
+    return maps
+
+
+def _registered_node_from_candidates(candidates, node_maps):
+    maps = node_maps or {}
+    for value in candidates:
+        key = _text(value)
+        if not key:
+            continue
+        for bucket in ["by_id", "by_swarm_id", "by_task_node", "by_name", "by_host"]:
+            node = (maps.get(bucket) or {}).get(key)
+            if node is not None:
+                return node
+    return None
+
+
+def _decorate_task_node(task, node_maps):
+    if not isinstance(task, dict):
+        return task
+    registered = _registered_node_from_candidates(
+        [
+            task.get("registered_node_id"),
+            task.get("registered_swarm_node_id"),
+            task.get("swarm_node_id"),
+            task.get("Node"),
+            task.get("node"),
+            task.get("Hostname"),
+            task.get("hostname"),
+        ],
+        node_maps,
+    )
+    ref = _node_public_ref(registered)
+    if not ref:
+        return task
+    return {
+        **task,
+        "registered_node": ref,
+        "registered_node_id": ref["id"],
+        "registered_node_name": ref["name"],
+        "registered_node_host": ref["host"],
+        "registered_swarm_node_id": ref["swarm_node_id"],
+        "registered_node_label": ref["label"],
+    }
+
+
+def _decorate_domain_runtime_row(row, node_maps):
+    if not isinstance(row, dict):
+        return row
+    registered = _registered_node_from_candidates(
+        [
+            row.get("proxy_node_id"),
+            row.get("proxy_swarm_node_id"),
+            row.get("proxy_swarm_node_name"),
+            row.get("proxy_registered_node_name"),
+            row.get("proxy_node_name"),
+            row.get("proxy_host"),
+        ],
+        node_maps,
+    )
+    ref = _node_public_ref(registered)
+    if not ref:
+        return row
+    return {
+        **row,
+        "proxy_node_registered": True,
+        "proxy_registered_node_id": ref["id"],
+        "proxy_registered_node_name": ref["name"],
+        "proxy_registered_node_host": ref["host"],
+        "proxy_node_display_name": ref["label"],
+    }
+
+
 def _replicas(value):
     raw = str(value or "")
     if "/" not in raw:
@@ -75,12 +220,34 @@ def _container_health(containers):
 
 
 class ServiceStatusMixin:
-    def _stack_status(self, stack_name, env=None):
+    def decorate_runtime_status(self, runtime_status, env=None, node_maps=None):
+        if not isinstance(runtime_status, dict):
+            return {}
+        node_maps = node_maps or _node_lookup_maps(env=env, include_swarm=False)
+        runtime = dict(runtime_status)
+
+        stack = dict(runtime.get("stack") or {})
+        tasks = stack.get("tasks")
+        if isinstance(tasks, list):
+            stack["tasks"] = [_decorate_task_node(task, node_maps) for task in tasks]
+            runtime["stack"] = stack
+
+        domains = dict(runtime.get("domains") or {})
+        domain_rows = domains.get("domains")
+        if isinstance(domain_rows, list):
+            domains["domains"] = [_decorate_domain_runtime_row(row, node_maps) for row in domain_rows]
+            runtime["domains"] = domains
+
+        return runtime
+
+    def _stack_status(self, stack_name, env=None, node_maps=None):
+        node_maps = node_maps or _node_lookup_maps(env=env, include_swarm=True)
         params = {"stack_name": stack_name}
         services_result = local_executor.run("service.stack.services", params=params, timeout_seconds=20, env=env)
         tasks_result = local_executor.run("service.stack.ps", params=params, timeout_seconds=20, env=env)
         services_rows = _json_lines(services_result.get("stdout")) if services_result.get("status") == "ok" else []
         task_rows = _json_lines(tasks_result.get("stdout")) if tasks_result.get("status") == "ok" else []
+        task_rows = [_decorate_task_node(task, node_maps) for task in task_rows]
         replicas = [_replicas(row.get("Replicas")) for row in services_rows]
         return {
             "services": services_rows,
@@ -97,6 +264,7 @@ class ServiceStatusMixin:
             "checks": {
                 "services": {"status": services_result.get("status"), "exit_code": services_result.get("exit_code")},
                 "tasks": {"status": tasks_result.get("status"), "exit_code": tasks_result.get("exit_code")},
+                "node_mapping": node_maps.get("swarm_check"),
             },
         }
 
@@ -150,7 +318,7 @@ class ServiceStatusMixin:
             "check": {"status": "ok" if any(item.get("status") == "ok" for item in checks) else "error", "nodes": checks},
         }
 
-    def _domain_status(self, domains):
+    def _domain_status(self, domains, node_maps=None):
         rows = []
         for domain in domains:
             metadata = dict(domain.get("metadata") or {})
@@ -169,8 +337,15 @@ class ServiceStatusMixin:
                 "target_port": metadata.get("target_port") or domain.get("port"),
                 "proxy_host": metadata.get("proxy_host") or "127.0.0.1",
                 "proxy_node_name": metadata.get("proxy_node_name"),
+                "proxy_swarm_node_name": metadata.get("proxy_swarm_node_name"),
+                "proxy_swarm_node_id": metadata.get("proxy_swarm_node_id"),
+                "proxy_node_id": metadata.get("proxy_node_id"),
+                "proxy_registered_node_name": metadata.get("proxy_registered_node_name"),
+                "proxy_registered_node_host": metadata.get("proxy_registered_node_host"),
                 "proxy_node_registered": metadata.get("proxy_node_registered"),
             })
+        if node_maps is not None:
+            rows = [_decorate_domain_runtime_row(row, node_maps) for row in rows]
         return {
             "domains": rows,
             "summary": {
@@ -188,13 +363,14 @@ class ServiceStatusMixin:
                 cursor.execute("SELECT * FROM service_domains WHERE service_id = %s ORDER BY created_at ASC", (service_id,))
                 domains = [_row(row) for row in cursor.fetchall()]
         stack_name = service.get("stack_name") or service.get("namespace")
+        node_maps = _node_lookup_maps(env=env, include_swarm=True)
         runtime = {
             "checked_at": _now(),
             "operation_id": operation_id,
             "stack_name": stack_name,
-            "stack": self._stack_status(stack_name, env=env),
+            "stack": self._stack_status(stack_name, env=env, node_maps=node_maps),
             "containers": self._container_status(service.get("namespace"), env=env),
-            "domains": self._domain_status(domains),
+            "domains": self._domain_status(domains, node_maps=node_maps),
         }
         metadata = dict(service.get("metadata") or {})
         metadata["runtime_status"] = runtime

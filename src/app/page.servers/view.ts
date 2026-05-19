@@ -77,7 +77,8 @@ export class Component implements OnInit, OnDestroy {
     public async ngOnInit() {
         await this.service.init();
         this.startThemeObserver();
-        await this.load();
+        const params = new URLSearchParams(window.location.search || '');
+        await this.load(params.get('node_id') || params.get('selected_node_id') || '');
     }
 
     public ngOnDestroy() {

@@ -77,22 +77,28 @@ def _node_maps(env=None):
 
 
 def _task_node(task, maps):
-    node_name = str(task.get("Node") or "").strip()
-    swarm_row = maps["by_hostname"].get(node_name) or maps["by_node_id"].get(node_name) or {}
+    swarm_node_name = str(task.get("Node") or "").strip()
+    swarm_row = maps["by_hostname"].get(swarm_node_name) or maps["by_node_id"].get(swarm_node_name) or {}
     swarm_id = str(swarm_row.get("ID") or "")
-    inspected = maps["inspected"].get(swarm_id) or maps["inspected"].get(swarm_id[:12]) or maps["inspected"].get(node_name) or {}
+    inspected = maps["inspected"].get(swarm_id) or maps["inspected"].get(swarm_id[:12]) or maps["inspected"].get(swarm_node_name) or {}
     swarm_addr = str((inspected.get("Status") or {}).get("Addr") or "").strip()
     registered = (
         maps["registered_by_swarm_id"].get(swarm_id)
-        or maps["registered_by_name"].get(node_name)
-        or maps["registered_by_host"].get(node_name)
+        or maps["registered_by_name"].get(swarm_node_name)
+        or maps["registered_by_host"].get(swarm_node_name)
     )
-    host = str(swarm_addr or (registered or {}).get("host") or node_name or "127.0.0.1").strip()
+    registered_name = str((registered or {}).get("name") or "").strip()
+    registered_host = str((registered or {}).get("host") or "").strip()
+    display_name = registered_name or registered_host or swarm_node_name
+    host = str(swarm_addr or registered_host or swarm_node_name or "127.0.0.1").strip()
     return {
-        "node_name": node_name,
+        "node_name": display_name,
+        "swarm_node_name": swarm_node_name,
         "swarm_node_id": swarm_id or str((registered or {}).get("swarm_node_id") or ""),
         "node_id": "" if registered is None else str(registered.get("id")),
         "node_host": host,
+        "registered_node_name": registered_name,
+        "registered_node_host": registered_host,
         "registered": registered is not None,
     }
 
@@ -189,8 +195,11 @@ def sync_domain_proxy_targets(service_id, stack_name, attempts=10, delay_seconds
                 metadata.update({
                     "proxy_host": node["node_host"],
                     "proxy_node_name": node["node_name"],
+                    "proxy_swarm_node_name": node["swarm_node_name"],
                     "proxy_swarm_node_id": node["swarm_node_id"],
                     "proxy_node_id": node["node_id"],
+                    "proxy_registered_node_name": node["registered_node_name"],
+                    "proxy_registered_node_host": node["registered_node_host"],
                     "proxy_node_registered": node["registered"],
                 })
                 cursor.execute(

@@ -299,7 +299,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
 
         self.assertIn("return '다시 적용';", view)
-        self.assertIn("실행 기준", template)
+        self.assertNotIn("실행 기준", template)
         self.assertIn("runtimeContainerSummary", view)
         self.assertEqual(template.count('(click)="deploySelectedService()"'), 1)
         self.assertEqual(template.count('(click)="openReleaseModal()"'), 1)
@@ -458,9 +458,20 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
         api = SERVICES_API.read_text(encoding="utf-8")
         flow = FLOW_MODEL.read_text(encoding="utf-8")
+        status = STATUS_MODEL.read_text(encoding="utf-8")
+        deploy_targets = DEPLOY_TARGETS_MODEL.read_text(encoding="utf-8")
+        servers_view = SERVERS_VIEW.read_text(encoding="utf-8")
 
-        for token in ["runtimeServerSummaryText", "certificateSummaryText", "serviceIssue", "runtimeContainers", "runRuntimeContainerAction", "detailTabs", "serviceFlowPaths"]:
+        for token in ["runtimeServerSummaryText", "serviceIssue", "runtimeContainers", "runRuntimeContainerAction", "detailTabs", "serviceFlowPaths", "proxy_node_display_name", "registered_node_label", "runtimeServerLinks", "runtimeServerDetailQueryParams"]:
             self.assertIn(token, view)
+        for token in ["[routerLink]=\"['/servers']\"", "runtimeServerDetailNodeId", "fa-arrow-up-right-from-square"]:
+            self.assertIn(token, template)
+        for token in ["URLSearchParams", "node_id", "selected_node_id"]:
+            self.assertIn(token, servers_view)
+        for token in ["decorate_runtime_status", "proxy_node_display_name", "registered_node_name", "node_mapping"]:
+            self.assertIn(token, status)
+        for token in ["proxy_swarm_node_name", "proxy_registered_node_name", "registered_node_host"]:
+            self.assertIn(token, deploy_targets)
         self.assertIn("flow_model.build", api)
         self.assertIn("service_flow", api)
         self.assertIn("def service_container_action():", api)
@@ -468,7 +479,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("container.node_id", view)
         for token in ["class ServicesFlow", "depends_on", "public_paths", "internal_targets", "nginx"]:
             self.assertIn(token, flow)
-        self.assertIn("서버 / 인증서", template)
+        for token in ["서버 / 인증서", "실행 기준", "구성요소", "lg:grid-cols-4"]:
+            self.assertNotIn(token, template)
         self.assertIn("실행 상태", template)
         self.assertIn("처리 로그", template)
         self.assertIn("백업", template)

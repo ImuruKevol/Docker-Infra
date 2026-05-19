@@ -224,6 +224,13 @@ class ServiceRuntimeMixin:
             return compose_path.read_text(encoding="utf-8")
         return ""
 
+    def _runtime_status_payload(self, service, env=None):
+        runtime = (service.get("metadata") or {}).get("runtime_status") or {}
+        try:
+            return self.decorate_runtime_status(runtime, env=env)
+        except Exception:
+            return runtime
+
     def detail_overview(self, service_id, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -248,7 +255,7 @@ class ServiceRuntimeMixin:
             "free_certificates": free_certificates,
             "operations": operations,
             "file_root": str(root),
-            "runtime_status": (service.get("metadata") or {}).get("runtime_status") or {},
+            "runtime_status": self._runtime_status_payload(service, env=env),
             "backup_system": _backup_system_status(env=env),
         }
 
@@ -277,7 +284,7 @@ class ServiceRuntimeMixin:
             "versions": versions,
             "compose_content": self._compose_content(service),
             "file_root": str(self._service_root(service)),
-            "runtime_status": (service.get("metadata") or {}).get("runtime_status") or {},
+            "runtime_status": self._runtime_status_payload(service, env=env),
             "nginx_configs": self._nginx_configs(service_id, env=env),
             "backup_system": _backup_system_status(env=env),
         }
