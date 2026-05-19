@@ -749,6 +749,17 @@ export class Component implements OnInit {
         this.syncDomain();
     }
 
+    private isDdnsZone(zone: any) {
+        return zone?.provider === 'ddns' || zone?.ddns === true;
+    }
+
+    private domainPrefixForZone(zone: any, prefix: any, fallback: any) {
+        const cleaned = String(prefix || '').trim().replace(/^\.+|\.+$/g, '');
+        if (cleaned || !this.isDdnsZone(zone)) return cleaned;
+        const value = String(fallback || 'service').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+        return (value.replace(/-(service|app)$/g, '') || value || 'service').slice(0, 50);
+    }
+
     public syncDomain() {
         if (this.form.domain_mode !== 'registered') {
             this.form.domain = '';
@@ -756,14 +767,17 @@ export class Component implements OnInit {
         }
         const zone = this.selectedZone();
         if (!zone?.domain) return;
-        const prefix = String(this.form.domain_prefix || '').trim().replace(/^\.+|\.+$/g, '');
+        const prefix = this.domainPrefixForZone(zone, this.form.domain_prefix, this.form.name);
+        if (this.isDdnsZone(zone) && !String(this.form.domain_prefix || '').trim()) {
+            this.form.domain_prefix = prefix;
+        }
         this.form.domain = prefix ? `${prefix}.${zone.domain}` : zone.domain;
     }
 
     public domainPreview() {
         if (this.form.domain_mode !== 'registered') return '도메인 사용 안 함';
         const zone = this.selectedZone();
-        const prefix = String(this.form.domain_prefix || '').trim().replace(/^\.+|\.+$/g, '');
+        const prefix = this.domainPrefixForZone(zone, this.form.domain_prefix, this.form.name);
         return zone?.domain ? (prefix ? `${prefix}.${zone.domain}` : zone.domain) : '도메인 선택 필요';
     }
 

@@ -68,6 +68,16 @@ CODEX_DEVICE_LOGIN_START_TIMEOUT_SECONDS = 5
 CODEX_LOGIN_DEFAULT_MODEL = "gpt-5.5"
 CODEX_LOGIN_DEFAULT_REASONING_EFFORT = "xhigh"
 CODEX_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
+PROMPT_CONTEXT_CHAR_BUDGET = 70000
+PROMPT_CONTEXT_STRING_LIMIT = 12000
+PROMPT_CONTEXT_DEEP_STRING_LIMIT = 3000
+PROMPT_CONTEXT_LIST_LIMIT = 24
+PROMPT_CONTEXT_DEEP_LIST_LIMIT = 8
+PROMPT_CONTEXT_OUTPUT_LIMIT = 5
+SENSITIVE_CONTEXT_KEY_RE = re.compile(
+    r"(api[_-]?key|authorization|bearer|cookie|password|private[_-]?key|secret|token|x-ddns-key)",
+    re.I,
+)
 SYSTEM_EXECUTABLE_SEARCH_PATHS = [
     "/usr/local/bin",
     "/usr/bin",
@@ -917,12 +927,14 @@ class CodexRuntime:
         provider = self._normalize_provider(provider or {})
         request_context = context if isinstance(context, dict) else {}
         mcp_enabled_tools = self._enabled_mcp_tools(request_context)
+        prompt_context = self._prompt_context(request_context, mcp_enabled_tools)
         CODEX_RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="run-", dir=str(CODEX_RUNTIME_ROOT)) as runtime_home:
             runtime_home_path = Path(runtime_home)
             mcp_context_path = runtime_home_path / "docker-infra-mcp-context.json"
             mcp_request_context = dict(request_context)
             mcp_request_context["mcp_enabled_tools"] = mcp_enabled_tools
+            mcp_request_context["ai_request_summary"] = prompt_context
             mcp_context_path.write_text(
                 json.dumps(self._mcp_context(env=env, request_context=mcp_request_context), ensure_ascii=False),
                 encoding="utf-8",
@@ -933,7 +945,7 @@ class CodexRuntime:
                     encoding="utf-8",
                 )
             last_message_path = runtime_home_path / "last-message.txt"
-            prompt = self._prompt(system, context, provider, mcp_enabled_tools)
+            prompt = self._prompt(system, prompt_context, provider, mcp_enabled_tools)
             result = self._run_codex(provider, runtime_home_path, last_message_path, prompt, mcp_context_path, mcp_enabled_tools)
             metadata = {
                 "engine": "codex",
@@ -1061,6 +1073,316 @@ class CodexRuntime:
                 enabled.append(tool)
         return enabled or ["infra_context"]
 
+    def _prompt_context(self, context, enabled_tools=None):
+        context = context if isinstance(context, dict) else {"value": context}
+        compact = self._truncate_context_value(context)
+        if self._json_size(compact) > PROMPT_CONTEXT_CHAR_BUDGET:
+            compact = self._semantic_prompt_context(context)
+        if not isinstance(compact, dict):
+            compact = {"value": compact}
+        compact = dict(compact)
+        compact["context_delivery"] = {
+            "prompt": "compacted_summary",
+            "reason": "large Docker Infra runtime data is kept out of the prompt to avoid context-window overflow",
+            "mcp_tool": "docker_infra.infra_context",
+            "enabled_mcp_tools": enabled_tools or ["infra_context"],
+            "instruction": "Use docker_infra.infra_context for registered servers, DDNS endpoints, runtime values, and this request summary before making infra claims.",
+        }
+        return self._fit_prompt_context(compact)
+
+    def _semantic_prompt_context(self, context):
+        context = context if isinstance(context, dict) else {}
+        priority_keys = [
+            "mode",
+            "intent",
+            "operator_message",
+            "user_intent",
+            "form",
+            "service",
+            "domains",
+            "zones",
+            "ddns_repair_suggestion",
+            "ai_permission_scope",
+            "mcp_guidance",
+            "terminal_actions",
+            "runtime_wait",
+            "client_runtime_issues",
+            "output_format",
+            "compose_validation",
+            "contract",
+            "previous_output",
+            "validation_error",
+            "repair_diagnostics",
+            "repair_attempt",
+            "repair_instruction",
+            "docker_infra_context",
+            "base_content",
+            "components",
+            "summary",
+            "warnings",
+        ]
+        result = {}
+        for key in priority_keys:
+            if key not in context:
+                continue
+            value = context.get(key)
+            if key == "runtime_status":
+                result[key] = self._runtime_status_summary(value)
+            elif key == "runtime_diagnostics":
+                result[key] = self._runtime_diagnostics_summary(value)
+            elif key == "recent_operations":
+                result[key] = self._operation_list_summary(value)
+            elif key == "client_runtime_issues":
+                result[key] = self._client_runtime_issue_summary(value)
+            elif key == "base_content":
+                result[key] = self._truncate_string(value, 18000)
+            else:
+                result[key] = self._truncate_context_value(value, depth=1)
+
+        if "runtime_status" in context and "runtime_status" not in result:
+            result["runtime_status"] = self._runtime_status_summary(context.get("runtime_status"))
+        if "runtime_diagnostics" in context and "runtime_diagnostics" not in result:
+            result["runtime_diagnostics"] = self._runtime_diagnostics_summary(context.get("runtime_diagnostics"))
+        if "recent_operations" in context and "recent_operations" not in result:
+            result["recent_operations"] = self._operation_list_summary(context.get("recent_operations"))
+
+        omitted = [
+            key
+            for key in context.keys()
+            if key not in result and not self._is_sensitive_context_key(key)
+        ]
+        if omitted:
+            result["omitted_context_keys"] = omitted[:50]
+        return result
+
+    def _runtime_status_summary(self, value):
+        if not isinstance(value, dict):
+            return self._truncate_context_value(value, depth=1)
+        stack = value.get("stack") if isinstance(value.get("stack"), dict) else {}
+        containers = value.get("containers") if isinstance(value.get("containers"), dict) else {}
+        domains = value.get("domains") if isinstance(value.get("domains"), dict) else {}
+        return {
+            "checked_at": value.get("checked_at"),
+            "stack": {
+                "summary": self._truncate_context_value(stack.get("summary") or {}, depth=2),
+                "tasks": self._task_error_summary(stack.get("tasks") or []),
+            },
+            "containers": {
+                "summary": self._truncate_context_value(containers.get("summary") or {}, depth=2),
+                "health": self._truncate_context_value(containers.get("health") or {}, depth=2),
+                "containers": self._container_summary(containers.get("containers") or []),
+            },
+            "domains": {
+                "summary": self._truncate_context_value(domains.get("summary") or {}, depth=2),
+                "items": self._truncate_context_value(domains.get("domains") or domains.get("items") or [], depth=2),
+            },
+        }
+
+    def _runtime_diagnostics_summary(self, value):
+        if not isinstance(value, dict):
+            return self._truncate_context_value(value, depth=1)
+        logs = []
+        for item in (value.get("logs") if isinstance(value.get("logs"), list) else [])[:3]:
+            if not isinstance(item, dict):
+                continue
+            logs.append(
+                {
+                    "container": self._truncate_context_value(item.get("container") or {}, depth=2),
+                    "inspect": self._command_result_summary(item.get("inspect")),
+                    "logs": self._command_result_summary(item.get("logs")),
+                }
+            )
+        return {
+            "needs_repair": value.get("needs_repair"),
+            "service_status": value.get("service_status"),
+            "signals": self._truncate_context_value(value.get("signals") or [], depth=2),
+            "failed_operations": self._operation_list_summary(value.get("failed_operations") or []),
+            "problem_containers": self._container_summary(value.get("problem_containers") or []),
+            "task_errors": self._task_error_summary(value.get("task_errors") or []),
+            "stack_summary": self._truncate_context_value(value.get("stack_summary") or {}, depth=2),
+            "container_summary": self._truncate_context_value(value.get("container_summary") or {}, depth=2),
+            "container_health": self._truncate_context_value(value.get("container_health") or {}, depth=2),
+            "logs": logs,
+        }
+
+    def _client_runtime_issue_summary(self, value):
+        if not isinstance(value, dict):
+            return self._truncate_context_value(value, depth=1)
+        return {
+            "has_runtime_issues": value.get("has_runtime_issues"),
+            "service_status": value.get("service_status"),
+            "stack_summary": self._truncate_context_value(value.get("stack_summary") or {}, depth=2),
+            "container_summary": self._truncate_context_value(value.get("container_summary") or {}, depth=2),
+            "container_health": self._truncate_context_value(value.get("container_health") or {}, depth=2),
+            "failed_operations": self._operation_list_summary(value.get("failed_operations") or []),
+        }
+
+    def _operation_list_summary(self, rows):
+        result = []
+        for item in (rows if isinstance(rows, list) else [])[:PROMPT_CONTEXT_OUTPUT_LIMIT]:
+            if isinstance(item, dict):
+                result.append(self._operation_summary(item))
+        return result
+
+    def _operation_summary(self, item):
+        output = item.get("output") if isinstance(item.get("output"), list) else []
+        compact_output = []
+        for entry in output[-PROMPT_CONTEXT_OUTPUT_LIMIT:]:
+            if not isinstance(entry, dict):
+                continue
+            metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            compact_output.append(
+                {
+                    "stream": entry.get("stream"),
+                    "message": self._truncate_string(entry.get("message"), 1000),
+                    "created_at": entry.get("created_at"),
+                    "metadata": self._truncate_context_value(metadata, depth=3),
+                }
+            )
+        result_payload = item.get("result_payload") if isinstance(item.get("result_payload"), dict) else {}
+        return {
+            "id": item.get("id"),
+            "type": item.get("type"),
+            "status": item.get("status"),
+            "message": self._truncate_string(item.get("message"), 1000),
+            "created_at": item.get("created_at"),
+            "started_at": item.get("started_at"),
+            "finished_at": item.get("finished_at"),
+            "result_payload": {
+                "ok": result_payload.get("ok"),
+                "summary": self._truncate_string(result_payload.get("summary"), 1000),
+                "attempts": result_payload.get("attempts"),
+                "error_code": result_payload.get("error_code"),
+            },
+            "output": compact_output,
+        }
+
+    def _task_error_summary(self, rows):
+        result = []
+        for task in (rows if isinstance(rows, list) else [])[:10]:
+            if not isinstance(task, dict):
+                continue
+            result.append(
+                {
+                    "Name": task.get("Name") or task.get("name"),
+                    "CurrentState": task.get("CurrentState") or task.get("Current state") or task.get("current_state"),
+                    "DesiredState": task.get("DesiredState") or task.get("Desired state") or task.get("desired_state"),
+                    "Error": self._truncate_string(task.get("Error") or task.get("error"), 1000),
+                    "Node": task.get("Node") or task.get("node"),
+                }
+            )
+        return result
+
+    def _container_summary(self, rows):
+        result = []
+        for item in (rows if isinstance(rows, list) else [])[:10]:
+            if not isinstance(item, dict):
+                continue
+            result.append(
+                {
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "image": item.get("image"),
+                    "state": item.get("state"),
+                    "status": item.get("status"),
+                    "node_id": item.get("node_id"),
+                    "node_name": item.get("node_name"),
+                    "runtime_service_name": item.get("runtime_service_name"),
+                    "port_bindings": self._truncate_context_value(item.get("port_bindings") or [], depth=3),
+                }
+            )
+        return result
+
+    def _command_result_summary(self, value):
+        if not isinstance(value, dict):
+            return self._truncate_context_value(value, depth=2)
+        return {
+            "status": value.get("status"),
+            "exit_code": value.get("exit_code"),
+            "stdout": self._truncate_string(value.get("stdout"), 1800),
+            "stderr": self._truncate_string(value.get("stderr") or value.get("message"), 1800),
+        }
+
+    def _fit_prompt_context(self, value):
+        if self._json_size(value) <= PROMPT_CONTEXT_CHAR_BUDGET:
+            return value
+        value = self._truncate_context_value(value, depth=0, string_limit=1800, list_limit=8)
+        if self._json_size(value) <= PROMPT_CONTEXT_CHAR_BUDGET:
+            return value
+        if not isinstance(value, dict):
+            return {"value": self._truncate_string(value, PROMPT_CONTEXT_CHAR_BUDGET // 2)}
+        priority_keys = [
+            "mode",
+            "intent",
+            "operator_message",
+            "user_intent",
+            "form",
+            "service",
+            "domains",
+            "zones",
+            "ddns_repair_suggestion",
+            "runtime_status",
+            "runtime_diagnostics",
+            "client_runtime_issues",
+            "output_format",
+            "compose_validation",
+            "base_content",
+            "components",
+            "context_delivery",
+        ]
+        result = {}
+        omitted = []
+        ordered = [key for key in priority_keys if key in value] + [key for key in value.keys() if key not in priority_keys]
+        for key in ordered:
+            candidate = dict(result)
+            candidate[key] = self._truncate_context_value(value.get(key), depth=2, string_limit=1200, list_limit=5)
+            if self._json_size(candidate) <= PROMPT_CONTEXT_CHAR_BUDGET:
+                result = candidate
+            else:
+                omitted.append(key)
+        if omitted:
+            result["omitted_context_keys"] = (result.get("omitted_context_keys") or []) + omitted[:50]
+        return result
+
+    def _truncate_context_value(self, value, depth=0, string_limit=None, list_limit=None):
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                key_text = str(key)
+                if self._is_sensitive_context_key(key_text):
+                    result[key_text] = "[redacted]"
+                    continue
+                result[key_text] = self._truncate_context_value(item, depth + 1, string_limit=string_limit, list_limit=list_limit)
+            return result
+        if isinstance(value, list):
+            limit = list_limit or (PROMPT_CONTEXT_LIST_LIMIT if depth <= 1 else PROMPT_CONTEXT_DEEP_LIST_LIMIT)
+            result = [self._truncate_context_value(item, depth + 1, string_limit=string_limit, list_limit=list_limit) for item in value[:limit]]
+            if len(value) > limit:
+                result.append({"omitted_items": len(value) - limit})
+            return result
+        if isinstance(value, str):
+            limit = string_limit or (PROMPT_CONTEXT_STRING_LIMIT if depth <= 1 else PROMPT_CONTEXT_DEEP_STRING_LIMIT)
+            return self._truncate_string(value, limit)
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        return self._truncate_string(value, string_limit or PROMPT_CONTEXT_DEEP_STRING_LIMIT)
+
+    def _truncate_string(self, value, limit):
+        text = "" if value is None else str(value)
+        limit = max(200, int(limit or PROMPT_CONTEXT_DEEP_STRING_LIMIT))
+        if len(text) <= limit:
+            return text
+        return "%s\n[truncated %s chars]" % (text[:limit], len(text) - limit)
+
+    def _json_size(self, value):
+        try:
+            return len(json.dumps(value, ensure_ascii=False, sort_keys=True))
+        except Exception:
+            return len(str(value))
+
+    def _is_sensitive_context_key(self, key):
+        return bool(SENSITIVE_CONTEXT_KEY_RE.search(str(key or "")))
+
     def _config_toml(self, provider, mcp_context_path, enabled_tools):
         provider_lines = [
             f"model = {_json_string(provider['model'])}",
@@ -1088,6 +1410,7 @@ class CodexRuntime:
                 f"command = {_json_string(python_bin)}",
                 f"args = [{_json_string(str(MCP_SCRIPT))}]",
                 f"enabled_tools = {_toml_string_list(enabled_tools)}",
+                'default_tools_approval_mode = "approve"',
                 "",
                 "[mcp_servers.docker_infra.env]",
                 f"DOCKER_INFRA_ROOT = {_json_string(str(WORKSPACE_ROOT))}",
@@ -1126,12 +1449,22 @@ class CodexRuntime:
             placement = placement_selector.recommend(env=env)
         except Exception:
             placement = None
+        domain_zones = request_context.get("zones") if isinstance(request_context.get("zones"), list) else []
+        ddns_endpoints = [
+            zone
+            for zone in domain_zones
+            if isinstance(zone, dict) and (zone.get("provider") == "ddns" or zone.get("ddns") is True)
+        ]
         return {
             "workspace_root": str(WORKSPACE_ROOT),
             "project_root": str(PROJECT_ROOT),
             "nodes": rows,
             "placement": placement,
+            "domain_zones": domain_zones,
+            "ddns_endpoints": ddns_endpoints,
             "ai_permission_scope": request_context.get("ai_permission_scope") or {},
+            "ai_request_summary": request_context.get("ai_request_summary") or {},
+            "request_context_keys": sorted([str(key) for key in request_context.keys() if not self._is_sensitive_context_key(key)]),
             "mcp_enabled_tools": request_context.get("mcp_enabled_tools") or [],
             "allowed_probe_hosts": self._allowed_probe_hosts(request_context, rows),
             "terminal_actions": request_context.get("terminal_actions") or {},
@@ -1194,6 +1527,8 @@ class CodexRuntime:
             "Do not edit files, do not include markdown fences, and do not describe the answer outside JSON.\n"
             "Use only the docker_infra MCP tools explicitly enabled for this request. "
             f"Enabled docker_infra MCP tools: {enabled_label}.\n"
+            "The request context embedded below is compacted; do not assume omitted runtime logs are unavailable. "
+            "Call docker_infra.infra_context for Docker Infra's registered servers, DDNS endpoints, runtime values, and request summary when needed.\n"
             "If another MCP tool is unavailable or not exposed in this session, do not report that as an operator-facing error; "
             "fall back to the enabled tools and provided Docker Infra context.\n\n"
             "<docker_infra_ai_request>\n"
@@ -1209,6 +1544,7 @@ class CodexRuntime:
             "mcp_servers.docker_infra.command": python_bin,
             "mcp_servers.docker_infra.args": [str(MCP_SCRIPT)],
             "mcp_servers.docker_infra.enabled_tools": enabled_tools,
+            "mcp_servers.docker_infra.default_tools_approval_mode": "approve",
             "mcp_servers.docker_infra.env.DOCKER_INFRA_ROOT": str(WORKSPACE_ROOT),
             "mcp_servers.docker_infra.env.DOCKER_INFRA_MCP_CONTEXT_FILE": str(mcp_context_path),
             "mcp_servers.docker_infra.env.DOCKER_INFRA_MCP_TIMEOUT_SECONDS": "30",
@@ -1309,6 +1645,19 @@ class CodexRuntime:
                 continue
             if event.get("type") in {"agent_message", "thread.item.completed"}:
                 result = event.get("message") or event.get("text") or result
+            if event.get("type") in {"item.completed", "thread.item.completed"}:
+                item = event.get("item") if isinstance(event.get("item"), dict) else {}
+                text = item.get("text") or item.get("message") or item.get("content")
+                if isinstance(text, list):
+                    chunks = []
+                    for chunk in text:
+                        if isinstance(chunk, dict):
+                            chunks.append(str(chunk.get("text") or chunk.get("content") or ""))
+                        elif chunk:
+                            chunks.append(str(chunk))
+                    text = "".join(chunks)
+                if text:
+                    result = str(text)
             if event.get("type") == "turn.completed":
                 output = event.get("aggregated_output")
                 if output:

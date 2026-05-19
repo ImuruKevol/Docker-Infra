@@ -49,6 +49,8 @@ sudo /opt/docker-infra/installer/cleanup.sh --scope all
 
 Production PostgreSQL is installed on the host. The development compose PostgreSQL remains only for dev/test.
 
+Ubuntu 24.04 DDNS updates use NetworkManager dispatcher. The installer includes the `network-manager` package; Docker Infra writes `/etc/NetworkManager/dispatcher.d/90-docker-infra-ddns` when DDNS service domains are registered.
+
 The installer page owns the first admin password and initial system settings. The product `/access` page only shows password login after setup is complete.
 
 Run `cleanup` only after `verify` succeeds. It schedules removal of `docker-infra-installer.service`, the installer nginx site, installer HTML/payload files, and temporary initial setup file.

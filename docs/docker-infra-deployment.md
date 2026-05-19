@@ -33,7 +33,7 @@ sudo /opt/docker-infra/installer/install.sh --step all
 
 | 단계 | 내용 |
 |---|---|
-| `apt` | `nginx`, `postgresql`, `docker.io`, `docker-compose-plugin`, `certbot`, runtime package 설치 |
+| `apt` | `nginx`, `postgresql`, `docker.io`, `docker-compose-plugin`, `certbot`, `network-manager`, runtime package 설치 |
 | `env` | `/etc/docker-infra/docker-infra.env` 생성, `/var/lib/docker-infra` runtime directory 준비 |
 | `postgres` | `docker_infra` role/database/schema 생성 및 password 설정 |
 | `python` | `requirements.txt`의 WIZ/Python runtime dependency 설치 |
@@ -73,6 +73,9 @@ sudo /opt/docker-infra/installer/cleanup.sh --scope all
 - `DOCKER_INFRA_SYSTEM_CODEX_BIN`: npm으로 설치한 공식 `@openai/codex` CLI 경로
 - `DOCKER_INFRA_CODEX_BIN`: Docker Infra runtime이 사용하는 custom Codex CLI binary 경로
 - `CODEX_HOME`: Codex 로그인 세션 저장 경로
+- `DOCKER_INFRA_DDNS_PUBLIC_IP_URLS`: DDNS 갱신 시 공인 IP를 조회할 HTTP endpoint 목록
+- `DOCKER_INFRA_DDNS_STATE_FILE`: NetworkManager dispatcher가 마지막으로 DDNS API에 보낸 IP를 저장하는 파일
+- `DOCKER_INFRA_DDNS_DISPATCHER_*`: Ubuntu 24.04 NetworkManager dispatcher 설치 경로와 자동 설치 여부
 
 공식 `@openai/codex`는 npm global package로 설치해 일반 `codex` CLI를 제공한다. Docker Infra runtime은 별도 경로의 `DOCKER_INFRA_CODEX_BIN`에 지정된 packaged custom binary를 사용하며, installer는 host architecture와 payload binary가 맞지 않으면 custom 설치를 중단한다.
 
@@ -83,6 +86,19 @@ sudo /opt/docker-infra/installer/cleanup.sh --scope all
 제품의 `/access` 화면은 더 이상 설정 마법사를 제공하지 않는다. `operator_auth`가 비어 있거나 local master/system setting이 완성되지 않은 경우 `/access`는 installer URL만 안내한다.
 
 설치 이후 관리자 password 변경은 시스템 설정의 General 탭에서 처리한다.
+
+## DDNS 공인 IP 갱신
+
+도메인 관리 화면에서 DDNS 서버 API를 등록하면 서비스 도메인 배포 시 Docker Infra는 공인 IP를 조회한 뒤 다음 계약으로 중간 DDNS API를 호출한다.
+
+```bash
+curl -sS -X POST "http://ddns.nanoha.kr/api/ddns/update" \
+  -H "Content-Type: application/json" \
+  -H "X-DDNS-Key: <issued-ddns-key>" \
+  -d '{"hostname":"app.sub.season.co.kr","ip":"203.0.113.10","record_type":"A"}'
+```
+
+서비스 도메인이 DDNS로 등록되면 Ubuntu 24.04 기준 NetworkManager dispatcher script도 함께 설치된다. Dispatcher는 네트워크 up, DHCP 변경, connectivity 변경 이벤트에서 공인 IP를 다시 조회하고, `DOCKER_INFRA_DDNS_STATE_FILE`에 저장된 마지막 전송 IP와 다를 때만 DDNS API를 호출한다.
 
 ## 설치 관리자 종료
 

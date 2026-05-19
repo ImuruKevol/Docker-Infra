@@ -383,7 +383,15 @@ class ServicesWizard:
                 "published_port": _safe_int(item.get("published_port") or target_port, target_port),
             })
             zone_id = item.get("zone_id") or body.get("zone_id") or metadata.get("zone_id")
-            ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env)
+            normalized = ddns_model.normalize_service_domain(
+                domain,
+                endpoint_id=zone_id,
+                prefix=item.get("domain_prefix") or item.get("prefix") or body.get("domain_prefix") or metadata.get("domain_prefix"),
+                fallback_prefix=body.get("name") or body.get("namespace") or metadata.get("compose_service"),
+                env=env,
+            )
+            domain = normalized.get("domain") or domain
+            ddns_endpoint = normalized.get("endpoint") or (ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env))
             if ddns_endpoint:
                 metadata.pop("zone_id", None)
                 metadata.update({
@@ -391,6 +399,7 @@ class ServicesWizard:
                     "routing_provider": "nginx",
                     "ddns_endpoint_id": str(ddns_endpoint["id"]),
                     "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                    "domain_prefix": normalized.get("prefix"),
                     "ddns_mode": "ddns_management",
                 })
             elif zone_id:
@@ -408,7 +417,15 @@ class ServicesWizard:
             metadata.update(selection)
             metadata["source"] = metadata.get("source") or "service_wizard"
             zone_id = body.get("zone_id") or metadata.get("zone_id")
-            ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env)
+            normalized = ddns_model.normalize_service_domain(
+                domain,
+                endpoint_id=zone_id,
+                prefix=body.get("domain_prefix") or metadata.get("domain_prefix"),
+                fallback_prefix=body.get("name") or body.get("namespace") or metadata.get("compose_service"),
+                env=env,
+            )
+            domain = normalized.get("domain") or domain
+            ddns_endpoint = normalized.get("endpoint") or (ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env))
             if ddns_endpoint:
                 metadata.pop("zone_id", None)
                 metadata.update({
@@ -416,6 +433,7 @@ class ServicesWizard:
                     "routing_provider": "nginx",
                     "ddns_endpoint_id": str(ddns_endpoint["id"]),
                     "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                    "domain_prefix": normalized.get("prefix"),
                     "ddns_mode": "ddns_management",
                 })
             elif zone_id:

@@ -58,6 +58,275 @@ storage_json=$(df -Pk / | awk 'NR==2 { gsub("%", "", $5); printf "\"total\":%d,\
 printf '{"cpu_percent":%s,"memory":{"total":%s,"used":%s,"cache":%s,"free":%s,"available":%s,"used_percent":%s,"cache_percent":%s,"free_percent":%s,"available_percent":%s},"storage":{%s}}\n' "$cpu_percent" "$mem_total" "$mem_used" "$mem_cache" "$mem_free" "$mem_available" "$mem_percent" "$mem_cache_percent" "$mem_free_percent" "$mem_available_percent" "$storage_json"
 """
 
+DDNS_DISPATCHER_AGENT_SCRIPT = r"""#!/usr/bin/env python3
+import argparse
+import datetime
+import hashlib
+import ipaddress
+import json
+import os
+import ssl
+import tempfile
+import urllib.error
+import urllib.request
+
+
+DEFAULT_CONFIG_PATH = "/var/lib/docker-infra/data/ddns/dispatcher.json"
+DEFAULT_STATE_FILE = "/var/lib/docker-infra/ddns/last-sent.json"
+DEFAULT_PUBLIC_IP_URLS = [
+    "https://api.ipify.org",
+    "https://checkip.amazonaws.com",
+    "https://ifconfig.me/ip",
+]
+
+
+def load_json(path, fallback):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, type(fallback)) else fallback
+    except Exception:
+        return fallback
+
+
+def atomic_write_json(path, payload):
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+            handle.write("\n")
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
+def parse_public_ip(text, record_type):
+    for token in str(text or "").replace(",", " ").split():
+        candidate = token.strip()
+        try:
+            address = ipaddress.ip_address(candidate)
+        except Exception:
+            continue
+        if record_type == "A" and address.version != 4:
+            continue
+        if record_type == "AAAA" and address.version != 6:
+            continue
+        if not address.is_global:
+            continue
+        return str(address)
+    return ""
+
+
+def resolve_public_ip(urls, record_type, timeout):
+    for url in urls:
+        request = urllib.request.Request(url, headers={"User-Agent": "docker-infra-ddns/1.0"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                value = parse_public_ip(response.read().decode("utf-8", errors="replace"), record_type)
+                if value:
+                    return value
+        except Exception:
+            continue
+    raise RuntimeError(f"public {record_type} address lookup failed")
+
+
+def state_key(record):
+    raw = "|".join([
+        str(record.get("api_url") or ""),
+        str(record.get("hostname") or ""),
+        str(record.get("record_type") or "A").upper(),
+    ])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def utcnow():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class PreserveMethodRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        method = req.get_method()
+        if method not in {"GET", "HEAD"} and code in {301, 302, 303, 307, 308}:
+            request_headers = dict(req.headers)
+            request_headers.update(getattr(req, "unredirected_hdrs", {}) or {})
+            return urllib.request.Request(
+                newurl,
+                data=req.data,
+                headers=request_headers,
+                origin_req_host=req.origin_req_host,
+                unverifiable=True,
+                method=method,
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def response_code(value):
+    try:
+        if value is None or value == "":
+            return None
+        return int(str(value).strip())
+    except Exception:
+        return None
+
+
+def response_message(payload, fallback="ddns update failed"):
+    if not isinstance(payload, dict):
+        return fallback
+    for key in ["message", "error", "detail", "reason"]:
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return response_message(data, fallback)
+    return fallback
+
+
+def response_failure(payload):
+    if not isinstance(payload, dict):
+        return ""
+    if set(payload.keys()) == {"raw"} and str(payload.get("raw") or "").strip():
+        return "ddns response is not json"
+    if payload.get("success") is False or payload.get("ok") is False:
+        return response_message(payload)
+    status = str(payload.get("status") or "").strip().lower()
+    if status in {"error", "failed", "failure"}:
+        return response_message(payload)
+    code = response_code(payload.get("code") if "code" in payload else payload.get("status_code"))
+    if code is not None and code not in {0} and not 200 <= code < 300:
+        return response_message(payload)
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return response_failure(data)
+    return ""
+
+
+def post_update(record, ip):
+    api_url = str(record.get("api_url") or "").strip()
+    token = str(record.get("token") or "").strip()
+    hostname = str(record.get("hostname") or "").strip().lower().strip(".")
+    record_type = str(record.get("record_type") or "A").strip().upper()
+    if not api_url or not token or not hostname:
+        raise RuntimeError("ddns record is missing api_url, token, or hostname")
+    payload = {"hostname": hostname, "ip": ip, "record_type": record_type}
+    context = None
+    if record.get("tls_verify") is False:
+        context = ssl._create_unverified_context()
+    request = urllib.request.Request(
+        api_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-DDNS-Key": token,
+        },
+        method="POST",
+    )
+    handlers = [PreserveMethodRedirectHandler()]
+    if context is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=context))
+    opener = urllib.request.build_opener(*handlers)
+    with opener.open(request, timeout=int(record.get("timeout_seconds") or 15)) as response:
+        body = response.read().decode("utf-8", errors="replace")
+        if response.status < 200 or response.status >= 300:
+            raise RuntimeError(f"ddns response status {response.status}: {body[:200]}")
+        try:
+            parsed = json.loads(body or "{}")
+        except Exception:
+            parsed = {"raw": body}
+        failure = response_failure(parsed)
+        if failure:
+            raise RuntimeError(failure)
+
+
+def acquire_lock(state_file):
+    lock_path = f"{state_file}.lock"
+    os.makedirs(os.path.dirname(lock_path) or ".", mode=0o700, exist_ok=True)
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        os.close(fd)
+        return lock_path
+    except FileExistsError:
+        return ""
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=os.environ.get("DOCKER_INFRA_DDNS_CONFIG", DEFAULT_CONFIG_PATH))
+    parser.add_argument("--source", default="manual")
+    parser.add_argument("--endpoint-id", default="")
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+
+    config = load_json(args.config, {})
+    records = [item for item in config.get("records", []) if isinstance(item, dict)]
+    endpoint_id = str(args.endpoint_id or "").strip()
+    if endpoint_id:
+        records = [record for record in records if str(record.get("endpoint_id") or "").strip() == endpoint_id]
+    if not records:
+        print("docker-infra ddns: no records configured")
+        return 0
+    state_file = str(config.get("state_file") or DEFAULT_STATE_FILE)
+    lock_path = acquire_lock(state_file)
+    if not lock_path:
+        print("docker-infra ddns: another update is running")
+        return 0
+    try:
+        timeout = int(config.get("timeout_seconds") or 8)
+        public_ip_urls = config.get("public_ip_urls") or DEFAULT_PUBLIC_IP_URLS
+        state = load_json(state_file, {})
+        ip_cache = {}
+        updated = 0
+        skipped = 0
+        failed = 0
+        for record in records:
+            record_type = str(record.get("record_type") or "A").strip().upper()
+            if record_type not in {"A", "AAAA"}:
+                record_type = "A"
+            if record_type not in ip_cache:
+                ip_cache[record_type] = resolve_public_ip(public_ip_urls, record_type, timeout)
+            ip = ip_cache[record_type]
+            key = state_key(record)
+            previous = state.get(key) if isinstance(state.get(key), dict) else {}
+            if not args.force and previous.get("last_sent_ip") == ip:
+                skipped += 1
+                continue
+            try:
+                post_update({**record, "record_type": record_type}, ip)
+                state[key] = {
+                    "endpoint_id": str(record.get("endpoint_id") or ""),
+                    "hostname": str(record.get("hostname") or ""),
+                    "record_type": record_type,
+                    "last_sent_ip": ip,
+                    "last_sent_at": utcnow(),
+                    "source": args.source,
+                }
+                updated += 1
+            except Exception as exc:
+                failed += 1
+                print(f"docker-infra ddns: update failed for {record.get('hostname')}: {exc}")
+        atomic_write_json(state_file, state)
+        print(f"docker-infra ddns: updated={updated} skipped={skipped} failed={failed}")
+        return 1 if failed else 0
+    finally:
+        try:
+            os.unlink(lock_path)
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"""
+
 NODE_METRICS_AGENT_SCRIPT = r"""#!/usr/bin/env python3
 import datetime
 import json
@@ -934,6 +1203,7 @@ PY
 
 class LocalCommandScripts:
     SYSTEM_METRICS_SCRIPT = SYSTEM_METRICS_SCRIPT
+    DDNS_DISPATCHER_AGENT_SCRIPT = DDNS_DISPATCHER_AGENT_SCRIPT
     NODE_METRICS_AGENT_SCRIPT = NODE_METRICS_AGENT_SCRIPT
     DOCKER_IMAGE_USAGE_SCRIPT = DOCKER_IMAGE_USAGE_SCRIPT
     DOCKER_IMAGE_STORAGE_SCRIPT = DOCKER_IMAGE_STORAGE_SCRIPT

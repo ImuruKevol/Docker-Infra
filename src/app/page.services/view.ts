@@ -463,6 +463,17 @@ export class Component implements OnInit, OnDestroy {
         return this.zones().find((zone: any) => zone.id === this.serviceForm.zone_id) || null;
     }
 
+    private isDdnsZone(zone: any) {
+        return zone?.provider === 'ddns' || zone?.ddns === true;
+    }
+
+    private domainPrefixForZone(zone: any, prefix: any, fallback: any) {
+        const cleaned = String(prefix || '').trim().replace(/^\.+|\.+$/g, '');
+        if (cleaned || !this.isDdnsZone(zone)) return cleaned;
+        const value = String(fallback || 'service').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+        return (value.replace(/-(service|app)$/g, '') || value || 'service').slice(0, 50);
+    }
+
     public setDomainMode(mode: 'registered' | 'direct') {
         this.serviceForm.domain_mode = mode;
         if (mode === 'registered') {
@@ -484,14 +495,17 @@ export class Component implements OnInit, OnDestroy {
         if (this.serviceForm.domain_mode !== 'registered') return;
         const zone = this.selectedZoneRecord();
         if (!zone?.domain) return;
-        const prefix = String(this.serviceForm.domain_prefix || '').trim().replace(/^\.+|\.+$/g, '');
+        const prefix = this.domainPrefixForZone(zone, this.serviceForm.domain_prefix, this.serviceForm.namespace || this.serviceForm.name);
+        if (this.isDdnsZone(zone) && !String(this.serviceForm.domain_prefix || '').trim()) {
+            this.serviceForm.domain_prefix = prefix;
+        }
         this.serviceForm.domain = prefix ? `${prefix}.${zone.domain}` : zone.domain;
     }
 
     public domainPreview() {
         if (this.serviceForm.domain_mode === 'registered') {
             const zone = this.selectedZoneRecord();
-            const prefix = String(this.serviceForm.domain_prefix || '').trim().replace(/^\.+|\.+$/g, '');
+            const prefix = this.domainPrefixForZone(zone, this.serviceForm.domain_prefix, this.serviceForm.namespace || this.serviceForm.name);
             if (zone?.domain) return prefix ? `${prefix}.${zone.domain}` : zone.domain;
         }
         return this.serviceForm.domain || '도메인 미입력';
@@ -1252,7 +1266,9 @@ export class Component implements OnInit, OnDestroy {
         }
         this.editForm.zone_id = zone.id;
         const suffix = String(zone.domain || '').toLowerCase();
-        this.editForm.domain_prefix = clean === suffix ? '' : clean.slice(0, -(suffix.length + 1));
+        this.editForm.domain_prefix = clean === suffix && this.isDdnsZone(zone)
+            ? this.domainPrefixForZone(zone, '', this.editForm.name)
+            : (clean === suffix ? '' : clean.slice(0, -(suffix.length + 1)));
     }
 
     public editPorts(item: any) {
@@ -1519,7 +1535,10 @@ export class Component implements OnInit, OnDestroy {
         }
         const zone = this.editSelectedZone();
         if (!zone?.domain) return;
-        const prefix = String(this.editForm.domain_prefix || '').trim().replace(/^\.+|\.+$/g, '');
+        const prefix = this.domainPrefixForZone(zone, this.editForm.domain_prefix, this.editForm.name);
+        if (this.isDdnsZone(zone) && !String(this.editForm.domain_prefix || '').trim()) {
+            this.editForm.domain_prefix = prefix;
+        }
         this.editForm.domain = prefix ? `${prefix}.${zone.domain}` : zone.domain;
     }
 
@@ -1977,7 +1996,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public operationOutput() {
-        return (this.operationDetail()?.output || []).map((item: any) => {
+        const rows = (this.operationDetail()?.output || []).map((item: any) => {
             const message = this.normalizeMcpToolExposureMessage(item?.message || '');
             if (message === item?.message) return item;
             return {
@@ -1991,6 +2010,37 @@ export class Component implements OnInit, OnDestroy {
                 },
             };
         });
+        const compacted: any[] = [];
+        let lastKey = '';
+        let lastItem: any = null;
+        let duplicateCount = 0;
+        const flush = () => {
+            if (duplicateCount > 0 && lastItem) {
+                compacted.push({
+                    ...lastItem,
+                    message: `동일한 로그 ${duplicateCount}회를 생략했습니다.`,
+                    stream: 'system',
+                    metadata: {
+                        ...(lastItem.metadata || {}),
+                        suppressed_duplicate_logs: duplicateCount,
+                    },
+                });
+            }
+            duplicateCount = 0;
+        };
+        for (const item of rows) {
+            const key = `${item?.stream || ''}|${item?.message || ''}|${item?.metadata?.step || ''}`;
+            if (lastItem && key === lastKey && !String(item?.message || '').includes('생략했습니다')) {
+                duplicateCount += 1;
+                continue;
+            }
+            flush();
+            compacted.push(item);
+            lastItem = item;
+            lastKey = key;
+        }
+        flush();
+        return compacted;
     }
 
     public operationStreamClass(stream: string) {
@@ -2866,7 +2916,6 @@ export class Component implements OnInit, OnDestroy {
             const detailResult = await wiz.call('detail_service', { service_id: serviceId });
             if (detailResult.code === 200) this.applyDetail(detailResult.data);
             if (result.operation) await this.openOperationModal(result.operation);
-            await this.alert(result.deduplicated ? '이미 실행 중인 AI 검증 작업을 열었습니다.' : 'AI 검증과 수정 작업을 백그라운드에서 시작했습니다.', 'success');
         } catch (error: any) {
             this.pushRuntimeAiEvent({ type: 'error', message: error?.message || 'AI 런타임 검사/수정 중 오류가 발생했습니다.' });
             await this.alert(error?.message || 'AI 런타임 검사/수정을 실행할 수 없습니다.');

@@ -24,29 +24,55 @@ main(class="space-y-5 px-5 py-5")
         section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
             div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
                 div
-                    h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") DDNS 관리 서버
+                    div(class="flex flex-wrap items-center gap-2")
+                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") DDNS 관리 서버
+                        span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="ddnsDispatcherBadgeClass()") {{ddnsDispatcherLabel()}}
                     p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 중간 DDNS API로 wildcard suffix 하위 DNS 레코드를 등록합니다.
-                button(type="button", (click)="openDdnsModal()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                    i(class="fa-solid fa-plus")
-                    span 추가
+                div(class="flex flex-wrap items-center gap-2")
+                    button(*ngIf="ddnsDispatcher()?.registered !== true", type="button", (click)="ensureDdnsDispatcher()", [disabled]="ddnsDispatcherBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-amber-300 px-2.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-900/70 dark:text-amber-300 dark:hover:bg-amber-950/30")
+                        i(class="fa-solid fa-plug-circle-plus")
+                        span {{ddnsDispatcherBusy() ? '등록 중...' : 'Dispatcher 등록'}}
+                    button(type="button", (click)="openDdnsModal()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                        i(class="fa-solid fa-plus")
+                        span 추가
             div(*ngIf="ddnsWarning()", class="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{ddnsWarning()}}
             div(*ngIf="!ddnsWarning() && ddnsEndpoints().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 DDNS 관리 서버가 없습니다.
-            div(*ngIf="ddnsEndpoints().length > 0", class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                div(*ngFor="let endpoint of ddnsEndpoints()", class="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between")
-                    div(class="min-w-0")
-                        div(class="flex flex-wrap items-center gap-2")
-                            p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{endpoint.name || endpoint.domain_suffix}}
-                            span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(endpoint.status)") {{ddnsStatusLabel(endpoint)}}
-                            span(class="inline-flex rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300") *.{{endpoint.domain_suffix}}
-                        p(class="mt-1 break-all text-xs text-zinc-500 dark:text-zinc-400") {{endpoint.api_url || endpoint.api_base_url}} · 등록 {{endpoint.registration_count || 0}}개
-                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 서비스 도메인을 이 DDNS 서버 API로 등록/갱신합니다.
-                    div(class="flex flex-wrap items-center gap-2")
-                        button(type="button", (click)="openDdnsModal(endpoint)", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                            i(class="fa-solid fa-pen")
-                            span 수정
-                        button(type="button", (click)="deleteDdnsEndpoint(endpoint)", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                            i(class="fa-solid fa-trash")
-                            span 삭제
+            div(*ngIf="ddnsEndpoints().length > 0", class="overflow-x-auto")
+                table(class="w-full min-w-[920px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
+                    thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
+                        tr
+                            th(class="w-64 px-4 py-2 text-left font-semibold") 서버
+                            th(class="px-4 py-2 text-left font-semibold") DDNS 서버 API
+                            th(class="w-64 px-4 py-2 text-left font-semibold") Dispatcher 마지막 요청
+                            th(class="w-24 px-4 py-2 text-right font-semibold") 등록
+                            th(class="w-56 px-4 py-2 text-right font-semibold") 작업
+                    tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                        tr(*ngFor="let endpoint of ddnsEndpoints()", class="align-top")
+                            td(class="px-4 py-3")
+                                div(class="flex min-w-0 flex-col gap-2")
+                                    div(class="flex flex-wrap items-center gap-2")
+                                        p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{endpoint.name || endpoint.domain_suffix}}
+                                        span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(endpoint.status)") {{ddnsStatusLabel(endpoint)}}
+                                    span(class="inline-flex w-fit rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300") *.{{endpoint.domain_suffix}}
+                            td(class="px-4 py-3")
+                                p(class="break-all font-mono text-xs text-zinc-700 dark:text-zinc-200") {{endpoint.api_url || endpoint.api_base_url}}
+                            td(class="px-4 py-3")
+                                p(class="text-xs font-medium text-zinc-700 dark:text-zinc-200") {{formatDate(endpoint.dispatcher?.last_sent_at)}}
+                                p(class="mt-1 break-all font-mono text-xs text-zinc-500 dark:text-zinc-400") IP {{endpoint.dispatcher?.last_sent_ip || '-'}}
+                                p(class="mt-1 break-all text-xs text-zinc-400 dark:text-zinc-500") Host {{endpoint.dispatcher?.last_hostname || '-'}} · agent 레코드 {{endpoint.dispatcher?.record_count || 0}}개
+                            td(class="px-4 py-3 text-right")
+                                span(class="inline-flex justify-end rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{endpoint.registration_count || 0}}개
+                            td(class="px-4 py-3")
+                                div(class="flex items-center justify-end gap-2")
+                                    button(type="button", (click)="forceUpdateDdnsEndpoint(endpoint)", [disabled]="ddnsUpdateEndpointId() === endpoint.id", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-sky-300 px-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-sky-900/70 dark:text-sky-300 dark:hover:bg-sky-950/30")
+                                        i(class="fa-solid fa-arrows-rotate")
+                                        span {{ddnsUpdateEndpointId() === endpoint.id ? '호출 중...' : 'API 호출'}}
+                                    button(type="button", (click)="openDdnsModal(endpoint)", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                        i(class="fa-solid fa-pen")
+                                        span 수정
+                                    button(type="button", (click)="deleteDdnsEndpoint(endpoint)", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                        i(class="fa-solid fa-trash")
+                                        span 삭제
 
         section(class="grid grid-cols-1 gap-5 xl:grid-cols-[360px_1fr]")
             div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
@@ -208,7 +234,7 @@ div(*ngIf="ddnsModalOpen()", class="fixed inset-0 z-50 flex items-center justify
                 p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") 예: 부여받은 권한이 *.sub.season.co.kr이면 sub.season.co.kr만 입력하세요.
             label(class="block md:col-span-2")
                 span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") DDNS 서버 API
-                input(type="text", [(ngModel)]="ddnsForm.api_url", placeholder="https://ddns.example.com/api/ddns/records", autocomplete="new-password", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                input(type="text", [(ngModel)]="ddnsForm.api_url", placeholder="http://ddns.nanoha.kr/api/ddns/update", autocomplete="new-password", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
                 p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") Docker Infra가 DNS 레코드 등록/갱신을 요청할 전체 API URL입니다.
             label(class="block md:col-span-2")
                 span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") API Token

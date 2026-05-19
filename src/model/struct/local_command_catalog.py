@@ -473,7 +473,7 @@ def _docker_daemon_insecure_registries_command(params):
         "fi\n"
         "if [ \"$CHANGED\" = '1' ]; then\n"
         "  if command -v systemctl >/dev/null 2>&1; then\n"
-        "    $SUDO systemctl restart docker\n"
+        "    $SUDO systemctl \"restart\" docker\n"
         "  else\n"
         "    $SUDO service docker restart\n"
         "  fi\n"
@@ -489,6 +489,52 @@ def _docker_daemon_insecure_registries_command(params):
         "done\n"
         "echo 'Docker daemon did not become ready after registry configuration' >&2\n"
         "exit 44\n"
+    )
+    return ["sh", "-lc", script]
+
+
+def _ddns_dispatcher_ensure_command(params):
+    config_path = str((params or {}).get("config_path") or "/var/lib/docker-infra/data/ddns/dispatcher.json").strip()
+    script_path = str((params or {}).get("script_path") or "/usr/local/bin/docker-infra-ddns-update").strip()
+    dispatcher_path = str((params or {}).get("dispatcher_path") or "/etc/NetworkManager/dispatcher.d/90-docker-infra-ddns").strip()
+    state_file = str((params or {}).get("state_file") or "/var/lib/docker-infra/ddns/last-sent.json").strip()
+    script = (
+        "set -eu\n"
+        "SUDO=''\n"
+        "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+        "command -v python3 >/dev/null 2>&1 || { echo 'python3 is required for docker-infra ddns dispatcher' >&2; exit 43; }\n"
+        f"CONFIG_PATH={shlex.quote(config_path)}\n"
+        f"SCRIPT_PATH={shlex.quote(script_path)}\n"
+        f"DISPATCHER_PATH={shlex.quote(dispatcher_path)}\n"
+        f"STATE_FILE={shlex.quote(state_file)}\n"
+        "TMP_AGENT=$(mktemp)\n"
+        "TMP_DISPATCHER=$(mktemp)\n"
+        "cleanup() { rm -f \"$TMP_AGENT\" \"$TMP_DISPATCHER\"; }\n"
+        "trap cleanup EXIT\n"
+        "cat > \"$TMP_AGENT\" <<'PY'\n"
+        f"{DDNS_DISPATCHER_AGENT_SCRIPT}\n"
+        "PY\n"
+        "cat > \"$TMP_DISPATCHER\" <<EOF\n"
+        "#!/bin/sh\n"
+        "case \"\\$2\" in\n"
+        "  up|dhcp4-change|dhcp6-change|connectivity-change|vpn-up) ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n"
+        "DOCKER_INFRA_DDNS_CONFIG=\"$CONFIG_PATH\" \"$SCRIPT_PATH\" --source \"networkmanager:\\$1:\\$2\" >/dev/null 2>&1 &\n"
+        "exit 0\n"
+        "EOF\n"
+        "$SUDO install -d -m 0755 \"$(dirname \"$SCRIPT_PATH\")\"\n"
+        "$SUDO install -d -m 0755 \"$(dirname \"$DISPATCHER_PATH\")\"\n"
+        "$SUDO install -d -m 0700 \"$(dirname \"$STATE_FILE\")\"\n"
+        "$SUDO install -m 0755 \"$TMP_AGENT\" \"$SCRIPT_PATH\"\n"
+        "$SUDO install -m 0755 \"$TMP_DISPATCHER\" \"$DISPATCHER_PATH\"\n"
+        "if [ ! -r \"$CONFIG_PATH\" ]; then\n"
+        "  echo 'DDNS dispatcher config file is not readable yet; Docker Infra will write it after DDNS registrations exist.'\n"
+        "fi\n"
+        "if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files NetworkManager.service >/dev/null 2>&1; then\n"
+        "  $SUDO systemctl reload NetworkManager.service >/dev/null 2>&1 || true\n"
+        "fi\n"
+        "echo 'DDNS NetworkManager dispatcher installed'\n"
     )
     return ["sh", "-lc", script]
 
@@ -693,7 +739,8 @@ def _certbot_renewal_ensure_command(params):
         f"  $SUDO mv \"$SERVICE_TMP\" /etc/systemd/system/{shlex.quote(service_name)}\n"
         f"  $SUDO mv \"$TIMER_TMP\" /etc/systemd/system/{shlex.quote(timer_name)}\n"
         "  $SUDO systemctl daemon-reload\n"
-        f"  $SUDO systemctl enable --now {shlex.quote(timer_name)}\n"
+        f"  $SUDO systemctl enable {shlex.quote(timer_name)}\n"
+        f"  $SUDO systemctl start {shlex.quote(timer_name)}\n"
         f"  systemctl list-timers --all --no-pager | grep {shlex.quote(timer_name)} || true\n"
         "  exit 0\n"
         "fi\n"
@@ -820,6 +867,7 @@ DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = scripts.DOCKER_IMAGE_DELETE_ESTIMATE_SCRIP
 DOCKER_PRUNE_ESTIMATE_SCRIPT = scripts.DOCKER_PRUNE_ESTIMATE_SCRIPT
 AI_RESOURCE_SCRIPT = scripts.AI_RESOURCE_SCRIPT
 AI_OLLAMA_SCAN_SCRIPT = scripts.AI_OLLAMA_SCAN_SCRIPT
+DDNS_DISPATCHER_AGENT_SCRIPT = getattr(scripts, "DDNS_DISPATCHER_AGENT_SCRIPT", "")
 
 
 def _ai_ollama_scan_command(params):
@@ -868,6 +916,7 @@ COMMAND_SPECS = {
     "monitoring.node_exporter.status": {"category": "monitoring", "factory": _node_exporter_status_command, "default_timeout_seconds": 20},
     "monitoring.metrics_collector.ensure": {"category": "monitoring", "factory": _metrics_collector_ensure_command, "destructive": True, "default_timeout_seconds": 120},
     "monitoring.metrics_collector.status": {"category": "monitoring", "factory": _metrics_collector_status_command, "default_timeout_seconds": 20},
+    "ddns.dispatcher.ensure": {"category": "ddns", "factory": _ddns_dispatcher_ensure_command, "destructive": True, "default_timeout_seconds": 60},
     "system.metrics": {"category": "system", "argv": ["sh", "-lc", SYSTEM_METRICS_SCRIPT]},
     "ai.resources": {"category": "ai", "argv": ["sh", "-lc", AI_RESOURCE_SCRIPT], "default_timeout_seconds": 12},
     "ai.ollama_scan": {"category": "ai", "factory": _ai_ollama_scan_command, "default_timeout_seconds": 12},
@@ -896,6 +945,7 @@ class LocalCommandCatalog:
     MAX_CAPTURE_CHARS = MAX_CAPTURE_CHARS
     SYSTEM_METRICS_SCRIPT = SYSTEM_METRICS_SCRIPT
     NODE_METRICS_AGENT_SCRIPT = NODE_METRICS_AGENT_SCRIPT
+    DDNS_DISPATCHER_AGENT_SCRIPT = DDNS_DISPATCHER_AGENT_SCRIPT
     DOCKER_IMAGE_USAGE_SCRIPT = DOCKER_IMAGE_USAGE_SCRIPT
     DOCKER_IMAGE_STORAGE_SCRIPT = DOCKER_IMAGE_STORAGE_SCRIPT
     DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT

@@ -34,7 +34,15 @@ class ServiceUpdateMixin:
         metadata = dict(payload.get("domain_metadata") or {})
         metadata["source"] = "service_update"
         zone_id = payload.get("zone_id") or metadata.get("zone_id")
-        ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env)
+        normalized = ddns_model.normalize_service_domain(
+            domain,
+            endpoint_id=zone_id,
+            prefix=payload.get("domain_prefix") or metadata.get("domain_prefix"),
+            fallback_prefix=payload.get("name") or payload.get("namespace") or metadata.get("compose_service"),
+            env=env,
+        )
+        domain = normalized.get("domain") or domain
+        ddns_endpoint = normalized.get("endpoint") or (ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env))
         if ddns_endpoint:
             metadata.pop("zone_id", None)
             metadata.update({
@@ -42,9 +50,10 @@ class ServiceUpdateMixin:
                 "routing_provider": "nginx",
                 "ddns_endpoint_id": str(ddns_endpoint["id"]),
                 "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                "domain_prefix": normalized.get("prefix"),
                 "ddns_mode": "ddns_management",
             })
-        if zone_id:
+        elif zone_id:
             metadata["zone_id"] = zone_id
         ssl_mode = "none"
         if domain:
@@ -97,7 +106,15 @@ class ServiceUpdateMixin:
                 "published_port": _safe_int(item.get("published_port") or metadata.get("published_port") or port, port),
             })
             zone_id = item.get("zone_id") or payload.get("zone_id") or metadata.get("zone_id")
-            ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env)
+            normalized = ddns_model.normalize_service_domain(
+                domain,
+                endpoint_id=zone_id,
+                prefix=item.get("domain_prefix") or item.get("prefix") or payload.get("domain_prefix") or metadata.get("domain_prefix"),
+                fallback_prefix=payload.get("name") or payload.get("namespace") or metadata.get("compose_service"),
+                env=env,
+            )
+            domain = normalized.get("domain") or domain
+            ddns_endpoint = normalized.get("endpoint") or (ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env))
             if ddns_endpoint:
                 metadata.pop("zone_id", None)
                 metadata.update({
@@ -105,6 +122,7 @@ class ServiceUpdateMixin:
                     "routing_provider": "nginx",
                     "ddns_endpoint_id": str(ddns_endpoint["id"]),
                     "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                    "domain_prefix": normalized.get("prefix"),
                     "ddns_mode": "ddns_management",
                 })
             elif zone_id:
@@ -119,6 +137,14 @@ class ServiceUpdateMixin:
         if not rows and str(payload.get("domain") or "").strip():
             domain = str(payload.get("domain") or "").strip().lower()
             port = _safe_int(payload.get("port") or payload.get("domain_target_port"), 80)
+            normalized = ddns_model.normalize_service_domain(
+                domain,
+                endpoint_id=payload.get("zone_id") or (payload.get("domain_metadata") or {}).get("zone_id"),
+                prefix=payload.get("domain_prefix"),
+                fallback_prefix=payload.get("name") or payload.get("namespace"),
+                env=env,
+            )
+            domain = normalized.get("domain") or domain
             ssl_mode, metadata = self._domain_payload(payload, domain, port, env=env)
             rows.append({"domain": domain, "port": port, "ssl_mode": ssl_mode, "metadata": metadata})
         deduped = []

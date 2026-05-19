@@ -47,6 +47,7 @@ class InstallerContractTest(unittest.TestCase):
             "postgresql",
             "docker.io",
             "docker-compose-plugin",
+            "network-manager",
             "zstd",
             "pip install -r",
             "NODE_SOURCE_SETUP_URL",
@@ -139,6 +140,9 @@ class InstallerContractTest(unittest.TestCase):
             "DOCKER_INFRA_SYSTEM_CODEX_BIN",
             "DOCKER_INFRA_CODEX_AUTO_BUILD=0",
             "CODEX_HOME",
+            "DOCKER_INFRA_DDNS_PUBLIC_IP_URLS",
+            "DOCKER_INFRA_DDNS_STATE_FILE",
+            "DOCKER_INFRA_DDNS_DISPATCHER_AUTO_INSTALL=true",
         ]:
             self.assertIn(token, env)
         self.assertIn("DOCKER_INFRA_SYSTEM_CODEX_BIN=/usr/local/bin/codex", env)

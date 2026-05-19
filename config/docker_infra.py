@@ -18,6 +18,14 @@ DEFAULT_BACKUP_HARBOR_VERSION = "v2.15.0"
 DEFAULT_NODE_EXPORTER_IMAGE = "quay.io/prometheus/node-exporter:v1.8.2"
 DEFAULT_NODE_METRIC_COLLECTION_INTERVAL_SECONDS = "600"
 DEFAULT_NODE_METRIC_SAMPLE_INTERVAL_SECONDS = "1"
+DEFAULT_DDNS_PUBLIC_IP_URLS = [
+    "https://api.ipify.org",
+    "https://checkip.amazonaws.com",
+    "https://ifconfig.me/ip",
+]
+DEFAULT_DDNS_STATE_FILE = "/var/lib/docker-infra/ddns/last-sent.json"
+DEFAULT_DDNS_DISPATCHER_SCRIPT_PATH = "/usr/local/bin/docker-infra-ddns-update"
+DEFAULT_DDNS_DISPATCHER_PATH = "/etc/NetworkManager/dispatcher.d/90-docker-infra-ddns"
 CONFIG_ENV_NAME = "config.env"
 LOCAL_EXECUTOR_ALLOWLIST_ENV = "DOCKER_INFRA_LOCAL_EXECUTOR_ALLOWLIST"
 DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
@@ -47,6 +55,7 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "monitoring.node_exporter.status",
     "monitoring.metrics_collector.ensure",
     "monitoring.metrics_collector.status",
+    "ddns.dispatcher.ensure",
 ]
 
 
@@ -208,6 +217,28 @@ def node_metric_sample_interval_seconds(env=None):
     except (TypeError, ValueError):
         seconds = int(DEFAULT_NODE_METRIC_SAMPLE_INTERVAL_SECONDS)
     return max(1, min(seconds, 60))
+
+
+def ddns_public_ip_urls(env=None):
+    raw = runtime_env(env).get("DOCKER_INFRA_DDNS_PUBLIC_IP_URLS", "")
+    urls = [item.strip() for item in raw.split(",") if item.strip()]
+    return urls or list(DEFAULT_DDNS_PUBLIC_IP_URLS)
+
+
+def ddns_state_file(env=None):
+    return runtime_env(env).get("DOCKER_INFRA_DDNS_STATE_FILE") or DEFAULT_DDNS_STATE_FILE
+
+
+def ddns_dispatcher_script_path(env=None):
+    return runtime_env(env).get("DOCKER_INFRA_DDNS_DISPATCHER_SCRIPT_PATH") or DEFAULT_DDNS_DISPATCHER_SCRIPT_PATH
+
+
+def ddns_dispatcher_path(env=None):
+    return runtime_env(env).get("DOCKER_INFRA_DDNS_DISPATCHER_PATH") or DEFAULT_DDNS_DISPATCHER_PATH
+
+
+def ddns_dispatcher_auto_install(env=None):
+    return _bool_value(runtime_env(env).get("DOCKER_INFRA_DDNS_DISPATCHER_AUTO_INSTALL"), default=True)
 
 
 def reporter_base_url(env=None):

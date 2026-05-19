@@ -95,6 +95,37 @@ def delete_ddns_endpoint():
     wiz.response.status(code, **payload)
 
 
+def force_update_ddns_endpoint():
+    ddns = wiz.model("struct").domains_ddns
+    body = wiz.request.query()
+    code = 200
+    payload = {}
+    try:
+        payload = ddns.force_update_endpoint(body.get("endpoint_id") or body.get("id"))
+    except ddns.DomainError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ensure_ddns_dispatcher():
+    ddns = wiz.model("struct").domains_ddns
+    code = 200
+    payload = {}
+    try:
+        payload = ddns.ensure_dispatcher()
+    except ddns.DomainError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
 def check_ddns_endpoint():
     ddns = wiz.model("struct").domains_ddns
     body = wiz.request.query()

@@ -38,6 +38,7 @@ def load_context():
 
 
 CONTEXT = load_context()
+MESSAGE_FRAMING = "header"
 
 
 def public_node(node):
@@ -59,7 +60,11 @@ def public_context():
         "project_root": CONTEXT.get("project_root"),
         "runtime_values": CONTEXT.get("runtime_values") or {},
         "placement": CONTEXT.get("placement"),
+        "domain_zones": CONTEXT.get("domain_zones") or [],
+        "ddns_endpoints": CONTEXT.get("ddns_endpoints") or [],
         "ai_permission_scope": CONTEXT.get("ai_permission_scope") or {},
+        "ai_request_summary": CONTEXT.get("ai_request_summary") or {},
+        "request_context_keys": CONTEXT.get("request_context_keys") or [],
         "mcp_enabled_tools": CONTEXT.get("mcp_enabled_tools") or [],
         "allowed_probe_hosts": CONTEXT.get("allowed_probe_hosts") or [],
         "servers": [public_node(node) for node in CONTEXT.get("nodes") or []],
@@ -551,7 +556,7 @@ def tool_ssh_command(arguments):
 
 TOOLS = {
     "infra_context": {
-        "description": "Read Docker Infra registered servers, placement recommendation, and runtime values for this Codex run.",
+        "description": "Read Docker Infra registered servers, placement recommendation, DDNS endpoints, runtime values, and compact AI request summary for this Codex run.",
         "inputSchema": {"type": "object", "properties": {}},
         "handler": tool_infra_context,
     },
@@ -725,15 +730,33 @@ def enabled_tool_names():
 
 
 def read_message():
-    header = b""
-    while b"\r\n\r\n" not in header:
+    global MESSAGE_FRAMING
+    first = sys.stdin.buffer.read(1)
+    while first in {b"\r", b"\n"}:
+        first = sys.stdin.buffer.read(1)
+    if not first:
+        return None
+
+    if first == b"{":
+        MESSAGE_FRAMING = "newline"
+        body = first + sys.stdin.buffer.readline()
+        return json.loads(body.decode("utf-8"))
+
+    MESSAGE_FRAMING = "header"
+    header = first
+    while b"\r\n\r\n" not in header and b"\n\n" not in header:
         chunk = sys.stdin.buffer.read(1)
         if not chunk:
             return None
         header += chunk
-    headers, rest = header.split(b"\r\n\r\n", 1)
+    if b"\r\n\r\n" in header:
+        headers, rest = header.split(b"\r\n\r\n", 1)
+        header_lines = headers.decode("ascii", "replace").split("\r\n")
+    else:
+        headers, rest = header.split(b"\n\n", 1)
+        header_lines = headers.decode("ascii", "replace").split("\n")
     content_length = 0
-    for line in headers.decode("ascii", "replace").split("\r\n"):
+    for line in header_lines:
         if line.lower().startswith("content-length:"):
             content_length = int(line.split(":", 1)[1].strip())
             break
@@ -743,6 +766,10 @@ def read_message():
 
 def write_message(payload):
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if MESSAGE_FRAMING == "newline":
+        sys.stdout.buffer.write(data + b"\n")
+        sys.stdout.buffer.flush()
+        return
     sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
     sys.stdout.buffer.write(data)
     sys.stdout.buffer.flush()
@@ -797,6 +824,14 @@ def handle(request):
         return {"jsonrpc": "2.0", "id": request_id, "result": tool_list()}
     if method == "tools/call":
         return {"jsonrpc": "2.0", "id": request_id, "result": tool_call(request.get("params") or {})}
+    if method == "resources/list":
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"resources": []}}
+    if method == "resources/templates/list":
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"resourceTemplates": []}}
+    if method == "prompts/list":
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"prompts": []}}
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": request_id, "result": {}}
     if method and method.startswith("notifications/"):
         return None
     return {

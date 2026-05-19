@@ -42,7 +42,7 @@ Compose YAML과 nginx config 원문은 고급 모드에서만 편집합니다.
 
 ### 도메인과 인증서
 
-도메인 화면은 Cloudflare DNS record와 업로드 인증서를 관리합니다. 서비스 화면은 선택한 도메인, 내부 port, SSL 방식으로 nginx 연결을 자동 생성합니다. 인증서가 없으면 서비스 화면에서 certbot 무료 인증서 발급을 실행할 수 있습니다.
+도메인 화면은 Cloudflare DNS record, 중간 DDNS 관리 서버, 업로드 인증서를 관리합니다. DDNS 도메인은 서비스 배포 시 공인 IP를 조회해 `X-DDNS-Key` 기반 update API로 등록하고, Ubuntu 24.04 NetworkManager dispatcher로 IP 변경 시 필요한 경우에만 다시 갱신합니다. 서비스 화면은 선택한 도메인, 내부 port, SSL 방식으로 nginx 연결을 자동 생성합니다. 인증서가 없으면 서비스 화면에서 certbot 무료 인증서 발급을 실행할 수 있습니다.
 
 ### 이미지와 백업
 

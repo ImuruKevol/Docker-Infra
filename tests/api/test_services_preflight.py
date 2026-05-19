@@ -1,3 +1,7 @@
+import json
+import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -39,6 +43,54 @@ RUNTIME_CONFIG = ROOT / "config" / "docker_infra.py"
 
 
 class ServicesPreflightStaticContractTest(unittest.TestCase):
+    def test_docker_infra_mcp_accepts_codex_stdio_json(self):
+        context = {
+            "workspace_root": str(ROOT.parents[1]),
+            "project_root": str(ROOT),
+            "mcp_enabled_tools": ["infra_context"],
+            "nodes": [],
+            "domain_zones": [],
+            "ddns_endpoints": [],
+            "allowed_probe_hosts": [],
+            "runtime_values": {},
+            "ai_request_summary": {"mode": "test", "context_delivery": {"prompt": "compacted_summary"}},
+            "request_context_keys": ["mode"],
+        }
+        messages = [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "codex-test", "version": "1"},
+                },
+            },
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            {"jsonrpc": "2.0", "id": 3, "method": "resources/list", "params": {}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "infra_context", "arguments": {}}},
+        ]
+        completed = subprocess.run(
+            [sys.executable, str(DOCKER_INFRA_MCP)],
+            input="\n".join(json.dumps(item) for item in messages) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            env={**os.environ, "DOCKER_INFRA_MCP_CONTEXT_JSON": json.dumps(context)},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+        by_id = {item.get("id"): item for item in responses}
+        self.assertEqual(by_id[1]["result"]["serverInfo"]["name"], "docker-infra")
+        self.assertEqual([tool["name"] for tool in by_id[2]["result"]["tools"]], ["infra_context"])
+        self.assertEqual(by_id[3]["result"]["resources"], [])
+        infra_context = json.loads(by_id[4]["result"]["content"][0]["text"])
+        self.assertEqual(infra_context["ai_request_summary"]["mode"], "test")
+        self.assertEqual(infra_context["request_context_keys"], ["mode"])
+
     def test_service_create_preflight_contract_is_wired(self):
         api = CREATE_API.read_text(encoding="utf-8")
         view = CREATE_VIEW.read_text(encoding="utf-8")
@@ -154,8 +206,13 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("versionDraftText", services_view)
         self.assertIn("versionSourceLabel(version)", services_template)
         self.assertIn("generated_secret_keys", assistant)
-        for token in ["_complete_service_multiphase", "_service_plan_system_prompt", "_inspect_service_plan", "_service_review_system_prompt", "docker_infra_inspection", "repair_runtime", "runtime_diagnostics", "form.domains", "_assert_ai_runtime_compose_contract", "AI_RUNTIME_COMPOSE_CONTRACT_FAILED", "Do not use *_FILE"]:
+        for token in ["_complete_service_multiphase", "_service_plan_system_prompt", "_inspect_service_plan", "_service_review_system_prompt", "docker_infra_inspection", "repair_runtime", "runtime_diagnostics", "form.domains", "_assert_ai_runtime_compose_contract", "AI_RUNTIME_COMPOSE_CONTRACT_FAILED", "Do not use *_FILE", "can_select_ddns_domains", "can_register_ddns_records_via_deploy", "can_inspect_ddns_domains", "ddns_endpoint_id", "wildcard_suffix", "domain_provider_policy", "ddns_registration_flow", "ddns_repair_suggestion", "_service_zones_for_ai", "_ddns_repair_suggestion", "_ddns_verification_fallback_data", "_ddns_repair_fallback_data", "_ddns_direct_verification_data", "_ddns_direct_repair_data", "_compact_runtime_status", "_compact_recent_operations", "_register_ddns_after_ai_update", "_ddns_register_summary_text", "ddns_register_result", "_apply_ddns_repair_fallback", "_service_warnings", "_is_stale_ddns_registration_warning", "_ddns_child_domain", "_ddns_default_prefix", "never use sub.nanoha.kr itself as the service domain"]:
             self.assertIn(token, assistant)
+        self.assertIn('"can_register_ddns_records_via_deploy": True', assistant)
+        self.assertIn("Do not warn that requested DDNS subdomains are unregistered", assistant)
+        self.assertIn("never remove all public domains just because the DDNS record is not registered yet", assistant)
+        self.assertIn("Codex 수정 호출 실패로 DDNS deterministic fallback", assistant)
+        self.assertIn("기존 DDNS 등록 정보와 공인 IP가 같아 DDNS API 호출은 생략되었습니다.", assistant)
         for token in ["has_enabled_models", "시스템 설정에서 사용 중인 AI 모델이 없습니다.", "선택한 Codex 모델을 사용하려면 Codex 로그인을 사용 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED"]:
             self.assertIn(token, assistant)
         for token in ["_runtime_issue_signals", "_client_failed_operations", "_merge_runtime_operations", "client_runtime_issues", "terminal_actions", "container_action", "operator_message", "service_status", "failed_operations", "stack_replicas", "containers_stopped", "stream_runtime_repair", "runtime_actions", "terminal_action_results", "_execute_runtime_actions", "start_runtime_verification", "_runtime_verification_worker", "_wait_runtime_ready", "_runtime_snapshot_blocked", "_runtime_snapshot_key", "AI_VERIFY_UNCHANGED_BLOCKED_ATTEMPTS", "동일한 상태 확인 로그", "다음 검증 시도", "verify_runtime", "service.ai.verify"]:
@@ -165,7 +222,15 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         for token in ["infra_context", "docker_image_check", "server_port_check", "container_logs", "container_action", "service_stack_status", "dns_lookup", "tcp_connect_check", "http_probe", "browser_probe", "server_collect", "ssh_command"]:
             self.assertIn(token, codex_runtime)
             self.assertIn(token, mcp)
+        for token in ["domain_zones", "ddns_endpoints"]:
+            self.assertIn(token, codex_runtime)
+            self.assertIn(token, mcp)
+        self.assertIn("default_tools_approval_mode", codex_runtime)
         self.assertIn("mcp_tools_for_scope", codex_runtime)
+        for token in ["_prompt_context", "_semantic_prompt_context", "PROMPT_CONTEXT_CHAR_BUDGET", "context_delivery", "ai_request_summary", "request_context_keys", "large Docker Infra runtime data is kept out of the prompt"]:
+            self.assertIn(token, codex_runtime)
+        for token in ["ai_request_summary", "request_context_keys", "compact AI request summary"]:
+            self.assertIn(token, mcp)
         self.assertIn("create_session_id", wizard)
         self.assertIn("_existing_create_session", wizard)
         self.assertIn("createSessionId", view)
@@ -176,7 +241,12 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         for token in ["_candidate_codex_binaries", "_build_codex_binary", "_source_newer_than", "CODEX_BUILD_CHECK_INTERVAL_SECONDS", "DOCKER_INFRA_CODEX_AUTO_BUILD", "codex-build.lock"]:
             self.assertIn(token, codex_runtime)
         self.assertIn("domains", wizard)
-        self.assertIn("domains", (ROOT / "src" / "model" / "struct" / "services_update.py").read_text(encoding="utf-8"))
+        services_update = (ROOT / "src" / "model" / "struct" / "services_update.py").read_text(encoding="utf-8")
+        self.assertIn("domains", services_update)
+        self.assertIn("elif zone_id", services_update)
+        self.assertIn("normalize_service_domain", services_update)
+        self.assertIn("normalize_service_domain", (ROOT / "src" / "model" / "struct" / "services_wizard.py").read_text(encoding="utf-8"))
+        self.assertIn("_task_error_active", STATUS_MODEL.read_text(encoding="utf-8"))
         self.assertIn("ai_runtime_repair", SERVICES_API.read_text(encoding="utf-8"))
         self.assertIn("stream_runtime_ai_repair", SERVICES_API.read_text(encoding="utf-8"))
         self.assertIn("start_runtime_ai_verification", SERVICES_API.read_text(encoding="utf-8"))
@@ -185,6 +255,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertNotIn("start_ai_verification: true", SERVICES_VIEW.read_text(encoding="utf-8"))
         self.assertIn("start_runtime_ai_verification", SERVICES_VIEW.read_text(encoding="utf-8"))
         self.assertIn("runRuntimeAiRepair", SERVICES_VIEW.read_text(encoding="utf-8"))
+        self.assertIn("suppressed_duplicate_logs", SERVICES_VIEW.read_text(encoding="utf-8"))
+        self.assertNotIn("AI 검증과 수정 작업을 백그라운드에서 시작했습니다.', 'success'", SERVICES_VIEW.read_text(encoding="utf-8"))
         self.assertIn("hasAiModels()", SERVICES_VIEW.read_text(encoding="utf-8"))
         self.assertIn("AI 검사/수정", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         self.assertIn('*ngIf="hasAiModels()"', SERVICES_TEMPLATE.read_text(encoding="utf-8"))

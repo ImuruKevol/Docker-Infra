@@ -15,6 +15,8 @@ connect = wiz.model("db/postgres").connect
 nodes_model = wiz.model("struct/nodes")
 services_model = wiz.model("struct/services")
 services_wizard = wiz.model("struct/services_wizard")
+domains_model = wiz.model("struct/domains")
+ddns_model = wiz.model("struct/domains_ddns")
 compose_rules = wiz.model("struct/compose_rules")
 compose_validator = wiz.model("struct/compose_validator")
 services_preflight = wiz.model("struct/services_preflight")
@@ -270,7 +272,7 @@ class AIAssistant:
                 {
                     "key": "zones",
                     "required": False,
-                    "description": "등록 가능한 DNS 존 목록",
+                    "description": "등록 가능한 Cloudflare DNS 존 또는 DDNS 관리 서버 엔드포인트 목록",
                 },
             ],
             "output": [
@@ -350,7 +352,8 @@ class AIAssistant:
                 "type": "array",
                 "rules": [
                     "use form.domains when one service needs multiple public domains",
-                    "each domain includes domain, zone_id when known, domain_target_key, domain_target_port, compose_service, target_port, and ssl_mode when known",
+                    "each domain includes domain, zone_id when known, provider or dns_provider when known, domain_target_key, domain_target_port, compose_service, target_port, and ssl_mode when known",
+                    "for DDNS zones, zone_id is the DDNS endpoint id and the full domain must be under that endpoint wildcard_suffix",
                     "keep legacy form.domain_* fields aligned with the first public domain for backward compatibility",
                 ],
             },
@@ -377,17 +380,18 @@ class AIAssistant:
 
         form = payload.get("form") or {}
         components = payload.get("components") or []
+        zones = self._service_zones_for_ai(payload, env=env)
         context = {
             "contract": self.service_contract(),
             "output_format": self.output_format_contract("service"),
-            "docker_infra_context": self._service_create_context(payload),
+            "docker_infra_context": self._service_create_context({**payload, "zones": zones}),
             "mode": payload.get("mode") or "service_create",
             "intent": intent,
             "operator_comment": self._clean_text(payload.get("operator_comment")),
             "form": form,
             "components": components,
             "base_content": payload.get("base_content") or "",
-            "zones": self._compact_zones(payload.get("zones") or []),
+            "zones": zones,
             "service": payload.get("service") or {},
             "compose_validation": self.compose_validation_contract(),
         }
@@ -401,7 +405,7 @@ class AIAssistant:
             "draft": draft,
             "rendered": rendered,
             "summary": self._clean_text(data.get("summary")),
-            "warnings": self._string_list(data.get("warnings")),
+            "warnings": self._service_warnings(data, draft, context),
             "ai_pipeline": pipeline,
         }
 
@@ -411,17 +415,18 @@ class AIAssistant:
         if not intent:
             yield {"type": "error", "message": "AI 요청 내용을 입력하세요.", "error_code": "MISSING_INTENT"}
             return
+        zones = self._service_zones_for_ai(payload, env=env)
         context = {
             "contract": self.service_contract(),
             "output_format": self.output_format_contract("service"),
-            "docker_infra_context": self._service_create_context(payload),
+            "docker_infra_context": self._service_create_context({**payload, "zones": zones}),
             "mode": payload.get("mode") or "service_create",
             "intent": intent,
             "operator_comment": self._clean_text(payload.get("operator_comment")),
             "form": payload.get("form") or {},
             "components": payload.get("components") or [],
             "base_content": payload.get("base_content") or "",
-            "zones": self._compact_zones(payload.get("zones") or []),
+            "zones": zones,
             "service": payload.get("service") or {},
             "compose_validation": self.compose_validation_contract(),
         }
@@ -490,7 +495,7 @@ class AIAssistant:
                         "draft": draft,
                         "rendered": rendered,
                         "summary": self._clean_text(data.get("summary")),
-                        "warnings": self._string_list(data.get("warnings")),
+                        "warnings": self._service_warnings(data, draft, context),
                         "ai_pipeline": self._service_pipeline_metadata(plan_data, inspection),
                     },
                 }
@@ -524,8 +529,15 @@ class AIAssistant:
                 "warnings": [],
             }
 
-        context = self._runtime_repair_context(detail, diagnostics, payload)
-        data, _ = self._complete_json(self._runtime_repair_system_prompt(), context, provider=provider, env=env)
+        context = self._runtime_repair_context(detail, diagnostics, payload, env=env)
+        data = self._ddns_direct_repair_data(context)
+        if data is None:
+            try:
+                data, _ = self._complete_json(self._runtime_repair_system_prompt(), context, provider=provider, env=env)
+            except Exception as exc:
+                data = self._ddns_repair_fallback_data(context, exc)
+                if data is None:
+                    raise
         return self._finish_runtime_repair(provider, detail, diagnostics, payload, data, context, env=env)
 
     def stream_runtime_repair(self, payload, env=None):
@@ -560,15 +572,25 @@ class AIAssistant:
                 }
                 return
 
-            context = self._runtime_repair_context(detail, diagnostics, payload)
+            context = self._runtime_repair_context(detail, diagnostics, payload, env=env)
             yield {"type": "status", "message": "AI가 현재 설정, 로그, 추가 메시지를 바탕으로 수정안을 작성합니다."}
-            data = yield from self._stream_codex_json(
-                self._runtime_repair_system_prompt(),
-                context,
-                provider,
-                env=env,
-                emit_delta=True,
-            )
+            data = self._ddns_direct_repair_data(context)
+            if data is not None:
+                yield {"type": "status", "message": "등록된 DDNS 관리 서버 정보로 도메인 연결을 자동 보정합니다."}
+            else:
+                try:
+                    data = yield from self._stream_codex_json(
+                        self._runtime_repair_system_prompt(),
+                        context,
+                        provider,
+                        env=env,
+                        emit_delta=True,
+                    )
+                except Exception as exc:
+                    data = self._ddns_repair_fallback_data(context, exc)
+                    if data is None:
+                        raise
+                    yield {"type": "status", "message": "Codex 수정 호출이 실패해 DDNS 추천값으로 자동 보정합니다."}
             if data is None:
                 raise AIAssistantError(502, "AI 응답 JSON 객체가 비어 있습니다.", "AI_EMPTY_RESPONSE")
             yield {"type": "status", "message": "AI 수정안을 검증하고 허용된 터미널 조치를 실행합니다."}
@@ -976,9 +998,19 @@ class AIAssistant:
 
     def _wait_operation_finished(self, operation_id, parent_operation_id, env=None):
         deadline = time.monotonic() + AI_VERIFY_DEPLOY_WAIT_SECONDS
-        while time.monotonic() < deadline:
-            operation = operations.detail(operation_id, env=env)
-            status = self._clean_text(operation.get("status")).lower()
+        last_status = None
+        suppressed_count = 0
+
+        def append_status(status, operation=None, suppressed=False):
+            if suppressed:
+                operations.append_output(
+                    parent_operation_id,
+                    "동일한 재배포 상태 로그 %s회를 생략했습니다." % suppressed_count,
+                    stream="system",
+                    metadata={"step": "deploy wait", "deploy_operation_id": operation_id, "status": status, "suppressed": suppressed_count},
+                    env=env,
+                )
+                return
             operations.append_output(
                 parent_operation_id,
                 "재배포 작업 상태: %s" % (status or "unknown"),
@@ -986,9 +1018,23 @@ class AIAssistant:
                 metadata={"step": "deploy wait", "deploy_operation_id": operation_id, "status": status},
                 env=env,
             )
+
+        while time.monotonic() < deadline:
+            operation = operations.detail(operation_id, env=env)
+            status = self._clean_text(operation.get("status")).lower()
+            if status == last_status and status in {"pending", "running"}:
+                suppressed_count += 1
+            else:
+                if suppressed_count:
+                    append_status(last_status, suppressed=True)
+                    suppressed_count = 0
+                append_status(status, operation=operation)
+            last_status = status
             if status not in {"pending", "running"}:
                 return {"status": status, "operation": operation}
             time.sleep(5)
+        if suppressed_count:
+            append_status(last_status, suppressed=True)
         return {"status": "timeout", "operation_id": operation_id}
 
     def _compact_verification_result(self, result):
@@ -1016,8 +1062,15 @@ class AIAssistant:
         provider = self._select_provider(env=env, selection=payload)
         detail = self._service_detail_for_ai(service_id, env=env)
         diagnostics = self._runtime_diagnostics(detail, payload=payload, env=env)
-        context = self._runtime_verification_context(detail, diagnostics, payload)
-        data, _ = self._complete_json(self._runtime_verification_system_prompt(), context, provider=provider, env=env)
+        context = self._runtime_verification_context(detail, diagnostics, payload, env=env)
+        data = self._ddns_direct_verification_data(context)
+        if data is None:
+            try:
+                data, _ = self._complete_json(self._runtime_verification_system_prompt(), context, provider=provider, env=env)
+            except Exception as exc:
+                data = self._ddns_verification_fallback_data(context, exc)
+                if data is None:
+                    raise
         if not isinstance(data, dict):
             raise AIAssistantError(502, "AI 검증 응답 JSON 객체가 비어 있습니다.", "AI_EMPTY_RESPONSE")
         ok = data.get("ok") is True
@@ -1047,6 +1100,7 @@ class AIAssistant:
                 "You may use safe SSH diagnostics when enabled, but do not run destructive commands during the verification-only step.",
                 "If a desired MCP tool is unavailable or not exposed, do not report that as a service issue; use the enabled tools and supplied runtime context instead.",
                 "If a fix is needed, do not return a service draft here. Return a Korean repair_intent that the repair step can use.",
+                "When DDNS is requested or ddns_repair_suggestion.enabled is true, include the suggested DDNS endpoint and suggested_domain in repair_intent instead of saying DDNS values are missing.",
                 "Return only one JSON object with keys: ok, summary, issues, warnings, checks, repair_required, repair_intent.",
                 "issues must be an array of objects with key, severity, message, evidence.",
                 "checks should include stack, containers, domains, network, http, user_function when known.",
@@ -1054,15 +1108,21 @@ class AIAssistant:
             ]
         )
 
-    def _runtime_verification_context(self, detail, diagnostics, payload):
+    def _runtime_verification_context(self, detail, diagnostics, payload, env=None):
         service = detail.get("service") or {}
         domains = detail.get("domains") or []
         allow_ssh_command = payload.get("allow_ssh_command") is not False
         enabled_tools = self._mcp_tools("post_deploy_verification", allow_ssh_command=allow_ssh_command)
+        zones = self._service_zones_for_ai(payload, env=env)
+        ddns_endpoints = self._ddns_zones(zones)
+        ddns_repair_suggestion = self._ddns_repair_suggestion(detail, payload, zones)
         return {
             "mode": "post_deploy_verification",
             "service": service,
             "domains": domains,
+            "zones": zones,
+            "ddns_endpoints": ddns_endpoints,
+            "ddns_repair_suggestion": ddns_repair_suggestion,
             "form": {
                 "name": service.get("name") or service.get("namespace"),
                 "description": (service.get("metadata") or {}).get("description") or "",
@@ -1070,12 +1130,12 @@ class AIAssistant:
             },
             "components": detail.get("components") or [],
             "base_content": detail.get("compose_content") or "",
-            "runtime_status": detail.get("runtime_status") or {},
-            "recent_operations": detail.get("operations") or [],
+            "runtime_status": self._compact_runtime_status(detail.get("runtime_status") or {}),
+            "recent_operations": self._compact_recent_operations(detail.get("operations") or []),
             "runtime_diagnostics": diagnostics,
             "runtime_wait": payload.get("runtime_wait") or {},
             "user_intent": self._clean_text(payload.get("intent")),
-            "client_runtime_issues": payload.get("client_runtime_issues") if isinstance(payload.get("client_runtime_issues"), dict) else {},
+            "client_runtime_issues": self._compact_client_runtime_issues(payload.get("client_runtime_issues")),
             "ai_permission_scope": {
                 "scope": "post_deploy_verification",
                 "can_edit_project_files": False,
@@ -1083,6 +1143,8 @@ class AIAssistant:
                 "can_change_runtime": False,
                 "can_run_safe_ssh_diagnostics": allow_ssh_command,
                 "can_run_container_actions": False,
+                "can_inspect_ddns_domains": True,
+                "can_mutate_ddns_records": False,
                 "allow_ssh_command": allow_ssh_command,
                 "mcp_enabled_tools": enabled_tools,
             },
@@ -1098,6 +1160,7 @@ class AIAssistant:
     def _finish_runtime_repair(self, provider, detail, diagnostics, payload, data, context, env=None):
         service_id = self._clean_text(payload.get("service_id"))
         draft = self._normalize_service_draft(data, fallback=context)
+        self._apply_ddns_repair_fallback(draft, context)
         rendered = self._validate_service_draft(draft, context, env=env)
         result = {
             "provider": self._provider_public(provider),
@@ -1105,7 +1168,7 @@ class AIAssistant:
             "draft": draft,
             "rendered": rendered,
             "summary": self._clean_text(data.get("summary")),
-            "warnings": self._string_list(data.get("warnings")),
+            "warnings": self._service_warnings(data, draft, context),
             "applied": False,
         }
         if payload.get("apply") is False:
@@ -1121,6 +1184,14 @@ class AIAssistant:
         )
         result["applied"] = True
         result["update_result"] = update_result
+        ddns_register_result = self._register_ddns_after_ai_update(service_id, draft, context, env=env)
+        if ddns_register_result:
+            result["ddns_register_result"] = ddns_register_result
+            if ddns_register_result.get("status") == "error":
+                result["warnings"].append("DDNS 등록 API 호출 실패: %s" % (ddns_register_result.get("message") or ddns_register_result.get("error_code") or "unknown"))
+                result["summary"] = (result.get("summary") or "AI 수정 결과를 적용했습니다.") + " DDNS 등록 API 호출은 실패했습니다."
+            else:
+                result["summary"] = (result.get("summary") or "AI 수정 결과를 적용했습니다.") + " " + self._ddns_register_summary_text(ddns_register_result)
         if payload.get("deploy") is not False:
             result["deploy_result"] = services_model.deploy_background({"service_id": service_id, "start_ai_verification": False}, env=env)
         return result
@@ -1151,10 +1222,12 @@ class AIAssistant:
                 "If a desired MCP tool is unavailable or not exposed, do not report that as a service issue; use the enabled tools and supplied runtime context instead.",
                 "Never remove Docker volumes or unrelated containers. Summarize any terminal action you executed in Korean warnings or summary.",
                 "If the safest action is operational rather than Compose editing, keep Compose stable and return Korean warnings with the manual action.",
+                "When ddns_repair_suggestion.enabled is true, use its domain_row to keep or create form.domains; never remove all public domains just because the DDNS record is not registered yet.",
+                "If the user asks to convert an existing domain to DDNS and no exact subdomain is specified, use ddns_repair_suggestion.suggested_domain.",
             ]
         )
 
-    def _runtime_repair_context(self, detail, diagnostics, payload):
+    def _runtime_repair_context(self, detail, diagnostics, payload, env=None):
         service = detail.get("service") or {}
         domains = detail.get("domains") or []
         client_runtime_issues = payload.get("client_runtime_issues") if isinstance(payload.get("client_runtime_issues"), dict) else {}
@@ -1165,6 +1238,9 @@ class AIAssistant:
             allow_container_actions=allow_container_actions,
             allow_ssh_command=allow_ssh_command,
         )
+        zones = self._service_zones_for_ai(payload, env=env)
+        ddns_endpoints = self._ddns_zones(zones)
+        ddns_repair_suggestion = self._ddns_repair_suggestion(detail, payload, zones)
         form = {
             "name": service.get("name") or service.get("namespace"),
             "description": (service.get("metadata") or {}).get("description") or "",
@@ -1193,6 +1269,10 @@ class AIAssistant:
                 "can_change_runtime": allow_container_actions,
                 "can_run_container_actions": allow_container_actions,
                 "can_run_safe_ssh_diagnostics": allow_ssh_command,
+                "can_select_ddns_domains": True,
+                "can_register_ddns_records_via_deploy": payload.get("deploy") is not False,
+                "can_inspect_ddns_domains": True,
+                "can_mutate_ddns_records": payload.get("deploy") is not False,
                 "allow_ssh_command": allow_ssh_command,
                 "mcp_enabled_tools": enabled_tools,
             },
@@ -1203,10 +1283,13 @@ class AIAssistant:
             "base_content": detail.get("compose_content") or "",
             "service": service,
             "domains": domains,
-            "runtime_status": detail.get("runtime_status") or {},
-            "recent_operations": detail.get("operations") or [],
+            "zones": zones,
+            "ddns_endpoints": ddns_endpoints,
+            "ddns_repair_suggestion": ddns_repair_suggestion,
+            "runtime_status": self._compact_runtime_status(detail.get("runtime_status") or {}),
+            "recent_operations": self._compact_recent_operations(detail.get("operations") or []),
             "runtime_diagnostics": diagnostics,
-            "client_runtime_issues": client_runtime_issues,
+            "client_runtime_issues": self._compact_client_runtime_issues(client_runtime_issues),
             "terminal_actions": {
                 "allow_container_actions": allow_container_actions,
                 "allowed_actions": ["stop", "restart", "remove"] if allow_container_actions else [],
@@ -1215,8 +1298,9 @@ class AIAssistant:
                 "schema": {"action": "stop|restart|remove", "container_id": "container id or name", "node_id": "registered node id", "reason": "Korean reason", "executed": "true only if MCP already executed it"},
             },
             "docker_infra_context": {
-                **self._service_create_context({"mode": "service_update"}),
+                **self._service_create_context({"mode": "service_update", "zones": zones}),
                 "repair_flow": "refresh runtime status, collect container logs and stack errors, ask Codex AI for a corrected service draft, save the corrected compose, then redeploy when requested",
+                "ddns_repair_suggestion": ddns_repair_suggestion,
             },
             "mcp_guidance": {
                 "server": "docker_infra",
@@ -1227,16 +1311,372 @@ class AIAssistant:
             },
         }
 
+    def _ddns_verification_fallback_data(self, context, exc):
+        suggestion = (context or {}).get("ddns_repair_suggestion") if isinstance(context, dict) else {}
+        if not isinstance(suggestion, dict) or suggestion.get("enabled") is not True:
+            return None
+        error = self._exception_payload(exc)
+        domain = suggestion.get("suggested_domain")
+        endpoint = suggestion.get("endpoint") or {}
+        return {
+            "ok": False,
+            "summary": "Codex 검증 호출이 실패해 등록된 DDNS 서버 정보를 기준으로 자동 수정 단계로 전환합니다.",
+            "issues": [
+                {
+                    "key": "ddns.runtime_repair_fallback",
+                    "severity": "warning",
+                    "message": "DDNS 도메인 연결이 비어 있어 Docker Infra가 추천 DDNS 도메인으로 수정안을 생성해야 합니다.",
+                    "evidence": {
+                        "suggested_domain": domain,
+                        "endpoint_id": suggestion.get("domain_row", {}).get("ddns_endpoint_id"),
+                        "wildcard_suffix": endpoint.get("wildcard_suffix") or endpoint.get("domain"),
+                        "codex_error_code": error.get("error_code"),
+                    },
+                }
+            ],
+            "warnings": ["Codex 검증 호출 실패로 DDNS deterministic fallback을 사용합니다."],
+            "checks": {
+                "domains": {
+                    "status": "repair_required",
+                    "suggested_domain": domain,
+                    "ddns_endpoint_id": suggestion.get("domain_row", {}).get("ddns_endpoint_id"),
+                }
+            },
+            "repair_required": True,
+            "repair_intent": "DDNS endpoint %s의 wildcard suffix %s에 %s 도메인을 등록하고 현재 서비스의 공개 포트로 연결해 주세요." % (
+                suggestion.get("domain_row", {}).get("ddns_endpoint_id") or "",
+                endpoint.get("wildcard_suffix") or endpoint.get("domain") or "",
+                domain or "",
+            ),
+        }
+
+    def _ddns_direct_verification_data(self, context):
+        suggestion = (context or {}).get("ddns_repair_suggestion") if isinstance(context, dict) else {}
+        if not isinstance(suggestion, dict) or suggestion.get("enabled") is not True:
+            return None
+        domain = suggestion.get("suggested_domain")
+        endpoint = suggestion.get("endpoint") or {}
+        domains = (context or {}).get("domains") if isinstance((context or {}).get("domains"), list) else []
+        already_configured = any(self._clean_text((row or {}).get("domain")).lower().strip(".") == domain for row in domains if isinstance(row, dict))
+        if already_configured:
+            return None
+        return {
+            "ok": False,
+            "summary": "등록된 DDNS 관리 서버 정보로 서비스 도메인 연결을 보정해야 합니다.",
+            "issues": [
+                {
+                    "key": "ddns.domain_not_attached",
+                    "severity": "warning",
+                    "message": "서비스에 DDNS 하위 도메인이 아직 연결되어 있지 않습니다.",
+                    "evidence": {
+                        "suggested_domain": domain,
+                        "endpoint_id": suggestion.get("domain_row", {}).get("ddns_endpoint_id"),
+                        "wildcard_suffix": endpoint.get("wildcard_suffix") or endpoint.get("domain"),
+                    },
+                }
+            ],
+            "warnings": [],
+            "checks": {"domains": {"status": "repair_required", "suggested_domain": domain}},
+            "repair_required": True,
+            "repair_intent": "등록된 DDNS endpoint에 %s 도메인을 연결하고 DDNS 등록 API를 호출해 주세요." % (domain or ""),
+        }
+
+    def _ddns_direct_repair_data(self, context):
+        suggestion = (context or {}).get("ddns_repair_suggestion") if isinstance(context, dict) else {}
+        if not isinstance(suggestion, dict) or suggestion.get("enabled") is not True:
+            return None
+        row = dict(suggestion.get("domain_row") or {})
+        if not row.get("domain"):
+            return None
+        form = dict((context or {}).get("form") or {})
+        form.update(
+            {
+                "domain_mode": "registered",
+                "domain": row.get("domain"),
+                "zone_id": row.get("zone_id"),
+                "domain_prefix": row.get("domain_prefix"),
+                "domain_target_key": row.get("domain_target_key"),
+                "domain_target_port": row.get("domain_target_port"),
+                "domains": [row],
+            }
+        )
+        return {
+            "form": form,
+            "base_content": (context or {}).get("base_content") or "",
+            "components": (context or {}).get("components") or [],
+            "generated_secret_keys": [],
+            "summary": "등록된 DDNS 관리 서버 정보로 서비스 도메인을 %s로 보정했습니다." % row.get("domain"),
+            "warnings": [],
+            "thinking_summary": "Applied deterministic DDNS domain repair without Codex because the requested change is a registered DDNS domain mapping.",
+            "notes": "",
+        }
+
+    def _ddns_repair_fallback_data(self, context, exc):
+        suggestion = (context or {}).get("ddns_repair_suggestion") if isinstance(context, dict) else {}
+        if not isinstance(suggestion, dict) or suggestion.get("enabled") is not True:
+            return None
+        form = dict((context or {}).get("form") or {})
+        row = dict(suggestion.get("domain_row") or {})
+        form.update(
+            {
+                "domain_mode": "registered",
+                "domain": row.get("domain"),
+                "zone_id": row.get("zone_id"),
+                "domain_prefix": row.get("domain_prefix"),
+                "domain_target_key": row.get("domain_target_key"),
+                "domain_target_port": row.get("domain_target_port"),
+                "domains": [row],
+            }
+        )
+        return {
+            "form": form,
+            "base_content": (context or {}).get("base_content") or "",
+            "components": (context or {}).get("components") or [],
+            "generated_secret_keys": [],
+            "summary": "Codex 수정 호출이 실패해 등록된 DDNS 서버와 추천 도메인으로 서비스 도메인을 보정했습니다.",
+            "warnings": [
+                "Codex 수정 호출 실패로 DDNS deterministic fallback을 사용했습니다.",
+                "추천 도메인이 의도와 다르면 도메인 설정에서 prefix를 수정한 뒤 다시 배포하세요.",
+            ],
+            "thinking_summary": "Used deterministic DDNS repair fallback after Codex runtime failure.",
+            "notes": "",
+        }
+
+    def _register_ddns_after_ai_update(self, service_id, draft, context=None, env=None):
+        if not self._draft_has_ddns_domain(draft, context):
+            return None
+        try:
+            return ddns_model.register_service_domains(service_id, env=env)
+        except Exception as exc:
+            if hasattr(exc, "message"):
+                return {
+                    "status": "error",
+                    "message": getattr(exc, "message", str(exc)),
+                    "error_code": getattr(exc, "error_code", "DDNS_REGISTER_FAILED"),
+                    **getattr(exc, "extra", {}),
+                }
+            return {"status": "error", "message": str(exc), "error_code": "DDNS_REGISTER_FAILED"}
+
+    def _ddns_register_summary_text(self, result):
+        registered = result.get("registered") if isinstance(result.get("registered"), list) else []
+        skipped = result.get("skipped") if isinstance(result.get("skipped"), list) else []
+        if registered:
+            return "DDNS 등록 API를 %s개 도메인에 호출했습니다." % len(registered)
+        unchanged = [item for item in skipped if isinstance(item, dict) and item.get("reason") == "public_ip_unchanged"]
+        if unchanged:
+            return "기존 DDNS 등록 정보와 공인 IP가 같아 DDNS API 호출은 생략되었습니다."
+        if skipped:
+            return "DDNS 등록 대상이 없어 DDNS API 호출은 생략되었습니다."
+        return "DDNS 등록 API 호출 결과를 확인했습니다."
+
+    def _ddns_zones(self, zones):
+        return [
+            zone
+            for zone in zones or []
+            if isinstance(zone, dict) and (zone.get("provider") == "ddns" or zone.get("ddns") is True)
+        ]
+
+    def _ddns_zone_suffix(self, zone):
+        return self._clean_text(
+            (zone or {}).get("wildcard_suffix")
+            or (zone or {}).get("domain_suffix")
+            or (zone or {}).get("domain")
+            or (zone or {}).get("name")
+        ).lower().strip(".")
+
+    def _ddns_default_prefix(self, value):
+        prefix = self._domain_prefix(value)
+        prefix = re.sub(r"-[a-f0-9]{6,}$", "", prefix)
+        trimmed = re.sub(r"-(service|app)$", "", prefix)
+        return trimmed or prefix
+
+    def _ddns_child_domain(self, prefix, suffix):
+        suffix = self._clean_text(suffix).lower().strip(".")
+        prefix = self._ddns_default_prefix(prefix)
+        return "%s.%s" % (prefix, suffix) if prefix and suffix else suffix
+
+    def _ddns_repair_suggestion(self, detail, payload, zones):
+        ddns_zones = self._ddns_zones(zones)
+        intent = self._clean_text((payload or {}).get("intent"))
+        wants_ddns = "ddns" in intent.lower() or "디디엔" in intent or "동적 dns" in intent.lower()
+        domains = (detail or {}).get("domains") or []
+        has_ddns_domain = any(
+            ((row.get("metadata") or {}).get("dns_provider") == "ddns" or (row.get("metadata") or {}).get("ddns_endpoint_id"))
+            for row in domains
+            if isinstance(row, dict)
+        )
+        if not ddns_zones:
+            return {"enabled": False, "reason": "no_ddns_endpoint", "available_endpoints": []}
+        endpoint = ddns_zones[0]
+        matched_domain = self._ddns_domain_from_text(intent, ddns_zones)
+        if matched_domain and not matched_domain.get("suffix_only"):
+            endpoint = matched_domain["endpoint"]
+            suggested_domain = matched_domain["domain"]
+            prefix = self._prefix_from_domain(suggested_domain, [{"domain": self._ddns_zone_suffix(endpoint)}])
+        else:
+            if matched_domain:
+                endpoint = matched_domain["endpoint"]
+            prefix = self._ddns_repair_prefix(detail, ddns_zones)
+            suffix = self._ddns_zone_suffix(endpoint)
+            suggested_domain = self._ddns_child_domain(prefix, suffix)
+        target = self._ddns_repair_target(detail)
+        suffix = self._ddns_zone_suffix(endpoint)
+        endpoint_id = self._clean_text(endpoint.get("ddns_endpoint_id") or endpoint.get("id") or endpoint.get("zone_id"))
+        domain_row = {
+            "domain": suggested_domain,
+            "zone_id": endpoint_id,
+            "provider": "ddns",
+            "dns_provider": "ddns",
+            "ddns_endpoint_id": endpoint_id,
+            "ddns_domain_suffix": suffix,
+            "wildcard_suffix": suffix,
+            "ddns_mode": endpoint.get("mode") or "ddns_management",
+            "domain_prefix": prefix,
+            "domain_target_key": "%s:%s" % (target.get("compose_service") or "", target.get("target_port") or ""),
+            "domain_target_port": target.get("target_port"),
+            "compose_service": target.get("compose_service"),
+            "target_port": target.get("target_port"),
+            "published_port": target.get("published_port"),
+            "ssl_mode": "certbot",
+        }
+        return {
+            "enabled": bool((wants_ddns or has_ddns_domain) and suggested_domain and endpoint_id),
+            "reason": "ddns_requested" if wants_ddns else ("existing_ddns_domain" if has_ddns_domain else "ddns_available"),
+            "available_endpoints": ddns_zones,
+            "endpoint": endpoint,
+            "suggested_domain": suggested_domain,
+            "suggested_prefix": prefix,
+            "domain_row": domain_row,
+            "target": target,
+        }
+
+    def _ddns_domain_from_text(self, text, ddns_zones):
+        candidates = re.findall(r"(?i)(?:[a-z0-9-]+\.)+[a-z]{2,63}", text or "")
+        for candidate in candidates:
+            clean = self._clean_text(candidate).lower().strip(".")
+            for zone in ddns_zones:
+                suffix = self._ddns_zone_suffix(zone)
+                if suffix and clean.endswith("." + suffix):
+                    return {"domain": clean, "endpoint": zone, "suffix_only": False}
+                if suffix and clean == suffix:
+                    return {"domain": "", "endpoint": zone, "suffix_only": True}
+        return None
+
+    def _ddns_repair_prefix(self, detail, ddns_zones=None):
+        suffixes = [self._ddns_zone_suffix(zone) for zone in ddns_zones or []]
+        for row in (detail or {}).get("domains") or []:
+            domain = self._clean_text((row or {}).get("domain")).lower().strip(".")
+            if domain and domain in suffixes:
+                continue
+            if domain:
+                return self._domain_prefix(domain.split(".", 1)[0])
+        service = (detail or {}).get("service") or {}
+        return self._ddns_default_prefix(service.get("name") or service.get("namespace") or "service")
+
+    def _ddns_repair_target(self, detail):
+        for row in (detail or {}).get("domains") or []:
+            metadata = dict((row or {}).get("metadata") or {})
+            compose_service = self._clean_text(metadata.get("compose_service"))
+            target_port = self._safe_int(metadata.get("target_port") or (row or {}).get("port"), 0)
+            if compose_service and target_port > 0:
+                return {
+                    "compose_service": compose_service,
+                    "target_port": target_port,
+                    "published_port": self._safe_int(metadata.get("published_port") or target_port, target_port),
+                }
+        target = self._first_component_port((detail or {}).get("components") or [])
+        if target:
+            return {"compose_service": target.get("key"), "target_port": target.get("port"), "published_port": target.get("port")}
+        return {"compose_service": "app", "target_port": 80, "published_port": 80}
+
+    def _apply_ddns_repair_fallback(self, draft, context):
+        suggestion = (context or {}).get("ddns_repair_suggestion") if isinstance(context, dict) else {}
+        if not isinstance(suggestion, dict) or suggestion.get("enabled") is not True:
+            return False
+        row = dict(suggestion.get("domain_row") or {})
+        if not row.get("domain"):
+            return False
+        form = draft.setdefault("form", {})
+        existing = form.get("domains") if isinstance(form.get("domains"), list) else []
+        if existing:
+            return False
+        form["domain_mode"] = "registered"
+        form["domains"] = [row]
+        form["domain"] = row.get("domain")
+        form["zone_id"] = row.get("zone_id")
+        form["domain_prefix"] = row.get("domain_prefix")
+        form["domain_target_key"] = row.get("domain_target_key")
+        form["domain_target_port"] = row.get("domain_target_port")
+        return True
+
+    def _service_warnings(self, data, draft=None, context=None):
+        warnings = self._string_list((data or {}).get("warnings"))
+        if not warnings or not self._draft_has_ddns_domain(draft, context):
+            return warnings
+        return [warning for warning in warnings if not self._is_stale_ddns_registration_warning(warning)]
+
+    def _is_stale_ddns_registration_warning(self, warning):
+        text = self._clean_text(warning)
+        if "DDNS" not in text:
+            return False
+        return any(token in text for token in ["등록 정보", "등록정보", "등록되지", "연결되지", "서브도메인"])
+
+    def _draft_has_ddns_domain(self, draft=None, context=None):
+        form = (draft or {}).get("form") if isinstance((draft or {}).get("form"), dict) else {}
+        domains = form.get("domains") if isinstance(form.get("domains"), list) else []
+        if not domains and self._clean_text(form.get("domain")):
+            domains = [{"domain": form.get("domain"), "zone_id": form.get("zone_id")}]
+        zones = (context or {}).get("zones") if isinstance((context or {}).get("zones"), list) else []
+        ddns_zones = [
+            zone
+            for zone in zones
+            if isinstance(zone, dict) and (zone.get("provider") == "ddns" or zone.get("ddns") is True)
+        ]
+        if not domains:
+            return False
+        for item in domains:
+            if not isinstance(item, dict):
+                continue
+            provider = self._clean_text(item.get("dns_provider") or item.get("provider"))
+            if provider == "ddns" or self._clean_text(item.get("ddns_endpoint_id")):
+                return True
+            if not ddns_zones:
+                continue
+            domain = self._clean_text(item.get("domain")).lower().strip(".")
+            zone_id = self._clean_text(item.get("zone_id"))
+            for zone in ddns_zones:
+                suffix = self._clean_text(zone.get("wildcard_suffix") or zone.get("domain") or zone.get("name")).lower().strip(".")
+                if zone_id and zone_id == self._clean_text(zone.get("id") or zone.get("zone_id")):
+                    return True
+                if suffix and (domain == suffix or domain.endswith("." + suffix)):
+                    return True
+        return False
+
     def _domain_rows_for_context(self, domains):
         rows = []
         for item in domains or []:
             metadata = dict(item.get("metadata") or {})
             target_port = metadata.get("target_port") or item.get("port")
+            provider = self._clean_text(metadata.get("dns_provider") or metadata.get("provider"))
+            ddns_endpoint_id = self._clean_text(metadata.get("ddns_endpoint_id"))
+            if not provider and ddns_endpoint_id:
+                provider = "ddns"
+            zone_id = self._clean_text(metadata.get("zone_id"))
+            if provider == "ddns" and not zone_id:
+                zone_id = ddns_endpoint_id
+            suffix = self._clean_text(metadata.get("ddns_domain_suffix") or metadata.get("wildcard_suffix"))
+            prefix_zones = [{"domain": suffix}] if suffix else []
             rows.append(
                 {
                     "domain": item.get("domain"),
-                    "zone_id": metadata.get("zone_id"),
-                    "domain_prefix": self._prefix_from_domain(item.get("domain"), []),
+                    "zone_id": zone_id,
+                    "provider": provider,
+                    "dns_provider": provider,
+                    "ddns_endpoint_id": ddns_endpoint_id,
+                    "ddns_domain_suffix": suffix,
+                    "wildcard_suffix": suffix,
+                    "ddns_mode": metadata.get("ddns_mode"),
+                    "domain_prefix": self._prefix_from_domain(item.get("domain"), prefix_zones),
                     "domain_target_key": "%s:%s" % (metadata.get("compose_service") or "", target_port or ""),
                     "domain_target_port": target_port,
                     "compose_service": metadata.get("compose_service"),
@@ -1251,6 +1691,34 @@ class AIAssistant:
         form = draft.get("form") or {}
         domains = form.get("domains") if isinstance(form.get("domains"), list) else []
         primary = domains[0] if domains else {}
+        primary_provider = self._clean_text(primary.get("dns_provider") or primary.get("provider"))
+        primary_zone_id = self._clean_text(primary.get("zone_id") or form.get("zone_id"))
+        ddns_endpoint_id = self._clean_text(primary.get("ddns_endpoint_id") or (primary_zone_id if primary_provider == "ddns" else ""))
+        ddns_suffix = self._clean_text(
+            primary.get("ddns_domain_suffix")
+            or primary.get("wildcard_suffix")
+            or primary.get("domain_suffix")
+            or form.get("ddns_domain_suffix")
+            or form.get("wildcard_suffix")
+        )
+        domain_metadata = {
+            "compose_service": primary.get("compose_service") or self._clean_text(primary.get("domain_target_key")).split(":", 1)[0],
+            "target_port": primary.get("target_port") or primary.get("domain_target_port") or form.get("domain_target_port"),
+            "published_port": primary.get("published_port") or primary.get("target_port") or primary.get("domain_target_port"),
+            "source": "ai_runtime_repair",
+        }
+        if primary_provider == "ddns" or ddns_endpoint_id:
+            domain_metadata.update(
+                {
+                    "dns_provider": "ddns",
+                    "routing_provider": "nginx",
+                    "ddns_endpoint_id": ddns_endpoint_id,
+                    "ddns_domain_suffix": ddns_suffix,
+                    "ddns_mode": primary.get("ddns_mode") or "ddns_management",
+                }
+            )
+        elif primary_zone_id:
+            domain_metadata["zone_id"] = primary_zone_id
         return {
             "service_id": service_id,
             "name": form.get("name") or (detail.get("service") or {}).get("name"),
@@ -1262,17 +1730,11 @@ class AIAssistant:
             "domain_mode": form.get("domain_mode") or ("registered" if domains else "none"),
             "domain": primary.get("domain") or form.get("domain") or "",
             "domains": domains,
-            "zone_id": primary.get("zone_id") or form.get("zone_id"),
+            "zone_id": primary_zone_id,
             "domain_target_key": primary.get("domain_target_key") or form.get("domain_target_key"),
             "domain_target_port": primary.get("domain_target_port") or primary.get("target_port") or form.get("domain_target_port"),
             "port": primary.get("target_port") or primary.get("domain_target_port") or form.get("domain_target_port"),
-            "domain_metadata": {
-                "compose_service": primary.get("compose_service") or self._clean_text(primary.get("domain_target_key")).split(":", 1)[0],
-                "target_port": primary.get("target_port") or primary.get("domain_target_port") or form.get("domain_target_port"),
-                "published_port": primary.get("published_port") or primary.get("target_port") or primary.get("domain_target_port"),
-                "zone_id": primary.get("zone_id") or form.get("zone_id"),
-                "source": "ai_runtime_repair",
-            },
+            "domain_metadata": domain_metadata,
             "wizard": {"components": draft.get("components") or [], "domain_mode": form.get("domain_mode"), "domains": domains},
             "draft_metadata": {"source": "ai_runtime_repair", "runtime_repair": True},
         }
@@ -1289,7 +1751,7 @@ class AIAssistant:
             desired = self._clean_text(task.get("DesiredState") or task.get("Desired state")).lower()
             current = self._clean_text(task.get("CurrentState") or task.get("Current state")).lower()
             error = self._clean_text(task.get("Error"))
-            if error or (desired == "running" and current and not current.startswith(("running", "preparing", "starting"))):
+            if (error and desired == "running") or (desired == "running" and current and not current.startswith(("running", "preparing", "starting"))):
                 task_errors.append(task)
         problem_containers = [item for item in containers if self._container_needs_repair(item)]
         failed_operations = [
@@ -1398,8 +1860,72 @@ class AIAssistant:
                 break
         return merged
 
+    def _compact_recent_operations(self, rows, limit=5):
+        return [self._compact_operation(item) for item in (rows or [])[:limit] if isinstance(item, dict)]
+
+    def _compact_client_runtime_issues(self, value):
+        if not isinstance(value, dict):
+            return {}
+        result = {
+            "has_runtime_issues": value.get("has_runtime_issues") is True,
+            "service_status": value.get("service_status"),
+            "stack_summary": value.get("stack_summary") or {},
+            "container_summary": value.get("container_summary") or {},
+            "container_health": value.get("container_health") or {},
+        }
+        failed = value.get("failed_operations") if isinstance(value.get("failed_operations"), list) else []
+        result["failed_operations"] = [self._compact_operation(item) for item in failed[:5] if isinstance(item, dict)]
+        return result
+
+    def _compact_runtime_status(self, runtime):
+        runtime = runtime or {}
+        stack = runtime.get("stack") or {}
+        containers = runtime.get("containers") or {}
+        domains = runtime.get("domains") or {}
+        task_rows = []
+        for task in stack.get("tasks") or []:
+            if not isinstance(task, dict):
+                continue
+            error = self._clean_text(task.get("Error"))
+            current = self._clean_text(task.get("CurrentState") or task.get("Current state"))
+            desired = self._clean_text(task.get("DesiredState") or task.get("Desired state"))
+            if error or current or desired:
+                task_rows.append({"Name": task.get("Name"), "CurrentState": current, "DesiredState": desired, "Error": self._trim_diagnostic(error, 800)})
+            if len(task_rows) >= 8:
+                break
+        container_rows = []
+        for item in containers.get("containers") or []:
+            if isinstance(item, dict):
+                container_rows.append(self._compact_container(item))
+            if len(container_rows) >= 8:
+                break
+        return {
+            "checked_at": runtime.get("checked_at"),
+            "stack": {"summary": stack.get("summary") or {}, "tasks": task_rows},
+            "containers": {"summary": containers.get("summary") or {}, "health": containers.get("health") or {}, "containers": container_rows},
+            "domains": {"summary": domains.get("summary") or {}, "items": (domains.get("domains") or domains.get("items") or [])[:8]},
+        }
+
     def _compact_operation(self, item):
         output = item.get("output") if isinstance(item.get("output"), list) else []
+        compact_output = []
+        for entry in output[-5:]:
+            if not isinstance(entry, dict):
+                continue
+            metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            compact_output.append(
+                {
+                    "stream": entry.get("stream"),
+                    "message": self._trim_diagnostic(entry.get("message"), 1200),
+                    "created_at": entry.get("created_at"),
+                    "metadata": {
+                        "step": metadata.get("step"),
+                        "status": metadata.get("status"),
+                        "error_code": ((metadata.get("error") or {}) if isinstance(metadata.get("error"), dict) else {}).get("error_code"),
+                    },
+                }
+            )
+        result_payload = item.get("result_payload") if isinstance(item.get("result_payload"), dict) else {}
         return {
             "id": item.get("id"),
             "type": item.get("type"),
@@ -1408,8 +1934,13 @@ class AIAssistant:
             "created_at": item.get("created_at"),
             "started_at": item.get("started_at"),
             "finished_at": item.get("finished_at"),
-            "result_payload": item.get("result_payload") or {},
-            "output": output[-30:],
+            "result_payload": {
+                "ok": result_payload.get("ok"),
+                "summary": result_payload.get("summary"),
+                "attempts": result_payload.get("attempts"),
+                "error_code": result_payload.get("error_code"),
+            },
+            "output": compact_output,
         }
 
     def _container_needs_repair(self, item):
@@ -1689,6 +2220,10 @@ class AIAssistant:
             "can_change_runtime": False,
             "can_run_container_actions": False,
             "can_run_safe_ssh_diagnostics": True,
+            "can_select_ddns_domains": True,
+            "can_register_ddns_records_via_deploy": True,
+            "can_inspect_ddns_domains": True,
+            "can_mutate_ddns_records": False,
             "allow_ssh_command": True,
             "mcp_enabled_tools": enabled_tools,
         }
@@ -1716,6 +2251,10 @@ class AIAssistant:
             "can_change_runtime": False,
             "can_run_container_actions": False,
             "can_run_safe_ssh_diagnostics": True,
+            "can_select_ddns_domains": True,
+            "can_register_ddns_records_via_deploy": True,
+            "can_inspect_ddns_domains": True,
+            "can_mutate_ddns_records": False,
             "allow_ssh_command": True,
             "mcp_enabled_tools": enabled_tools,
         }
@@ -2319,6 +2858,8 @@ class AIAssistant:
                 "Each volume must include source, target, type, and readonly when known.",
                 "When a public endpoint is requested, choose one valid component port as the domain target.",
                 "If zones are provided and the intent asks for public access or a domain, use domain_mode=registered, a valid zone_id, and a short domain_prefix. Otherwise use domain_mode=none.",
+                "For DDNS zones, zone_id is the DDNS endpoint id and the domain must be a child subdomain under wildcard_suffix. If wildcard_suffix is sub.nanoha.kr and the service prefix is wiki, use wiki.sub.nanoha.kr; never use sub.nanoha.kr itself as the service domain.",
+                "When a matching DDNS zone exists, do not warn that DDNS subdomains lack registration data; return the DDNS domain rows and rely on Docker Infra to call the DDNS management API during save/deploy.",
                 "When multiple domains or subdomains are useful, return form.domains and keep the first domain mirrored into legacy form.domain_prefix/domain_target_key/domain_target_port.",
                 "Autofill service names, domain prefixes, target ports, stack-local generated credentials, volumes, healthchecks, and placement assumptions from Docker Infra context when the user did not specify them.",
                 "Healthchecks must use commands that are known to exist in the selected image; if you cannot verify a command, use a conservative HTTP/TCP probe or omit the fragile command instead of guessing pgrep, ps, nc, or bash-specific behavior.",
@@ -2690,6 +3231,8 @@ class AIAssistant:
 
     def _service_create_context(self, payload):
         payload = payload or {}
+        zones = self._compact_zones(payload.get("zones") or [])
+        ddns_zones = [zone for zone in zones if zone.get("provider") == "ddns" or zone.get("ddns") is True]
         return {
             "user_level": self._clean_text(payload.get("user_level") or "beginner"),
             "creation_mode": self._clean_text(payload.get("creation_mode") or "ai_first"),
@@ -2699,6 +3242,7 @@ class AIAssistant:
                 "Docker Compose services",
                 "image name and image tag validation",
                 "single or multiple domain zones and prefixes",
+                "DDNS endpoint selection and wildcard suffix mapping",
                 "nginx upstream target",
                 "SSL mode",
                 "published and target ports",
@@ -2707,15 +3251,34 @@ class AIAssistant:
             ],
             "automation_scope": payload.get("automation_scope") or [
                 {"title": "서비스 구성", "description": "이미지, 포트, 환경변수, 데이터 보관"},
-                {"title": "도메인 연결", "description": "등록 도메인, 공개 포트, SSL 방식"},
+                {"title": "도메인 연결", "description": "Cloudflare 또는 DDNS 도메인, 공개 포트, SSL 방식"},
                 {"title": "자동 보정", "description": "검증 실패 시 AI 재호출 후 다시 검사"},
             ],
+            "domain_provider_policy": {
+                "cloudflare": "provider=cloudflare uses zone_id as a DNS zone id and Docker Infra can create DNS records directly.",
+                "ddns": "provider=ddns uses zone_id as the DDNS endpoint id; generated domains must be child subdomains under wildcard_suffix and deploy registers or updates the DDNS management server.",
+            },
+            "domain_zone_summary": {
+                "total": len(zones),
+                "ddns": len(ddns_zones),
+                "cloudflare": len([zone for zone in zones if zone.get("provider") != "ddns"]),
+            },
+            "ddns_registration_flow": {
+                "enabled": bool(ddns_zones),
+                "automatic": True,
+                "trigger": "service save plus deploy or runtime repair redeploy",
+                "api_owner": "Docker Infra backend",
+                "api_call": "POST /api/ddns/update with X-DDNS-Key, hostname, ip, and record_type",
+                "required_ai_output": "Use domain_mode=registered and include matching DDNS domain rows with zone_id equal to the DDNS endpoint id. The DDNS hostname must include a service prefix before wildcard_suffix, for example wiki.sub.nanoha.kr for suffix sub.nanoha.kr.",
+                "warning_policy": "Do not warn that requested DDNS subdomains are unregistered when they match an available DDNS wildcard suffix.",
+            },
             "input_contract": payload.get("docker_infra_inputs") or self.service_contract().get("input"),
             "output_contract": payload.get("docker_infra_outputs") or self.service_contract().get("output"),
             "expectations": [
                 "Return a complete service draft that can pass compose validation without manual YAML editing.",
                 "Every service must include an image reference with a tag or digest that can be validated after generation.",
                 "Choose one or more public components and ports when the user asks for browser or domain access.",
+                "When selecting a DDNS endpoint, preserve dns_provider=ddns, ddns_endpoint_id, and the wildcard suffix through generation, inspection, and repair. Treat the wildcard suffix itself as an endpoint, not as a service hostname.",
                 "Prefer named volumes over host paths for beginner-created persistent data.",
                 "For stack-local credentials required by images, return non-empty values the image actually reads, mark them as secret in components, and list generated_secret_keys. Do not switch to *_FILE or Docker secrets unless support is explicitly verified.",
                 "Autofill missing but necessary Docker Infra values instead of leaving blanks.",
@@ -2821,22 +3384,56 @@ class AIAssistant:
                 continue
             domain = self._clean_text(item.get("domain")).lower()
             zone_id = self._clean_text(item.get("zone_id") or form.get("zone_id"))
+            zone = self._zone_by_id(zones, zone_id)
+            zone_provider = self._clean_text((zone or {}).get("provider") or (zone or {}).get("dns_provider"))
+            provider = self._clean_text(item.get("dns_provider") or item.get("provider") or zone_provider)
+            ddns_endpoint_id = self._clean_text(
+                item.get("ddns_endpoint_id")
+                or ((zone or {}).get("ddns_endpoint_id") or (zone or {}).get("id") if provider == "ddns" else "")
+            )
+            if provider == "ddns" and not zone_id:
+                zone_id = ddns_endpoint_id
+            ddns_suffix = self._clean_text(
+                item.get("ddns_domain_suffix")
+                or item.get("wildcard_suffix")
+                or item.get("domain_suffix")
+                or ((zone or {}).get("wildcard_suffix") or (zone or {}).get("domain") if provider == "ddns" else "")
+            ).strip(".")
             prefix = self._domain_prefix(item.get("domain_prefix") or item.get("prefix"))
+            if provider == "ddns" and ddns_suffix and domain == ddns_suffix:
+                context_form = fallback.get("form") if isinstance(fallback.get("form"), dict) else {}
+                service = fallback.get("service") if isinstance(fallback.get("service"), dict) else {}
+                prefix = prefix or self._ddns_default_prefix(
+                    form.get("domain_prefix")
+                    or context_form.get("domain_prefix")
+                    or form.get("name")
+                    or context_form.get("name")
+                    or service.get("namespace")
+                    or service.get("name")
+                    or "service"
+                )
+                domain = self._ddns_child_domain(prefix, ddns_suffix)
             if not domain and zone_id:
-                zone = self._zone_by_id(zones, zone_id)
-                zone_domain = self._clean_text((zone or {}).get("domain") or (zone or {}).get("name")).strip(".")
+                zone_domain = ddns_suffix if provider == "ddns" else self._clean_text((zone or {}).get("domain") or (zone or {}).get("name")).strip(".")
                 if zone_domain:
-                    domain = "%s.%s" % (prefix, zone_domain) if prefix else zone_domain
+                    domain = self._ddns_child_domain(prefix, zone_domain) if provider == "ddns" else ("%s.%s" % (prefix, zone_domain) if prefix else zone_domain)
             if not domain or domain in seen:
                 continue
             seen.add(domain)
             target_key = self._clean_text(item.get("domain_target_key") or item.get("target_key") or form.get("domain_target_key"))
             target_port = self._clean_text(item.get("domain_target_port") or item.get("target_port") or item.get("port") or form.get("domain_target_port"))
+            prefix_zones = [{"domain": ddns_suffix}] if provider == "ddns" and ddns_suffix else zones
             rows.append(
                 {
                     "domain": domain,
                     "zone_id": zone_id,
-                    "domain_prefix": prefix or self._prefix_from_domain(domain, zones),
+                    "provider": provider,
+                    "dns_provider": provider,
+                    "ddns_endpoint_id": ddns_endpoint_id,
+                    "ddns_domain_suffix": ddns_suffix,
+                    "wildcard_suffix": ddns_suffix,
+                    "ddns_mode": item.get("ddns_mode") or ((zone or {}).get("mode") if provider == "ddns" else ""),
+                    "domain_prefix": prefix or self._prefix_from_domain(domain, prefix_zones),
                     "domain_target_key": target_key,
                     "domain_target_port": target_port,
                     "compose_service": self._clean_text(item.get("compose_service") or item.get("service_key") or target_key.split(":", 1)[0]),
@@ -2944,17 +3541,48 @@ class AIAssistant:
             return yaml.safe_dump(value, sort_keys=False, allow_unicode=False)
         return self._clean_text(value)
 
+    def _service_zones_for_ai(self, payload=None, env=None):
+        payload = payload if isinstance(payload, dict) else {}
+        zones = payload.get("zones") if isinstance(payload.get("zones"), list) else []
+        if not zones:
+            try:
+                zones = domains_model.service_options(env=env).get("zones") or []
+            except Exception:
+                zones = []
+        return self._compact_zones(zones)
+
     def _compact_zones(self, zones):
         result = []
         for item in zones or []:
             if not isinstance(item, dict):
                 continue
+            provider = self._clean_text(item.get("provider") or item.get("dns_provider") or "cloudflare")
+            domain = self._clean_text(item.get("domain") or item.get("name"))
+            zone_id = item.get("id") or item.get("zone_id")
+            compact = {
+                "id": zone_id,
+                "name": item.get("name"),
+                "domain": domain,
+                "provider": provider,
+                "provider_label": item.get("provider_label"),
+                "mode": item.get("mode"),
+                "status": item.get("status"),
+                "usable_for_service": item.get("usable_for_service"),
+                "record_count": item.get("record_count"),
+                "secret_configured": item.get("secret_configured"),
+                "certificate_summary": item.get("certificate_summary"),
+            }
+            if provider == "ddns":
+                compact.update(
+                    {
+                        "ddns": True,
+                        "ddns_endpoint_id": str(zone_id or ""),
+                        "wildcard_suffix": domain,
+                        "domain_suffix": domain,
+                    }
+                )
             result.append(
-                {
-                    "id": item.get("id") or item.get("zone_id"),
-                    "name": item.get("name"),
-                    "domain": item.get("domain") or item.get("name"),
-                }
+                compact
             )
         return result[:50]
 

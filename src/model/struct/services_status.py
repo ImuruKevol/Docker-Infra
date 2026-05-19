@@ -46,6 +46,14 @@ def _task_running(task):
     return desired == "running" and current.startswith("running")
 
 
+def _task_error_active(task):
+    error = str(task.get("Error") or "").strip()
+    if not error:
+        return False
+    desired = str(task.get("DesiredState") or task.get("Desired state") or "").lower()
+    return desired == "running"
+
+
 def _container_health(containers):
     summary = {"healthy": 0, "unhealthy": 0, "starting": 0, "running": 0, "stopped": 0, "unknown": 0}
     for item in containers:
@@ -83,7 +91,8 @@ class ServiceStatusMixin:
                 "running": sum(item["running"] for item in replicas),
                 "task_count": len(task_rows),
                 "task_running": len([task for task in task_rows if _task_running(task)]),
-                "task_errors": len([task for task in task_rows if str(task.get("Error") or "").strip()]),
+                "task_errors": len([task for task in task_rows if _task_error_active(task)]),
+                "task_error_history": len([task for task in task_rows if str(task.get("Error") or "").strip()]),
             },
             "checks": {
                 "services": {"status": services_result.get("status"), "exit_code": services_result.get("exit_code")},

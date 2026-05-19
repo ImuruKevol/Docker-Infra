@@ -226,3 +226,16 @@
 | 2026-05-18 | 224 | DDNS API 등록을 와일드카드 프록시 suffix 방식으로 전환 | [상세](devlog/2026-05-18/224-wildcard-proxy-domain-suffix.md) |
 | 2026-05-18 | 225 | 중간 DDNS 관리 시스템 API 등록 방식 복원 | [상세](devlog/2026-05-18/225-ddns-management-api-registration.md) |
 | 2026-05-18 | 226 | DDNS 서버 등록 모달 입력 항목 단순화 | [상세](devlog/2026-05-18/226-ddns-modal-api-url-simplification.md) |
+| 2026-05-18 | 227 | DDNS update API와 NetworkManager dispatcher 반영 | [상세](devlog/2026-05-18/227-ddns-update-api-networkmanager-dispatcher.md) |
+| 2026-05-18 | 228 | DDNS dispatcher 마지막 요청 표시와 수동 API 호출 추가 | [상세](devlog/2026-05-18/228-ddns-dispatcher-status-and-manual-update.md) |
+| 2026-05-18 | 229 | DDNS 테이블 UI와 dispatcher 등록 관리 추가 | [상세](devlog/2026-05-18/229-ddns-table-and-dispatcher-registration.md) |
+| 2026-05-18 | 230 | 서비스 AI 생성/검사/수정 DDNS 컨텍스트 보강 | [상세](devlog/2026-05-18/230-service-ai-ddns-context.md) |
+| 2026-05-18 | 231 | AI DDNS 자동 등록 권한과 경고 처리 보강 | [상세](devlog/2026-05-18/231-ai-ddns-auto-registration-permission.md) |
+| 2026-05-18 | 232 | 런타임 AI DDNS 전환 repair 컨텍스트 보강 | [상세](devlog/2026-05-18/232-runtime-ai-ddns-repair-context.md) |
+| 2026-05-18 | 233 | DDNS 런타임 AI Codex 실패 fallback 추가 | [상세](devlog/2026-05-18/233-ddns-runtime-ai-codex-fallback.md) |
+| 2026-05-18 | 234 | AI DDNS 수정 직후 등록 API 호출 추가 | [상세](devlog/2026-05-18/234-ai-ddns-immediate-register.md) |
+| 2026-05-18 | 235 | Codex MCP 핸드셰이크와 DDNS AI 검증 호출 복구 | [상세](devlog/2026-05-18/235-codex-mcp-handshake-ddns-ai.md) |
+| 2026-05-18 | 236 | DDNS 서비스 도메인을 wildcard suffix 하위 hostname으로 보정 | [상세](devlog/2026-05-18/236-ddns-child-hostname-normalization.md) |
+| 2026-05-18 | 237 | AI 검사 로그 중복 억제와 DDNS 직접 보정 경로 추가 | [상세](devlog/2026-05-18/237-ai-ddns-direct-repair-and-log-dedupe.md) |
+| 2026-05-18 | 238 | Codex 런타임 프롬프트 컨텍스트 축약과 MCP 요약 경로 추가 | [상세](devlog/2026-05-18/238-codex-context-budget-mcp-summary.md) |
+| 2026-05-18 | 239 | DDNS API 실패 응답 판정과 POST redirect 처리 수정 | [상세](devlog/2026-05-18/239-ddns-api-response-validation.md) |

@@ -70,6 +70,7 @@ APT_PACKAGES=(
     curl
     gnupg
     openssl
+    network-manager
     nginx
     postgresql
     postgresql-contrib

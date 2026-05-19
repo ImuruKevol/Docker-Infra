@@ -25,9 +25,12 @@ export class Component implements OnInit {
     public loading = signal<boolean>(true);
     public detailLoading = signal<boolean>(false);
     public syncLoading = signal<boolean>(false);
+    public ddnsUpdateEndpointId = signal<string>('');
+    public ddnsDispatcherBusy = signal<boolean>(false);
     public error = signal<string>('');
     public zones = signal<any[]>([]);
     public ddnsEndpoints = signal<any[]>([]);
+    public ddnsDispatcher = signal<any>({});
     public ddnsWarning = signal<string>('');
     public selectedZoneId = signal<string>('');
     public detail = signal<any>(this.emptyDetail());
@@ -67,6 +70,7 @@ export class Component implements OnInit {
             const zones = data.zones || [];
             const ddns = data.ddns || {};
             this.ddnsEndpoints.set(ddns.endpoints || []);
+            this.ddnsDispatcher.set(ddns.dispatcher || {});
             this.ddnsWarning.set(ddns.available === false ? (ddns.message || 'DDNS 관리 서버 정보를 불러올 수 없습니다.') : '');
             this.zones.set(zones);
             const currentZoneId = this.selectedZoneId();
@@ -77,6 +81,7 @@ export class Component implements OnInit {
         } else {
             this.error.set(data?.message || '도메인 정보를 불러올 수 없습니다.');
             this.ddnsWarning.set('');
+            this.ddnsDispatcher.set({});
         }
         this.loading.set(false);
         await this.service.render();
@@ -113,6 +118,60 @@ export class Component implements OnInit {
             return;
         }
         await this.alert(data?.message || 'DDNS 관리 서버 설정을 삭제할 수 없습니다.');
+    }
+
+    public async forceUpdateDdnsEndpoint(endpoint: any) {
+        if (!endpoint?.id) return;
+        this.ddnsUpdateEndpointId.set(endpoint.id);
+        await this.service.render();
+        let response: any = {};
+        try {
+            response = await wiz.call('force_update_ddns_endpoint', { endpoint_id: endpoint.id });
+        } finally {
+            this.ddnsUpdateEndpointId.set('');
+        }
+        const { code, data } = response;
+        if (code === 200) {
+            await this.load(this.selectedZoneId());
+            await this.alert(data?.message || 'DDNS API 호출을 완료했습니다.', 'success');
+            return;
+        }
+        await this.service.render();
+        await this.alert(data?.message || 'DDNS API를 호출할 수 없습니다.');
+    }
+
+    public async ensureDdnsDispatcher() {
+        if (this.ddnsDispatcherBusy()) return;
+        this.ddnsDispatcherBusy.set(true);
+        await this.service.render();
+        let response: any = {};
+        try {
+            response = await wiz.call('ensure_ddns_dispatcher', {});
+        } finally {
+            this.ddnsDispatcherBusy.set(false);
+        }
+        const { code, data } = response;
+        if (code === 200) {
+            await this.load(this.selectedZoneId());
+            await this.alert('NetworkManager dispatcher를 등록했습니다.', 'success');
+            return;
+        }
+        await this.service.render();
+        await this.alert(data?.message || 'NetworkManager dispatcher를 등록할 수 없습니다.');
+    }
+
+    public ddnsDispatcherLabel() {
+        const dispatcher = this.ddnsDispatcher() || {};
+        if (dispatcher.registered === true) return 'Dispatcher 등록됨';
+        if (dispatcher.status === 'partial') return 'Dispatcher 확인 필요';
+        return 'Dispatcher 미등록';
+    }
+
+    public ddnsDispatcherBadgeClass() {
+        const dispatcher = this.ddnsDispatcher() || {};
+        if (dispatcher.registered === true) return this.statusClass('active');
+        if (dispatcher.status === 'partial') return this.statusClass('pending');
+        return this.statusClass('missing');
     }
 
     public ddnsStatusLabel(endpoint: any) {
@@ -552,7 +611,7 @@ export class Component implements OnInit {
 
     private emptyDdnsForm(endpoint: any = {}) {
         const apiBaseUrl = String(endpoint.api_base_url || '').replace(/\/+$/, '');
-        const registrationPath = String(endpoint.registration_path || '/api/ddns/records');
+        const registrationPath = String(endpoint.registration_path || '/api/ddns/update');
         const apiUrl = endpoint.api_url || (apiBaseUrl ? `${apiBaseUrl}${registrationPath.startsWith('/') ? registrationPath : `/${registrationPath}`}` : '');
         return {
             id: endpoint.id || '',
