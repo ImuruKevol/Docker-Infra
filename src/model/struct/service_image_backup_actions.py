@@ -1,5 +1,4 @@
 import datetime
-import hashlib
 import shutil
 from pathlib import Path
 
@@ -47,7 +46,6 @@ class ServiceImageBackupActions:
         target_image = backup.get("backup_ref") or backup["image_ref"]
         compose["services"][compose_service]["image"] = target_image
         content = yaml.safe_dump(compose, sort_keys=False, allow_unicode=False)
-        checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
         history_dir = compose_path.parent / ".history" / f"restore_{_utc_id()}"
         history_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(compose_path, history_dir / compose_path.name)
@@ -57,17 +55,6 @@ class ServiceImageBackupActions:
 
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT COALESCE(max(version), 0) + 1 AS next_version FROM compose_versions WHERE service_id = %s", (service_id,))
-                version = int(cursor.fetchone()["next_version"])
-                cursor.execute(
-                    """
-                    INSERT INTO compose_versions(service_id, version, path, checksum, test_run_id, metadata)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING *
-                    """,
-                    (service_id, version, str(restored_path), checksum, backup.get("test_run_id"), Jsonb({"source": "image_restore", "backup_id": backup_id, "target_image": target_image})),
-                )
-                compose_version = _row(cursor.fetchone())
                 cursor.execute("UPDATE services SET updated_at = now(), status = 'draft' WHERE id = %s RETURNING *", (service_id,))
                 restored_service = _row(cursor.fetchone())
 
@@ -78,11 +65,11 @@ class ServiceImageBackupActions:
             status="succeeded",
             message="서비스 Compose 이미지 복원",
             requested_payload={"service_id": service_id, "backup_id": backup_id},
-            result_payload={"target_image": target_image, "compose_version": compose_version["version"]},
+            result_payload={"target_image": target_image, "history_path": str(restored_path)},
             metadata={"service_id": service_id, "namespace": restored_service.get("namespace")},
             env=env,
         )
-        return {"service": restored_service, "compose_version": compose_version, "operation": operation, "target_image": target_image}
+        return {"service": restored_service, "operation": operation, "target_image": target_image, "history_path": str(restored_path)}
 
     def backup_to_harbor(self, service_id, backup_id, env=None):
         service, backup = self._backup_target(service_id, backup_id, env=env)

@@ -18,6 +18,7 @@ SERVICES_TEMPLATE = ROOT / "src" / "app" / "page.services" / "view.pug"
 PREFLIGHT_MODEL = ROOT / "src" / "model" / "struct" / "services_preflight.py"
 SERVICES_MODEL = ROOT / "src" / "model" / "struct" / "services.py"
 UPDATE_MODEL = ROOT / "src" / "model" / "struct" / "services_update.py"
+RELEASE_MODEL = ROOT / "src" / "model" / "struct" / "services_release.py"
 ROLLBACK_MODEL = ROOT / "src" / "model" / "struct" / "services_rollback.py"
 RUNTIME_MODEL = ROOT / "src" / "model" / "struct" / "services_runtime.py"
 SNAPSHOT_RUNNER_MODEL = ROOT / "src" / "model" / "struct" / "service_image_snapshot_runner.py"
@@ -210,9 +211,9 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("versionSourceLabel", services_view)
         self.assertIn("versionDraftText", services_view)
         self.assertIn("versionSourceLabel(version)", services_template)
-        self.assertIn("snapshotSelectedService", services_view)
-        self.assertIn('(click)="snapshotSelectedService()"', services_template)
-        self.assertIn("백업 저장소에 백업이 있는 버전", services_view)
+        self.assertIn("openReleaseModal", services_view)
+        self.assertIn('(click)="openReleaseModal()"', services_template)
+        self.assertIn("수동 릴리즈한 버전만 이력에 남고", services_view)
         self.assertNotIn("백업 저장소에 백업이 있으면 이미지 참조도 함께 반영", services_template)
         self.assertNotIn("Harbor 백업", services_template)
         self.assertIn("잠깐 일시 정지", services_view)
@@ -223,7 +224,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("snapshotBackupErrorMessage", services_view)
         self.assertIn("versionSnapshotBackupCount(version)", services_template)
         self.assertIn("image_backup_summary", services_runtime)
-        self.assertIn('source="manual_snapshot"', services_runtime)
+        self.assertIn('source=payload.get("source") or "manual_snapshot"', services_runtime)
         self.assertIn("snapshot_service_image_async", services_runtime)
         self.assertIn("progress_operation_id", services_runtime)
         self.assertIn("_is_service_error_like", services_runtime)
@@ -301,9 +302,9 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("실행 기준", template)
         self.assertIn("runtimeContainerSummary", view)
         self.assertEqual(template.count('(click)="deploySelectedService()"'), 1)
-        self.assertEqual(template.count('(click)="snapshotSelectedService()"'), 1)
-        self.assertLess(template.index("detailTab() === 'versions'"), template.index('(click)="snapshotSelectedService()"'))
-        self.assertLess(template.index('(click)="snapshotSelectedService()"'), template.index("versionSourceLabel(version)"))
+        self.assertEqual(template.count('(click)="openReleaseModal()"'), 1)
+        self.assertLess(template.index("detailTab() === 'versions'"), template.index('(click)="openReleaseModal()"'))
+        self.assertLess(template.index('(click)="openReleaseModal()"'), template.index("versionSourceLabel(version)"))
         self.assertNotIn("statusClass(item.status)", template)
         self.assertNotIn("statusLabel(item.status)", template)
         self.assertNotIn("statusClass(detail()?.service?.status)", template)
@@ -330,8 +331,28 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("서비스 수정", template)
         self.assertIn("추가 코멘트", template)
         self.assertIn("ServiceUpdateMixin", services)
-        for token in ["def update_wizard", "compose_versions", "service_domains", "SERVICE_PREFLIGHT_BLOCKED"]:
+        for token in ["def update_wizard", "service_domains", "SERVICE_PREFLIGHT_BLOCKED", "last_update"]:
             self.assertIn(token, update)
+        self.assertNotIn("INSERT INTO compose_versions", update)
+
+    def test_service_release_contract_is_wired(self):
+        api = SERVICES_API.read_text(encoding="utf-8")
+        view = SERVICES_VIEW.read_text(encoding="utf-8")
+        template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
+        services = SERVICES_MODEL.read_text(encoding="utf-8")
+        release = RELEASE_MODEL.read_text(encoding="utf-8")
+
+        self.assertIn("def release_service():", api)
+        self.assertIn("services_model.release", api)
+        self.assertIn("snapshot_service_image_async", api)
+        self.assertIn("public openReleaseModal", view)
+        self.assertIn("public async runRelease", view)
+        self.assertIn("수동 릴리즈", template)
+        self.assertIn("Compose만 릴리즈", template)
+        self.assertIn("스냅샷도 백업", template)
+        self.assertIn("ServiceReleaseMixin", services)
+        for token in ["def release", "INSERT INTO compose_versions", "manual_release", "service.compose.release"]:
+            self.assertIn(token, release)
 
     def test_service_delete_contract_is_wired(self):
         api = SERVICES_API.read_text(encoding="utf-8")
@@ -383,8 +404,9 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertNotIn('(click)="runRollback(false)"', template)
         self.assertNotIn("되돌린 뒤 상태는 준비 중", template)
         self.assertIn("ServiceRollbackMixin", services)
-        for token in ["def rollback_plan", "def rollback", "compose_rollback", "compose_versions", "service.compose.rollback"]:
+        for token in ["def rollback_plan", "def rollback", "compose_versions", "service.compose.rollback"]:
             self.assertIn(token, rollback)
+        self.assertNotIn("INSERT INTO compose_versions", rollback)
         self.assertIn("source = 'container_snapshot'", rollback)
         self.assertIn("planned_image_refs", rollback)
         self.assertIn("force_recreate: true", view)

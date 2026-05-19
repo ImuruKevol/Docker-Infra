@@ -214,26 +214,6 @@ class ServiceDeployMixin:
             "port_allocation_changed": bool((allocations or {}).get("changed")),
             "domain_port_updates": domain_port_updates or [],
         }
-        with connect(env=env) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT id, metadata
-                    FROM compose_versions
-                    WHERE service_id = %s
-                    ORDER BY version DESC, created_at DESC
-                    LIMIT 1
-                    """,
-                    (service_id,),
-                )
-                row = cursor.fetchone()
-                if row is not None:
-                    metadata = dict(row.get("metadata") or {})
-                    metadata["deploy_adjustments"] = payload
-                    cursor.execute(
-                        "UPDATE compose_versions SET metadata = %s WHERE id = %s",
-                        (Jsonb(metadata), row["id"]),
-                    )
         return payload
 
     def _ensure_backup_registry_for_deploy(self, service, operation_id, env=None):

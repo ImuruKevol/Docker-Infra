@@ -57,6 +57,10 @@ export class Component implements OnInit, OnDestroy {
     public rollbackBusy = signal<boolean>(false);
     public rollbackTarget = signal<any>(null);
     public rollbackPlan = signal<any>(null);
+    public releaseModalOpen = signal<boolean>(false);
+    public releaseBusy = signal<boolean>(false);
+    public releaseIncludeSnapshots = signal<boolean>(false);
+    public releaseComment = signal<string>('');
     public operationModalOpen = signal<boolean>(false);
     public operationBusy = signal<boolean>(false);
     public operationDetail = signal<any>(null);
@@ -1121,7 +1125,7 @@ export class Component implements OnInit, OnDestroy {
             await this.alert('Compose 내용이 비어 있습니다.');
             return;
         }
-        const ok = await this.confirm('Compose 원문을 검사한 뒤 저장합니다. 저장 후 적용 버튼을 눌러야 서버 실행 상태에 반영됩니다.', '검사 후 저장', 'warning');
+        const ok = await this.confirm('Compose 원문을 검사한 뒤 초안으로 저장합니다. 버전 이력은 릴리즈 버튼을 눌렀을 때만 추가됩니다.', '검사 후 저장', 'warning');
         if (!ok) return;
         this.busy.set(true);
         const service = this.selected() || {};
@@ -1775,6 +1779,63 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
+    public openReleaseModal() {
+        if (!this.selected()?.id || this.releaseBusy()) return;
+        this.releaseIncludeSnapshots.set(false);
+        this.releaseComment.set('');
+        this.releaseModalOpen.set(true);
+    }
+
+    public closeReleaseModal() {
+        if (this.releaseBusy()) return;
+        this.releaseModalOpen.set(false);
+        this.releaseIncludeSnapshots.set(false);
+        this.releaseComment.set('');
+    }
+
+    public setReleaseIncludeSnapshots(value: boolean) {
+        if (value && !this.backupSystemCanBackup()) return;
+        this.releaseIncludeSnapshots.set(value);
+    }
+
+    public releaseSnapshotOptionTitle() {
+        if (this.backupSystemCanBackup()) return '릴리즈 직후 현재 실행 컨테이너를 스냅샷으로 백업합니다.';
+        return '백업 시스템이 실행 중일 때 선택할 수 있습니다.';
+    }
+
+    public releaseModeLabel() {
+        return this.releaseIncludeSnapshots() ? 'Compose + 스냅샷' : 'Compose만';
+    }
+
+    public async runRelease() {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || this.releaseBusy()) return;
+        this.releaseBusy.set(true);
+        const includeSnapshots = this.releaseIncludeSnapshots();
+        const { code, data } = await wiz.call('release_service', {
+            service_id: serviceId,
+            include_snapshots: includeSnapshots,
+            snapshot_pause: true,
+            comment: this.releaseComment(),
+        });
+        if (![200, 202].includes(code)) {
+            this.releaseBusy.set(false);
+            await this.alert(this.formatComposeError(data, '서비스를 릴리즈할 수 없습니다.'));
+            await this.service.render();
+            return;
+        }
+        this.applyDetail(data);
+        this.releaseModalOpen.set(false);
+        this.releaseBusy.set(false);
+        const operation = data.snapshot_operation || data.operation || data.result?.operation;
+        if (includeSnapshots && operation?.id) {
+            await this.openOperationModal(operation, false);
+        } else {
+            await this.alert('현재 Compose를 릴리즈 버전으로 기록했습니다.', 'success');
+        }
+        await this.service.render();
+    }
+
     public async openRollbackModal(version: any) {
         const serviceId = this.selected()?.id;
         if (!serviceId || !version?.id || this.rollbackBusy()) return;
@@ -1836,9 +1897,9 @@ export class Component implements OnInit, OnDestroy {
 
     public versionRollbackHint() {
         if (this.backupSystemEnabled()) {
-            return '백업 저장소에 백업이 있는 버전은 Compose와 이미지 버전을 함께 되돌립니다.';
+            return '수동 릴리즈한 버전만 이력에 남고, 스냅샷이 있는 버전은 이미지까지 함께 되돌릴 수 있습니다.';
         }
-        return '저장된 Compose 버전으로 되돌릴 수 있습니다.';
+        return '릴리즈 버튼으로 현재 Compose를 되돌릴 수 있는 버전으로 확정합니다.';
     }
 
     public backupSystemBadgeText() {
@@ -2060,7 +2121,8 @@ export class Component implements OnInit, OnDestroy {
             const operation = data.operation || null;
             this.operationDetail.set(operation);
             if (operation && !this.isActiveOperation(operation) && this.selected()?.id) {
-                const detailResult = await wiz.call('detail_service', { service_id: this.selected().id });
+                const endpoint = ['source', 'versions'].includes(this.detailTab()) ? 'detail_service_advanced' : 'detail_service';
+                const detailResult = await wiz.call(endpoint, { service_id: this.selected().id });
                 if (detailResult.code === 200) this.applyDetail(detailResult.data);
             }
         } else if (showBusy) {
@@ -3042,6 +3104,7 @@ export class Component implements OnInit, OnDestroy {
             'service.ai.verify': 'AI 백그라운드 검증',
             'service.certbot.renew': '무료 인증서 갱신',
             'service.certbot.renewal.ensure': '무료 인증서 자동 갱신 설정',
+            'service.compose.release': '수동 릴리즈',
             'service.compose.rollback': 'Compose 되돌리기',
             'service.image.backup': '이미지 백업',
             'service.image.restore': '이미지 복원',
@@ -3101,6 +3164,8 @@ export class Component implements OnInit, OnDestroy {
             server_compose_import: '서버 Compose 가져오기',
             server_compose_import_wizard: '서버 Compose 가져오기',
             compose_rollback: '되돌리기',
+            manual_release: '수동 릴리즈',
+            manual_release_snapshot: '릴리즈 스냅샷',
         };
         return labels[source] || source || '-';
     }

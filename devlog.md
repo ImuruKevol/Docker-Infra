@@ -252,3 +252,4 @@
 | 2026-05-19 | 250 | 롤백 배포 완료 직전 metadata datetime 직렬화 오류 수정 | [상세](devlog/2026-05-19/250-rollback-deploy-metadata-serialization.md) |
 | 2026-05-19 | 251 | 서비스 관리 상태 표시와 적용 버튼 문구 정리 | [상세](devlog/2026-05-19/251-service-management-status-label-cleanup.md) |
 | 2026-05-19 | 252 | 서비스 상세 헤더 버튼 정리와 스냅샷 백업 위치 이동 | [상세](devlog/2026-05-19/252-service-header-actions-cleanup.md) |
+| 2026-05-19 | 253 | 서비스 버전 이력을 수동 릴리즈 전용으로 전환 | [상세](devlog/2026-05-19/253-service-manual-release-version-policy.md) |

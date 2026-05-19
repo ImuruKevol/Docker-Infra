@@ -29,6 +29,12 @@ def _request_payload():
     return body
 
 
+def _truthy(value):
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _stream_events(events):
     flask = wiz.response._flask
 
@@ -346,6 +352,40 @@ def deploy_service_background():
     try:
         result = services_model.deploy_background(wiz.request.query())
         payload = {"result": result, "operation": result.get("operation"), "service": result.get("service")}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except DATABASE_ERRORS as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def release_service():
+    services_model = wiz.model("struct").services
+    code = 200
+    payload = {}
+    try:
+        body = wiz.request.query()
+        result = services_model.release(body)
+        service_id = result["service"]["id"]
+        payload = {"result": result, "operation": result.get("operation"), **_service_advanced_payload(service_id)}
+        if _truthy(body.get("include_snapshots")):
+            snapshot_result = services_model.snapshot_service_image_async({
+                "service_id": service_id,
+                "pause": body.get("snapshot_pause", True),
+                "compose_version_id": result["compose_version"]["id"],
+                "source": "manual_release_snapshot",
+                "background": True,
+            })
+            payload["snapshot_result"] = snapshot_result
+            payload["snapshot_operation"] = snapshot_result.get("operation")
+            payload["operation"] = snapshot_result.get("operation") or payload.get("operation")
+            code = 202
+    except services_model.ComposeValidationError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

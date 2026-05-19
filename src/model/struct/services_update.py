@@ -1,5 +1,4 @@
 import datetime
-import hashlib
 import shutil
 from pathlib import Path
 
@@ -12,7 +11,6 @@ validator = wiz.model("struct/compose_validator")
 preflight_model = wiz.model("struct/services_preflight")
 webserver = wiz.model("struct/webserver")
 ddns_model = wiz.model("struct/domains_ddns")
-image_backups = wiz.model("struct/service_image_backups")
 shared = wiz.model("struct/services_shared")
 ServiceError = shared.ServiceError
 _row = shared.row
@@ -179,7 +177,6 @@ class ServiceUpdateMixin:
             raise ServiceError(409, "서비스 수정 전에 해결해야 할 항목이 있습니다.", "SERVICE_PREFLIGHT_BLOCKED", preflight=preflight)
 
         normalized_content = yaml.safe_dump(validation["normalized"], sort_keys=False, allow_unicode=False)
-        checksum = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
         compose_path = Path(service["compose_path"]).expanduser()
         compose_path.parent.mkdir(parents=True, exist_ok=True)
         history_id = _history_id()
@@ -206,8 +203,6 @@ class ServiceUpdateMixin:
 
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT COALESCE(max(version), 0) + 1 AS next_version FROM compose_versions WHERE service_id = %s", (service_id,))
-                version_number = int(cursor.fetchone()["next_version"])
                 cursor.execute(
                     """
                     UPDATE services
@@ -219,18 +214,7 @@ class ServiceUpdateMixin:
                 )
                 service = _row(cursor.fetchone())
                 domain = self._replace_domain(cursor, service_id, payload, env=env)
-                cursor.execute(
-                    """
-                    INSERT INTO compose_versions(service_id, version, path, checksum, test_run_id, metadata)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING *
-                    """,
-                    (service_id, version_number, str(history_dir / compose_path.name), checksum, payload.get("test_run_id"), Jsonb({"source": "service_update", "history_id": history_id})),
-                )
-                version = _row(cursor.fetchone())
-
-        image_backups.record(service, validation["normalized"], compose_version_id=version["id"], source="service_update", test_run_id=service.get("test_run_id"), metadata={"namespace": namespace}, env=env)
-        return {"service": service, "domain": domain, "compose_version": version, "validation": validation, "preflight": preflight}
+        return {"service": service, "domain": domain, "validation": validation, "preflight": preflight, "history_id": history_id}
 
     def update_compose_content(self, payload, env=None):
         payload = payload or {}
@@ -252,7 +236,6 @@ class ServiceUpdateMixin:
             raise ServiceError(409, "Compose 원문을 저장하기 전에 해결해야 할 항목이 있습니다.", "SERVICE_PREFLIGHT_BLOCKED", preflight=preflight)
 
         normalized_content = yaml.safe_dump(validation["normalized"], sort_keys=False, allow_unicode=False)
-        checksum = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
         compose_path = Path(service["compose_path"]).expanduser()
         compose_path.parent.mkdir(parents=True, exist_ok=True)
         history_id = _history_id()
@@ -274,8 +257,6 @@ class ServiceUpdateMixin:
         name = str(payload.get("name") or service.get("name") or "").strip()
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT COALESCE(max(version), 0) + 1 AS next_version FROM compose_versions WHERE service_id = %s", (service_id,))
-                version_number = int(cursor.fetchone()["next_version"])
                 cursor.execute(
                     """
                     UPDATE services
@@ -286,18 +267,7 @@ class ServiceUpdateMixin:
                     (name, Jsonb(metadata), service_id),
                 )
                 service = _row(cursor.fetchone())
-                cursor.execute(
-                    """
-                    INSERT INTO compose_versions(service_id, version, path, checksum, test_run_id, metadata)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING *
-                    """,
-                    (service_id, version_number, str(history_dir / compose_path.name), checksum, payload.get("test_run_id"), Jsonb({"source": "compose_raw_update", "history_id": history_id})),
-                )
-                version = _row(cursor.fetchone())
-
-        image_backups.record(service, validation["normalized"], compose_version_id=version["id"], source="compose_raw_update", test_run_id=service.get("test_run_id"), metadata={"namespace": namespace}, env=env)
-        return {"service": service, "compose_version": version, "validation": validation, "preflight": preflight}
+        return {"service": service, "validation": validation, "preflight": preflight, "history_id": history_id}
 
 
 Model = ServiceUpdateMixin

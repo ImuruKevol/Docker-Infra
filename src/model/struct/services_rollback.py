@@ -316,7 +316,6 @@ class ServiceRollbackMixin:
         compose_path.write_text(target_content, encoding="utf-8")
         applied_path = history_dir / compose_path.name
         shutil.copy2(compose_path, applied_path)
-        checksum = _checksum(target_content)
 
         metadata = dict(service.get("metadata") or {})
         metadata["last_rollback"] = {
@@ -328,45 +327,11 @@ class ServiceRollbackMixin:
         }
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT COALESCE(max(version), 0) + 1 AS next_version FROM compose_versions WHERE service_id = %s", (service_id,))
-                next_version = int(cursor.fetchone()["next_version"])
                 cursor.execute(
                     "UPDATE services SET status = 'draft', metadata = %s, updated_at = now() WHERE id = %s RETURNING *",
                     (Jsonb(metadata), service_id),
                 )
                 updated_service = _row(cursor.fetchone())
-                cursor.execute(
-                    """
-                    INSERT INTO compose_versions(service_id, version, path, checksum, test_run_id, metadata)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING *
-                    """,
-                    (
-                        service_id,
-                        next_version,
-                        str(applied_path),
-                        checksum,
-                        service.get("test_run_id"),
-                        Jsonb({
-                            "source": "compose_rollback",
-                            "history_id": history_id,
-                            "target_version_id": version["id"],
-                            "target_version": version["version"],
-                            "image_restore_count": len(applied_image_refs),
-                        }),
-                    ),
-                )
-                compose_version = _row(cursor.fetchone())
-
-        image_rows = image_backups.record(
-            updated_service,
-            validation["normalized"],
-            compose_version_id=compose_version["id"],
-            source="compose_rollback",
-            test_run_id=updated_service.get("test_run_id"),
-            metadata={"namespace": updated_service.get("namespace"), "target_version": version["version"]},
-            env=env,
-        )
         operation = operations.create(
             "service.compose.rollback",
             target_type="service",
@@ -375,18 +340,16 @@ class ServiceRollbackMixin:
             message=f"Compose 버전 {version['version']} 기준으로 되돌림" + (f" · 이미지 {len(applied_image_refs)}개 Harbor 백업 반영" if applied_image_refs else ""),
             requested_payload={"service_id": service_id, "version_id": version_id},
             result_payload={
-                "compose_version": compose_version["version"],
                 "target_version": version["version"],
                 "image_restore_count": len(applied_image_refs),
                 "image_restore": applied_image_refs,
+                "history_id": history_id,
             },
             metadata={"service_id": service_id, "namespace": updated_service.get("namespace")},
             env=env,
         )
         return {
             "service": updated_service,
-            "compose_version": compose_version,
-            "image_backups": image_rows,
             "operation": operation,
             "plan": plan,
         }

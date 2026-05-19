@@ -1,5 +1,4 @@
 import datetime
-import hashlib
 import re
 import shutil
 import uuid
@@ -15,7 +14,6 @@ setup = wiz.model("struct/setup")
 validator = wiz.model("struct/compose_validator")
 shared = wiz.model("struct/services_shared")
 service_compose = wiz.model("struct/services_compose")
-image_backups = wiz.model("struct/service_image_backups")
 placement_selector = wiz.model("struct/services_placement")
 ddns_model = wiz.model("struct/domains_ddns")
 ServiceRuntimeMixin = wiz.model("struct/services_runtime")
@@ -23,6 +21,7 @@ ServiceDeployMixin = wiz.model("struct/services_deploy")
 ServiceDeleteMixin = wiz.model("struct/services_delete")
 ServiceUpdateMixin = wiz.model("struct/services_update")
 ServiceRollbackMixin = wiz.model("struct/services_rollback")
+ServiceReleaseMixin = wiz.model("struct/services_release")
 ServiceStatusMixin = wiz.model("struct/services_status")
 ServiceCertbotMixin = wiz.model("struct/services_certbot")
 ServiceError = shared.ServiceError
@@ -48,7 +47,7 @@ def _normalize_namespace(value):
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower())).strip("_")
 
 
-class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixin, ServiceDeleteMixin, ServiceStatusMixin, ServiceRuntimeMixin, ServiceCertbotMixin):
+class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixin, ServiceDeleteMixin, ServiceStatusMixin, ServiceRuntimeMixin, ServiceCertbotMixin):
     ServiceError = ServiceError
     ComposeValidationError = validator.ComposeValidationError
     IMPORT_WARNING_CODES = {"FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"}
@@ -150,7 +149,6 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
             "warning_codes": payload.get("warning_codes"),
         })
         normalized_content = yaml.safe_dump(validation["normalized"], sort_keys=False, allow_unicode=False)
-        checksum = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
 
         service_dir = self.service_dir(namespace)
         file_path = service_dir / filename
@@ -259,41 +257,10 @@ class ServiceManager(ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixi
                     if index == 0:
                         domain_row = row
 
-                cursor.execute(
-                    """
-                    INSERT INTO compose_versions(service_id, version, path, checksum, test_run_id, metadata)
-                    VALUES (%s, 1, %s, %s, %s, %s)
-                    RETURNING *
-                    """,
-                    (
-                        service["id"],
-                        str(history_dir / filename),
-                        checksum,
-                        test_run_id,
-                        Jsonb({
-                            "source": source,
-                            "history_id": history_id,
-                            "draft": draft_metadata,
-                        }),
-                    ),
-                )
-                version = _row(cursor.fetchone())
-
-        image_rows = image_backups.record(
-            service,
-            validation["normalized"],
-            compose_version_id=version["id"],
-            source=source,
-            test_run_id=test_run_id,
-            metadata={"namespace": namespace},
-            env=env,
-        )
         return {
             "service": service,
             "domain": domain_row,
             "domains": domain_rows,
-            "compose_version": version,
-            "image_backups": image_rows,
             "validation": validation,
             "paths": {
                 "service_dir": str(service_dir),

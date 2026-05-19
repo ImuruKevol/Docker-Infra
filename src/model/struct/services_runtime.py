@@ -282,12 +282,20 @@ class ServiceRuntimeMixin:
             "backup_system": _backup_system_status(env=env),
         }
 
-    def _record_current_image_rows(self, service_id, source="manual_refresh", env=None):
+    def _record_current_image_rows(self, service_id, source="manual_refresh", compose_version_id=None, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 service = self._service_row(cursor, service_id)
-                cursor.execute("SELECT * FROM compose_versions WHERE service_id = %s ORDER BY version DESC LIMIT 1", (service_id,))
-                version = cursor.fetchone()
+                if compose_version_id:
+                    cursor.execute(
+                        "SELECT * FROM compose_versions WHERE id = %s AND service_id = %s LIMIT 1",
+                        (compose_version_id, service_id),
+                    )
+                    version = cursor.fetchone()
+                    if version is None:
+                        raise ServiceError(404, "Compose 버전을 찾을 수 없습니다.", "COMPOSE_VERSION_NOT_FOUND")
+                else:
+                    version = None
         compose_path = Path(service["compose_path"]).expanduser()
         if not compose_path.is_file():
             raise ServiceError(404, "서비스 Compose 파일을 찾을 수 없습니다.", "SERVICE_COMPOSE_NOT_FOUND")
@@ -479,7 +487,12 @@ class ServiceRuntimeMixin:
                 _append_snapshot_progress(progress_operation_id, getattr(exc, "message", str(exc)), stream="stderr", metadata={"step": "snapshot", "backup_id": backup_id}, env=env)
                 _raise_service_error_like(exc)
             return self.detail(service_id, env=env)
-        rows = self._record_current_image_rows(service_id, source="manual_snapshot", env=env)
+        rows = self._record_current_image_rows(
+            service_id,
+            source=payload.get("source") or "manual_snapshot",
+            compose_version_id=payload.get("compose_version_id"),
+            env=env,
+        )
         if not rows:
             raise ServiceError(409, "스냅샷 백업할 이미지 구성이 없습니다.", "SERVICE_IMAGE_BACKUP_EMPTY")
         _append_snapshot_progress(progress_operation_id, f"스냅샷 대상 {len(rows)}개를 확인했습니다.", metadata={"step": "targets", "count": len(rows)}, env=env)
