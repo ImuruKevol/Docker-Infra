@@ -1,2 +1,0 @@
-DROP TABLE IF EXISTS image_builds CASCADE;
-DROP TABLE IF EXISTS integration_gitlab CASCADE;

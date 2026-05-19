@@ -147,8 +147,8 @@
 
 ### 작업
 
-- [x] `src/model/db/migrations/001_core_schema.sql`에서 `templates`, `template_versions` 생성문을 제거한다.
-- [x] `001_core_schema.sql`의 updated_at trigger 대상 목록에서 템플릿 테이블을 제거한다.
+- [x] `src/model/db/migrations/019_current_schema.sql`에서 `templates`, `template_versions` 생성문을 제외한다.
+- [x] `019_current_schema.sql`의 updated_at trigger 대상 목록에서 템플릿 테이블을 제외한다.
 - [x] 신규 migration을 추가해 기존 DB에서 `template_versions`, `templates`를 drop한다.
 - [x] drop 전에 `services.source_ref.template_id`가 있으면 템플릿 name/namespace를 `source_ref.legacy_template`로 복사한다.
 - [x] 관련 down migration 정책을 정한다. 템플릿 기능 복구가 목적이 아니라면 rollback은 빈 테이블 재생성 수준으로 제한한다.

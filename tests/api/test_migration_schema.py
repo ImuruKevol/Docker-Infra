@@ -9,8 +9,11 @@ MIGRATION_DIR = ROOT / "src" / "model" / "db" / "migrations"
 
 
 class MigrationSchemaStaticContractTest(unittest.TestCase):
-    def test_core_and_auth_migrations_declare_required_tables(self):
-        sql = "\n".join(path.read_text(encoding="utf-8") for path in sorted(MIGRATION_DIR.glob("*.sql")))
+    def test_current_schema_migration_declares_required_tables(self):
+        sql_files = sorted(path.name for path in MIGRATION_DIR.glob("*.sql"))
+        self.assertEqual(sql_files, ["019_current_schema.down.sql", "019_current_schema.sql"])
+
+        sql = (MIGRATION_DIR / "019_current_schema.sql").read_text(encoding="utf-8")
 
         for table in [
             "system_settings",
@@ -32,14 +35,21 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
         self.assertIn("metadata JSONB NOT NULL DEFAULT '{}'::jsonb", sql)
         self.assertIn("test_run_id TEXT", sql)
 
-    def test_template_tables_are_not_created_by_core_schema(self):
-        core = (MIGRATION_DIR / "001_core_schema.sql").read_text(encoding="utf-8")
-        removal = (MIGRATION_DIR / "012_remove_templates.sql").read_text(encoding="utf-8")
+    def test_removed_tables_are_not_created_by_current_schema(self):
+        sql = (MIGRATION_DIR / "019_current_schema.sql").read_text(encoding="utf-8")
 
-        self.assertNotIn("CREATE TABLE IF NOT EXISTS templates", core)
-        self.assertNotIn("CREATE TABLE IF NOT EXISTS template_versions", core)
-        self.assertIn("DROP TABLE IF EXISTS template_versions", removal)
-        self.assertIn("DROP TABLE IF EXISTS templates", removal)
+        for table in [
+            "templates",
+            "template_versions",
+            "jobs",
+            "job_steps",
+            "job_logs",
+            "image_builds",
+            "integration_gitlab",
+            "integration_harbor",
+        ]:
+            self.assertNotIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+            self.assertIn(f"DROP TABLE IF EXISTS {table}", sql)
 
 
 class MigrationSchemaLiveFlowTest(unittest.TestCase):

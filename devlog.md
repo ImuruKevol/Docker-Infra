@@ -239,3 +239,4 @@
 | 2026-05-18 | 237 | AI 검사 로그 중복 억제와 DDNS 직접 보정 경로 추가 | [상세](devlog/2026-05-18/237-ai-ddns-direct-repair-and-log-dedupe.md) |
 | 2026-05-18 | 238 | Codex 런타임 프롬프트 컨텍스트 축약과 MCP 요약 경로 추가 | [상세](devlog/2026-05-18/238-codex-context-budget-mcp-summary.md) |
 | 2026-05-18 | 239 | DDNS API 실패 응답 판정과 POST redirect 처리 수정 | [상세](devlog/2026-05-18/239-ddns-api-response-validation.md) |
+| 2026-05-19 | 240 | DB migration SQL을 현재 schema baseline으로 통합 | [상세](devlog/2026-05-19/240-db-sql-current-schema-consolidation.md) |
