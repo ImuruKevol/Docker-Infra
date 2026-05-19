@@ -240,3 +240,15 @@
 | 2026-05-18 | 238 | Codex 런타임 프롬프트 컨텍스트 축약과 MCP 요약 경로 추가 | [상세](devlog/2026-05-18/238-codex-context-budget-mcp-summary.md) |
 | 2026-05-18 | 239 | DDNS API 실패 응답 판정과 POST redirect 처리 수정 | [상세](devlog/2026-05-18/239-ddns-api-response-validation.md) |
 | 2026-05-19 | 240 | DB migration SQL을 현재 schema baseline으로 통합 | [상세](devlog/2026-05-19/240-db-sql-current-schema-consolidation.md) |
+| 2026-05-19 | 241 | 백업 스냅샷 실행과 push 후 로컬 이미지 정리, 백업 저장소 표기 변경 | [상세](devlog/2026-05-19/241-backup-snapshot-local-cleanup-storage-label.md) |
+| 2026-05-19 | 242 | 서비스 상세 스냅샷 백업 버튼과 버전 이력 연동 보강 | [상세](devlog/2026-05-19/242-service-detail-snapshot-backup-version-link.md) |
+| 2026-05-19 | 243 | wiki_service 스냅샷 백업 컨테이너 매칭 오류 수정 | [상세](devlog/2026-05-19/243-wiki-service-snapshot-container-match.md) |
+| 2026-05-19 | 244 | 서비스/시스템 수동 백업 진행 로그 표시 추가 | [상세](devlog/2026-05-19/244-backup-progress-streaming-ui.md) |
+| 2026-05-19 | 245 | 서비스 버전 되돌리기 모달과 스냅샷 우선 적용 개선 | [상세](devlog/2026-05-19/245-service-rollback-modal-snapshot-apply.md) |
+| 2026-05-19 | 246 | 스냅샷 롤백 적용 시 stack 재생성과 백업 registry 보장 | [상세](devlog/2026-05-19/246-snapshot-rollback-stack-recreate.md) |
+| 2026-05-19 | 247 | 스냅샷 롤백 배포 전 백업 저장소 Docker login 추가 | [상세](devlog/2026-05-19/247-snapshot-rollback-registry-login.md) |
+| 2026-05-19 | 248 | 롤백 배포 직후 서비스 상세 재조회 오류 방지 | [상세](devlog/2026-05-19/248-rollback-deploy-detail-reload-guard.md) |
+| 2026-05-19 | 249 | 롤백 전 백업 저장소 부분 기동 감지와 자동 시작 추가 | [상세](devlog/2026-05-19/249-rollback-backup-registry-startup.md) |
+| 2026-05-19 | 250 | 롤백 배포 완료 직전 metadata datetime 직렬화 오류 수정 | [상세](devlog/2026-05-19/250-rollback-deploy-metadata-serialization.md) |
+| 2026-05-19 | 251 | 서비스 관리 상태 표시와 적용 버튼 문구 정리 | [상세](devlog/2026-05-19/251-service-management-status-label-cleanup.md) |
+| 2026-05-19 | 252 | 서비스 상세 헤더 버튼 정리와 스냅샷 백업 위치 이동 | [상세](devlog/2026-05-19/252-service-header-actions-cleanup.md) |

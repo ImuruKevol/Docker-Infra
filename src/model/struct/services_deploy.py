@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import threading
 import time
 
@@ -9,18 +10,29 @@ from psycopg.types.json import Jsonb
 connect = wiz.model("db/postgres").connect
 local_executor = wiz.model("struct/local_executor")
 operations = wiz.model("struct/operations")
+backup_system = wiz.model("struct/backup_system")
 compose_rules = wiz.model("struct/compose_rules")
 service_ports = wiz.model("struct/services_ports")
 service_nginx = wiz.model("struct/service_nginx")
 deploy_targets = wiz.model("struct/services_deploy_targets")
 placement_selector = wiz.model("struct/services_placement")
-ServiceError = wiz.model("struct/services_shared").ServiceError
+nodes = wiz.model("struct").nodes
+shared = wiz.model("struct/services_shared")
+ServiceError = shared.ServiceError
+_serialize = shared.serialize
 
 
 def _command_text(result):
     if not result:
         return ""
     return result.get("stdout") or result.get("stderr") or ""
+
+
+def _image_registry(image_ref):
+    first = str(image_ref or "").split("/", 1)[0]
+    if "." in first or ":" in first or first == "localhost":
+        return first
+    return ""
 
 
 class ServiceDeployMixin:
@@ -151,10 +163,13 @@ class ServiceDeployMixin:
         desired = int(stack.get("desired") or 0)
         running = int(stack.get("running") or 0)
         task_errors = int(stack.get("task_errors") or 0)
+        task_error_history = int(stack.get("task_error_history") or 0)
         if task_errors > 0:
             return False, f"Docker 작업 오류 {task_errors}개가 감지되었습니다."
         if desired <= 0:
             return False, "실행 대상 Docker 작업을 아직 확인하지 못했습니다."
+        if running <= 0 and task_error_history > 0:
+            return False, f"Docker 작업 오류 이력 {task_error_history}개로 새 작업이 실행되지 못했습니다."
         if running < desired:
             return False, f"Docker 작업 실행 대기 중입니다. {running}/{desired}"
         if int(containers.get("total") or 0) > 0 and int(containers.get("running") or 0) <= 0:
@@ -220,6 +235,230 @@ class ServiceDeployMixin:
                         (Jsonb(metadata), row["id"]),
                     )
         return payload
+
+    def _ensure_backup_registry_for_deploy(self, service, operation_id, env=None):
+        node = self._deployment_node(service, env=env)
+        if not node:
+            return self._deploy_failure(
+                operation_id,
+                "백업 저장소 이미지를 pull할 배포 노드를 찾을 수 없습니다.",
+                {"status": "error", "message": "deployment node unavailable"},
+                env=env,
+            )
+        try:
+            result = nodes.configure_backup_registry_for_node(node["id"], operation_id=operation_id, env=env)
+        except Exception as exc:
+            return self._deploy_failure(
+                operation_id,
+                "백업 저장소 이미지를 pull할 수 있도록 노드 레지스트리 설정을 적용할 수 없습니다.",
+                {
+                    "status": "error",
+                    "message": getattr(exc, "message", str(exc)),
+                    "error_code": getattr(exc, "error_code", "BACKUP_REGISTRY_NODE_CONFIG_FAILED"),
+                },
+                env=env,
+            )
+        return result
+
+    def _compose_image_registries(self, compose_path):
+        compose = yaml.safe_load(compose_path.read_text(encoding="utf-8")) or {}
+        result = []
+        for item in (compose.get("services") or {}).values():
+            if not isinstance(item, dict):
+                continue
+            registry = _image_registry(item.get("image"))
+            if registry and registry not in result:
+                result.append(registry)
+        return result
+
+    def _docker_login_result(self, registry, username, password):
+        command = ["docker", "login", registry, "-u", username, "--password-stdin"]
+        try:
+            completed = subprocess.run(
+                command,
+                input=f"{password}\n",
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            return {
+                "command": command,
+                "command_display": "docker login %s -u %s --password-stdin" % (registry, username),
+                "status": "ok" if completed.returncode == 0 else "error",
+                "exit_code": completed.returncode,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+            }
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "command": command,
+                "command_display": "docker login %s -u %s --password-stdin" % (registry, username),
+                "status": "timeout",
+                "exit_code": None,
+                "stdout": exc.stdout or "",
+                "stderr": exc.stderr or "docker login timed out",
+                "timed_out": True,
+            }
+
+    def _docker_login_retryable(self, result):
+        text = " ".join(str(result.get(key) or "") for key in ["stdout", "stderr"]).lower()
+        if result.get("status") == "timeout":
+            return True
+        return any(token in text for token in ["connection refused", "connection reset", "i/o timeout", "no route to host", "temporarily unavailable"])
+
+    def _docker_login_for_deploy(self, registry, username, password, operation_id, env=None):
+        attempts = 12
+        delay_seconds = 5
+        result = None
+        for attempt in range(1, attempts + 1):
+            result = self._docker_login_result(registry, username, password)
+            result["attempts"] = attempt
+            if result.get("status") == "ok" or attempt >= attempts or not self._docker_login_retryable(result):
+                return result
+            operations.append_output(
+                operation_id,
+                f"백업 저장소 registry 응답 대기 중입니다: {registry} ({attempt}/{attempts})",
+                stream="system",
+                metadata={"step": "backup registry login wait", "registry": registry, "attempt": attempt, "attempts": attempts},
+                env=env,
+            )
+            time.sleep(delay_seconds)
+        return result or {"status": "error", "stderr": "docker login failed"}
+
+    def _ensure_backup_system_running_for_deploy(self, operation_id, env=None):
+        try:
+            status = backup_system.refresh(env=env)
+        except Exception as exc:
+            return self._deploy_failure(
+                operation_id,
+                "백업 저장소 상태를 확인할 수 없습니다.",
+                {"status": "error", "message": getattr(exc, "message", str(exc)), "error_code": getattr(exc, "error_code", "BACKUP_SYSTEM_STATUS_FAILED")},
+                env=env,
+            )
+        if not status.get("enabled"):
+            return self._deploy_failure(
+                operation_id,
+                "백업 저장소가 꺼져 있어 스냅샷 이미지를 복원할 수 없습니다.",
+                {"status": "error", "backup_system": status},
+                env=env,
+            )
+        if status.get("status") != "running":
+            operations.append_output(
+                operation_id,
+                f"백업 저장소가 실행 중이 아니어서 먼저 시작합니다: {status.get('status')}",
+                stream="system",
+                metadata={"step": "backup registry start", "backup_system": status},
+                env=env,
+            )
+            try:
+                started = backup_system.enable(env=env)
+            except Exception as exc:
+                return self._deploy_failure(
+                    operation_id,
+                    "백업 저장소를 시작할 수 없어 스냅샷 이미지를 복원할 수 없습니다.",
+                    {"status": "error", "message": getattr(exc, "message", str(exc)), "error_code": getattr(exc, "error_code", "BACKUP_SYSTEM_START_FAILED")},
+                    env=env,
+                )
+            status = started.get("backup_system") or backup_system.refresh(env=env)
+            operation = started.get("operation") or {}
+            operations.append_output(
+                operation_id,
+                f"백업 저장소 시작 작업을 완료했습니다: {operation.get('status') or status.get('status')}",
+                stream="system",
+                metadata={"step": "backup registry start", "backup_system": status, "operation_id": operation.get("id")},
+                env=env,
+            )
+        if status.get("status") != "running":
+            return self._deploy_failure(
+                operation_id,
+                "백업 저장소가 실행 상태가 아니어서 스냅샷 이미지를 복원할 수 없습니다.",
+                {"status": "error", "backup_system": status},
+                env=env,
+            )
+        return status
+
+    def _login_backup_registry_for_deploy(self, compose_path, operation_id, env=None):
+        self._ensure_backup_system_running_for_deploy(operation_id, env=env)
+        connection = backup_system.connection_config(env=env)
+        if not connection.get("configured"):
+            return self._deploy_failure(
+                operation_id,
+                "백업 저장소 로그인 정보를 확인할 수 없습니다.",
+                {"status": "error", "message": "backup registry credentials unavailable"},
+                env=env,
+            )
+        registry_config = nodes.backup_registry_config(env=env)
+        backup_registries = {
+            value
+            for value in [registry_config.get("local_registry"), registry_config.get("remote_registry")]
+            if value
+        }
+        registries = [registry for registry in self._compose_image_registries(compose_path) if registry in backup_registries]
+        if not registries and registry_config.get("remote_registry"):
+            registries = [registry_config["remote_registry"]]
+
+        results = []
+        for registry in registries:
+            operations.append_output(
+                operation_id,
+                f"백업 저장소 Docker login을 적용합니다: {registry}",
+                stream="system",
+                metadata={"step": "backup registry login", "registry": registry},
+                env=env,
+            )
+            result = self._docker_login_for_deploy(registry, connection.get("username") or "admin", connection.get("password") or "", operation_id, env=env)
+            self._append_result(operation_id, result, f"backup registry login {registry}", env=env)
+            results.append({"registry": registry, "status": result.get("status"), "exit_code": result.get("exit_code")})
+            if result.get("status") != "ok":
+                return self._deploy_failure(operation_id, "백업 저장소 Docker login에 실패했습니다.", result, env=env)
+        return {"registries": registries, "results": results}
+
+    def _stack_remove_missing(self, result):
+        text = _command_text(result).lower()
+        return "nothing found" in text or "not found" in text or "no such" in text
+
+    def _wait_stack_removed(self, stack_name, operation_id, env=None):
+        for attempt in range(1, 41):
+            services = local_executor.run(
+                "service.stack.services",
+                params={"stack_name": stack_name},
+                timeout_seconds=20,
+                env=env,
+            )
+            if services.get("status") != "ok" or not str(services.get("stdout") or "").strip():
+                operations.append_output(
+                    operation_id,
+                    f"stack down confirmed after {attempt} checks",
+                    stream="system",
+                    metadata={"step": "stack down wait", "attempt": attempt},
+                    env=env,
+                )
+                return {"status": "ok", "attempts": attempt}
+            time.sleep(2)
+        return {"status": "error", "message": "기존 Docker stack 종료 대기 시간이 초과되었습니다.", "attempts": 40}
+
+    def _remove_stack_before_deploy(self, stack_name, operation_id, env=None):
+        operations.append_output(
+            operation_id,
+            "기존 Docker stack을 내린 뒤 새 Compose로 다시 적용합니다.",
+            stream="system",
+            metadata={"step": "stack down"},
+            env=env,
+        )
+        result = local_executor.run(
+            "service.stack.remove",
+            params={"stack_name": stack_name},
+            timeout_seconds=120,
+            env=env,
+        )
+        self._append_result(operation_id, result, "stack down", env=env)
+        if result.get("status") != "ok" and not self._stack_remove_missing(result):
+            return self._deploy_failure(operation_id, "기존 Docker stack을 내릴 수 없습니다.", result, env=env)
+        wait = self._wait_stack_removed(stack_name, operation_id, env=env)
+        if wait.get("status") != "ok":
+            return self._deploy_failure(operation_id, wait.get("message") or "기존 Docker stack 종료를 확인할 수 없습니다.", wait, env=env)
+        return {"remove": result, "wait": wait}
 
     def _deployment_node(self, service, env=None):
         policy = dict(service.get("target_node_policy") or {})
@@ -371,6 +610,16 @@ class ServiceDeployMixin:
             )
         deploy_adjustments = self._record_deploy_adjustments(service_id, allocations, domain_port_updates, env=env)
 
+        backup_registry_setup = None
+        backup_registry_login = None
+        if payload.get("ensure_backup_registry") is True:
+            backup_registry_setup = self._ensure_backup_registry_for_deploy(service, operation_id, env=env)
+            backup_registry_login = self._login_backup_registry_for_deploy(compose_path, operation_id, env=env)
+
+        stack_recreate = None
+        if payload.get("force_recreate") is True:
+            stack_recreate = self._remove_stack_before_deploy(stack_name, operation_id, env=env)
+
         deploy = local_executor.run(
             "service.stack.deploy",
             params={"compose_path": str(compose_path), "stack_name": stack_name},
@@ -427,6 +676,9 @@ class ServiceDeployMixin:
             "nginx": nginx,
             "deploy_adjustments": deploy_adjustments,
             "placement": placement,
+            "backup_registry_setup": backup_registry_setup,
+            "backup_registry_login": backup_registry_login,
+            "stack_recreate": stack_recreate,
         }
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -439,7 +691,7 @@ class ServiceDeployMixin:
                     WHERE id = %s
                     RETURNING *
                     """,
-                    (Jsonb(metadata), service_id),
+                    (Jsonb(_serialize(metadata)), service_id),
                 )
                 service = self._service_row(cursor, service_id)
 
@@ -504,7 +756,15 @@ class ServiceDeployMixin:
             operation_id,
             "succeeded",
             message="서비스 배포를 완료했습니다.",
-            result_payload={"service_id": service_id, "stack_name": stack_name, "runtime_status": runtime_status, "ai_verification": ai_verification},
+            result_payload={
+                "service_id": service_id,
+                "stack_name": stack_name,
+                "runtime_status": runtime_status,
+                "ai_verification": ai_verification,
+                "backup_registry_setup": backup_registry_setup,
+                "backup_registry_login": backup_registry_login,
+                "stack_recreate": stack_recreate,
+            },
             env=env,
         )
         return {"service": service, "operation": operation, "runtime_status": runtime_status, "ai_verification": ai_verification}

@@ -92,8 +92,10 @@ class FakeLocalExecutor:
 
     def __init__(self, result):
         self.result = result
+        self.calls = []
 
     def run(self, command_id, params=None, env=None):
+        self.calls.append({"command_id": command_id, "params": params or {}})
         return self.result
 
 
@@ -173,6 +175,66 @@ class BackupSystemRuntimeTest(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["last_error"], "prepare failed")
         self.assertEqual(backup.calls, [("failed", "prepare failed")])
+
+    def test_refresh_marks_partial_harbor_compose_as_stopped(self):
+        stdout = "\n".join([
+            '{"Service":"log","State":"running","Status":"Up 1 minute"}',
+            '{"Service":"registry","State":"exited","Status":"Exited (128)"}',
+        ])
+        local_executor = FakeLocalExecutor({"status": "ok", "stdout": stdout})
+        runtime = load_struct_module(
+            "backup_system_runtime",
+            config=FakeConfig(),
+            models={
+                "struct/local_executor": local_executor,
+                "struct/operations": FakeOperations(),
+                "struct/backup_system_resources": object(),
+            },
+        )
+
+        class Backup(runtime.BackupSystemRuntimeMixin):
+            def status(self, env=None):
+                return {"id": "backup-1", "enabled": True, "installed": True, "status": "running", "compose_path": "/tmp/harbor.yml", "data_path": "/tmp/backup-harbor"}
+
+            def _set_state(self, status, message=None, env=None):
+                return {"status": status, "last_error": message}
+
+        result = Backup().refresh()
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(local_executor.calls[-1]["command_id"], "backup.harbor.ps")
+
+    def test_refresh_requires_all_harbor_services_running(self):
+        runtime = load_struct_module(
+            "backup_system_runtime",
+            config=FakeConfig(),
+            models={
+                "struct/local_executor": FakeLocalExecutor({"status": "ok", "stdout": ""}),
+                "struct/operations": FakeOperations(),
+                "struct/backup_system_resources": object(),
+            },
+        )
+        stdout = "\n".join(
+            '{"Service":"%s","State":"running","Status":"Up 1 minute"}' % service
+            for service in sorted(runtime.HARBOR_REQUIRED_SERVICES)
+        )
+        local_executor = FakeLocalExecutor({"status": "ok", "stdout": stdout})
+        runtime.local_executor = local_executor
+
+        class Backup(runtime.BackupSystemRuntimeMixin):
+            def status(self, env=None):
+                return {"id": "backup-1", "enabled": True, "installed": True, "status": "stopped", "compose_path": "/tmp/harbor.yml", "data_path": "/tmp/backup-harbor"}
+
+            def _set_state(self, status, message=None, env=None):
+                return {"status": status, "last_error": message}
+
+        result = Backup().refresh()
+
+        self.assertEqual(result["status"], "running")
+
+    def test_harbor_ps_command_includes_stopped_containers(self):
+        commands = (ROOT / "src" / "model" / "struct" / "local_command_catalog.py").read_text(encoding="utf-8")
+        self.assertIn('"ps", "-a", "--format", "json"', commands)
 
 
 if __name__ == "__main__":

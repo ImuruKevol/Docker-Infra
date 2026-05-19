@@ -224,10 +224,16 @@ def save_backup_policy():
 
 def run_backup_policy_now():
     scheduler = wiz.model("struct/service_image_backup_scheduler")
+    body = wiz.request.query()
+    run_payload = {**body, "force": True}
+    run_payload.setdefault("include_snapshots", True)
     code = 200
     payload = {}
     try:
-        payload = {"result": scheduler.run({"force": True})}
+        if body.get("background"):
+            payload = scheduler.run_async(run_payload)
+        else:
+            payload = {"result": scheduler.run(run_payload)}
     except scheduler.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

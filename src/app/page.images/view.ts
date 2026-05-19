@@ -155,9 +155,9 @@ export class Component implements OnInit {
             const projects = data.projects || [];
             this.selectedProject.set(projects.find((item: any) => item.name === current)?.name || data.selected_project || projects[0]?.name || '');
         } else if (!silent) {
-            await this.alert(data?.message || 'Harbor 프로젝트 목록을 불러올 수 없습니다.');
+            await this.alert(data?.message || '백업 저장소 프로젝트 목록을 불러올 수 없습니다.');
         } else {
-            this.harborError.set(data?.message || 'Harbor 프로젝트 목록을 불러올 수 없습니다.');
+            this.harborError.set(data?.message || '백업 저장소 프로젝트 목록을 불러올 수 없습니다.');
         }
         this.harborOverviewBusy.set(false);
         await this.service.render();
@@ -185,9 +185,9 @@ export class Component implements OnInit {
                 await this.loadHarborTags(nextRepository, true);
             }
         } else if (!silent) {
-            await this.alert(data?.message || 'Harbor 저장소를 불러올 수 없습니다.');
+            await this.alert(data?.message || '백업 저장소를 불러올 수 없습니다.');
         } else {
-            this.harborError.set(data?.message || 'Harbor 저장소를 불러올 수 없습니다.');
+            this.harborError.set(data?.message || '백업 저장소를 불러올 수 없습니다.');
         }
         this.harborBusy.set(false);
         await this.service.render();
@@ -205,9 +205,9 @@ export class Component implements OnInit {
         if (code === 200) {
             this.harborTags.set(data.tags || []);
         } else if (!silent) {
-            await this.alert(data?.message || 'Harbor 태그 목록을 불러올 수 없습니다.');
+            await this.alert(data?.message || '백업 저장소 태그 목록을 불러올 수 없습니다.');
         } else {
-            this.harborError.set(data?.message || 'Harbor 태그 목록을 불러올 수 없습니다.');
+            this.harborError.set(data?.message || '백업 저장소 태그 목록을 불러올 수 없습니다.');
         }
         this.harborTagsBusy.set(false);
         await this.service.render();
@@ -645,7 +645,7 @@ export class Component implements OnInit {
     }
 
     public async deleteHarborTag(item: any) {
-        const ok = await this.confirm(`${item.repository_name}:${item.tag} 태그를 Harbor에서 삭제합니다.`, 'Harbor 삭제');
+        const ok = await this.confirm(`${item.repository_name}:${item.tag} 태그를 백업 저장소에서 삭제합니다.`, '백업 저장소 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
         const { code, data } = await wiz.call('delete_harbor', {
@@ -656,9 +656,9 @@ export class Component implements OnInit {
         if (code === 200) {
             this.harborTags.set(data.tags || []);
             this.selectedHarborItems.set([]);
-            await this.alert('Harbor 이미지를 삭제했습니다.', 'success');
+            await this.alert('백업 저장소 이미지를 삭제했습니다.', 'success');
         } else {
-            await this.alert(data?.message || 'Harbor 이미지를 삭제할 수 없습니다.');
+            await this.alert(data?.message || '백업 저장소 이미지를 삭제할 수 없습니다.');
         }
         this.harborBusy.set(false);
         await this.service.render();
@@ -667,7 +667,7 @@ export class Component implements OnInit {
     public async deleteSelectedHarborTags() {
         const items = this.selectedHarborDeleteItems();
         if (!items.length) return;
-        const ok = await this.confirm(`선택한 Harbor 이미지 ${items.length}개를 삭제합니다.`, 'Harbor 삭제');
+        const ok = await this.confirm(`선택한 백업 저장소 이미지 ${items.length}개를 삭제합니다.`, '백업 저장소 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
         const { code, data } = await wiz.call('delete_harbor', {
@@ -678,9 +678,9 @@ export class Component implements OnInit {
         if (code === 200) {
             this.harborTags.set(data.tags || []);
             this.selectedHarborItems.set([]);
-            await this.alert('선택한 Harbor 이미지를 삭제했습니다.', 'success');
+            await this.alert('선택한 백업 저장소 이미지를 삭제했습니다.', 'success');
         } else {
-            await this.alert(data?.message || 'Harbor 이미지를 삭제할 수 없습니다.');
+            await this.alert(data?.message || '백업 저장소 이미지를 삭제할 수 없습니다.');
         }
         this.harborBusy.set(false);
         await this.service.render();
@@ -688,7 +688,7 @@ export class Component implements OnInit {
 
     public async deleteHarborProject() {
         if (!this.selectedProject()) return;
-        const ok = await this.confirm(`${this.selectedProject()} Harbor 프로젝트를 통째로 삭제합니다.`, '프로젝트 삭제');
+        const ok = await this.confirm(`${this.selectedProject()} 백업 저장소 프로젝트를 통째로 삭제합니다.`, '프로젝트 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
         const { code, data } = await wiz.call('delete_harbor_project', {
@@ -703,9 +703,9 @@ export class Component implements OnInit {
             this.selectedRepository.set('');
             this.selectedHarborRepositories.set([]);
             this.selectedHarborItems.set([]);
-            await this.alert('Harbor 프로젝트를 삭제했습니다.', 'success');
+            await this.alert('백업 저장소 프로젝트를 삭제했습니다.', 'success');
         } else {
-            await this.alert(data?.message || 'Harbor 프로젝트를 삭제할 수 없습니다.');
+            await this.alert(data?.message || '백업 저장소 프로젝트를 삭제할 수 없습니다.');
         }
         this.harborBusy.set(false);
         await this.service.render();
@@ -714,7 +714,7 @@ export class Component implements OnInit {
     public async deleteHarborRepository(item: any) {
         const repositoryName = this.harborRepositoryKey(item);
         if (!repositoryName) return;
-        const ok = await this.confirm(`${repositoryName} 이미지를 Harbor 프로젝트에서 삭제합니다.`, 'Harbor 삭제');
+        const ok = await this.confirm(`${repositoryName} 이미지를 백업 저장소 프로젝트에서 삭제합니다.`, '백업 저장소 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
         const { code, data } = await wiz.call('delete_harbor_repository', {
@@ -732,9 +732,9 @@ export class Component implements OnInit {
                     await this.loadHarborTags(nextRepository, true);
                 }
             }
-            await this.alert('Harbor 이미지를 삭제했습니다.', 'success');
+            await this.alert('백업 저장소 이미지를 삭제했습니다.', 'success');
         } else {
-            await this.alert(data?.message || 'Harbor 이미지를 삭제할 수 없습니다.');
+            await this.alert(data?.message || '백업 저장소 이미지를 삭제할 수 없습니다.');
         }
         this.harborBusy.set(false);
         await this.service.render();
@@ -743,7 +743,7 @@ export class Component implements OnInit {
     public async deleteSelectedHarborRepositories() {
         const items = this.selectedHarborRepositoryItems();
         if (!items.length) return;
-        const ok = await this.confirm(`선택한 Harbor 이미지 ${items.length}개를 삭제합니다.`, 'Harbor 삭제');
+        const ok = await this.confirm(`선택한 백업 저장소 이미지 ${items.length}개를 삭제합니다.`, '백업 저장소 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
         const selectedRepository = this.selectedRepository();
@@ -762,9 +762,9 @@ export class Component implements OnInit {
                     await this.loadHarborTags(nextRepository, true);
                 }
             }
-            await this.alert('선택한 Harbor 이미지를 삭제했습니다.', 'success');
+            await this.alert('선택한 백업 저장소 이미지를 삭제했습니다.', 'success');
         } else {
-            await this.alert(data?.message || 'Harbor 이미지를 삭제할 수 없습니다.');
+            await this.alert(data?.message || '백업 저장소 이미지를 삭제할 수 없습니다.');
         }
         this.harborBusy.set(false);
         await this.service.render();
@@ -797,9 +797,9 @@ export class Component implements OnInit {
             this.harborSummary.set(data.summary || { project_count: 0, tag_count: 0 });
             this.showCreateProjectModal.set(false);
             await this.loadHarborDetail(projectName, true);
-            await this.alert('Harbor 프로젝트를 생성했습니다.', 'success');
+            await this.alert('백업 저장소 프로젝트를 생성했습니다.', 'success');
         } else {
-            await this.alert(data?.message || 'Harbor 프로젝트를 생성할 수 없습니다.');
+            await this.alert(data?.message || '백업 저장소 프로젝트를 생성할 수 없습니다.');
         }
         this.createProjectBusy.set(false);
         await this.service.render();

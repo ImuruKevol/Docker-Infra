@@ -1,5 +1,6 @@
 import calendar
 import datetime
+import threading
 
 
 connect = wiz.model("db/postgres").connect
@@ -21,6 +22,26 @@ def _parse_time(value):
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=datetime.datetime.now().astimezone().tzinfo)
     return parsed.astimezone()
+
+
+def _as_bool(value, default=False):
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _is_service_error_like(exc):
+    return all(hasattr(exc, key) for key in ("status_code", "message", "error_code"))
+
+
+def _failure_detail(exc):
+    return {
+        "message": getattr(exc, "message", str(exc)),
+        "error_code": getattr(exc, "error_code", "SERVICE_IMAGE_BACKUP_FAILED"),
+        **(getattr(exc, "extra", {}) or {}),
+    }
 
 
 def _scheduled_at(policy, now):
@@ -51,6 +72,18 @@ def _scheduled_at(policy, now):
 
 class ServiceImageBackupScheduler:
     ServiceError = ServiceError
+
+    def _append_progress(self, operation_id, message, stream="system", metadata=None, env=None):
+        if not operation_id or not message:
+            return
+        operations.append_output(operation_id, message if message.endswith("\n") else f"{message}\n", stream=stream, metadata=metadata or {}, env=env)
+
+    def _finish_skipped(self, operation, result, env=None):
+        if operation:
+            self._append_progress(operation["id"], result.get("message") or "처리할 백업이 없습니다.", metadata={"step": "skip"}, env=env)
+            operation = operations.transition(operation["id"], "succeeded", message=result.get("message"), result_payload=result, env=env)
+            result["operation"] = operation
+        return result
 
     def _skip_reason(self, policy, force=False):
         if force:
@@ -108,55 +141,112 @@ class ServiceImageBackupScheduler:
     def run(self, payload=None, env=None):
         payload = payload or {}
         force = bool(payload.get("force"))
+        operation_id = payload.get("operation_id")
+        operation = operations.detail(operation_id, env=env) if operation_id else None
         status = backup_system.status(env=env)
         policy = status.get("backup_policy") or {}
         skip_reason = self._skip_reason(policy, force=force)
         if skip_reason:
-            return {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 1, "message": skip_reason, "policy": policy, "backup_system": status}
+            return self._finish_skipped(operation, {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 1, "message": skip_reason, "policy": policy, "backup_system": status}, env=env)
         if status.get("status") != "running":
             message = "서비스 백업 시스템이 실행 중이 아닙니다."
             if force:
                 raise ServiceError(409, message, "BACKUP_SYSTEM_NOT_RUNNING")
-            return {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 1, "message": message, "policy": policy, "backup_system": status}
+            return self._finish_skipped(operation, {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 1, "message": message, "policy": policy, "backup_system": status}, env=env)
 
         limit = int(policy.get("max_items_per_run") or 3)
+        snapshot_enabled = bool(policy.get("snapshot_enabled"))
+        if force:
+            if "include_snapshots" in payload:
+                snapshot_enabled = _as_bool(payload.get("include_snapshots"), snapshot_enabled)
+            elif "snapshot_enabled" in payload:
+                snapshot_enabled = _as_bool(payload.get("snapshot_enabled"), snapshot_enabled)
+            else:
+                snapshot_enabled = True
+        snapshot_pause = _as_bool(payload.get("snapshot_pause"), policy.get("snapshot_pause", True))
         candidates = self._candidates(limit, env=env)
-        operation = operations.create(
-            "service.image.backup.policy",
-            target_type="backup_system",
-            target_id="default",
-            requested_payload={"force": force, "limit": limit, "snapshot_enabled": bool(policy.get("snapshot_enabled"))},
-            metadata={"policy": policy},
-            env=env,
-        )
+        if operation is None:
+            operation = operations.create(
+                "service.image.backup.policy",
+                target_type="backup_system",
+                target_id="default",
+                requested_payload={"force": force, "limit": limit, "snapshot_enabled": snapshot_enabled, "snapshot_pause": snapshot_pause},
+                metadata={"policy": policy},
+                env=env,
+            )
+        self._append_progress(operation["id"], f"수동 백업을 시작합니다. 이미지 {len(candidates)}개, 스냅샷 {'포함' if snapshot_enabled else '제외'}.", metadata={"step": "start", "image_count": len(candidates), "snapshot_enabled": snapshot_enabled}, env=env)
         result = {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 0, "failures": [], "policy": policy, "snapshots": 0}
         for item in candidates:
             result["processed"] += 1
             try:
+                self._append_progress(operation["id"], f"{item.get('compose_service') or 'image'} 이미지 백업을 시작합니다.", metadata={"step": "image", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
                 image_backups.backup_to_harbor(item["service_id"], item["id"], env=env)
+                self._append_progress(operation["id"], f"{item.get('compose_service') or 'image'} 이미지 백업을 완료했습니다.", metadata={"step": "image", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
                 result["succeeded"] += 1
-            except ServiceError as exc:
+            except Exception as exc:
+                if not _is_service_error_like(exc):
+                    raise
+                detail = _failure_detail(exc)
+                self._append_progress(operation["id"], f"{item.get('compose_service') or 'image'} 이미지 백업 실패: {detail['message']}", stream="stderr", metadata={"step": "image", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
                 result["failed"] += 1
-                result["failures"].append({"backup_id": item["id"], "message": exc.message, "error_code": exc.error_code})
+                result["failures"].append({"backup_id": item["id"], **detail})
 
-        remaining = limit - result["processed"]
-        if policy.get("snapshot_enabled") and remaining > 0:
-            for item in self._snapshot_candidates(remaining, env=env):
+        snapshot_limit = limit if force else max(0, limit - result["processed"])
+        if snapshot_enabled and snapshot_limit > 0:
+            snapshot_candidates = self._snapshot_candidates(snapshot_limit, env=env)
+            self._append_progress(operation["id"], f"스냅샷 대상 {len(snapshot_candidates)}개를 확인했습니다.", metadata={"step": "snapshot_targets", "count": len(snapshot_candidates)}, env=env)
+            for item in snapshot_candidates:
                 result["processed"] += 1
                 result["snapshots"] += 1
                 try:
-                    image_backups.snapshot_to_harbor(item["service_id"], item["id"], pause=policy.get("snapshot_pause", True), env=env)
+                    self._append_progress(operation["id"], f"{item.get('compose_service') or 'container'} 스냅샷 백업을 시작합니다.", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
+                    image_backups.snapshot_to_harbor(item["service_id"], item["id"], pause=snapshot_pause, env=env)
+                    self._append_progress(operation["id"], f"{item.get('compose_service') or 'container'} 스냅샷 백업을 완료했습니다.", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
                     result["succeeded"] += 1
-                except ServiceError as exc:
+                except Exception as exc:
+                    if not _is_service_error_like(exc):
+                        raise
+                    detail = _failure_detail(exc)
+                    self._append_progress(operation["id"], f"{item.get('compose_service') or 'container'} 스냅샷 백업 실패: {detail['message']}", stream="stderr", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
                     result["failed"] += 1
-                    result["failures"].append({"backup_id": item["id"], "message": exc.message, "error_code": exc.error_code})
+                    result["failures"].append({"backup_id": item["id"], **detail})
 
         status_name = "succeeded" if result["failed"] == 0 else "failed"
         message = "처리할 이미지 백업이 없습니다." if result["processed"] == 0 else None
+        self._append_progress(operation["id"], message or f"수동 백업 처리 완료: 성공 {result['succeeded']}개, 실패 {result['failed']}개.", stream="stderr" if result["failed"] else "system", metadata={"step": "done"}, env=env)
         operation = operations.transition(operation["id"], status_name, message=message, result_payload=result, env=env)
         result["operation"] = operation
         result["backup_system"] = backup_system.mark_policy_run(result, env=env)
         return result
+
+    def run_async(self, payload=None, env=None):
+        payload = {**(payload or {}), "force": True, "background": True}
+        operation = operations.create(
+            "service.image.backup.policy",
+            target_type="backup_system",
+            target_id="default",
+            message="수동 백업을 시작합니다.",
+            requested_payload=payload,
+            metadata={"background": True},
+            env=env,
+        )
+
+        def worker():
+            try:
+                self.run({**payload, "operation_id": operation["id"]}, env=env)
+            except Exception as exc:
+                if _is_service_error_like(exc):
+                    detail = _failure_detail(exc)
+                else:
+                    detail = {"message": str(exc), "error_code": "BACKUP_POLICY_RUN_FAILED"}
+                self._append_progress(operation["id"], detail["message"], stream="stderr", metadata={"step": "failed", "error_code": detail["error_code"]}, env=env)
+                try:
+                    operations.transition(operation["id"], "failed", message=detail["message"], result_payload=detail, env=env)
+                except Exception:
+                    pass
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"operation": operation, "backup_system": backup_system.status(env=env)}
 
 
 Model = ServiceImageBackupScheduler()

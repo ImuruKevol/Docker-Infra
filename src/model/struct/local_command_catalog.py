@@ -362,7 +362,7 @@ def _backup_harbor_compose_command(params, action):
     if action == "restart":
         return [*command, "restart"]
     if action == "ps":
-        return [*command, "ps", "--format", "json"]
+        return [*command, "ps", "-a", "--format", "json"]
     raise LocalCommandError(400, "지원하지 않는 Harbor command입니다.", "INVALID_BACKUP_HARBOR_COMMAND")
 
 

@@ -81,6 +81,58 @@ class BackupSystemSchedulePolicyTest(unittest.TestCase):
         with self._frozen_now(scheduler, datetime.datetime(2026, 4, 30, 2, 1, tzinfo=datetime.timezone.utc)):
             self.assertIsNone(scheduler.Model._skip_reason(policy))
 
+    def test_force_manual_run_includes_snapshots_even_when_policy_option_is_off(self):
+        scheduler = load_scheduler_module()
+
+        class FakeBackupSystem:
+            def status(self, env=None):
+                return {"status": "running", "backup_policy": {"max_items_per_run": 1, "snapshot_enabled": False, "snapshot_pause": True}}
+
+            def mark_policy_run(self, result, env=None):
+                return {"status": "running", "backup_policy": {"last_result": result}}
+
+        class FakeImageBackups:
+            def __init__(self):
+                self.image_ids = []
+                self.snapshot_ids = []
+
+            def backup_to_harbor(self, service_id, backup_id, env=None):
+                self.image_ids.append(backup_id)
+
+            def snapshot_to_harbor(self, service_id, backup_id, pause=True, env=None):
+                self.snapshot_ids.append(backup_id)
+
+        class FakeOperations:
+            def __init__(self):
+                self.requested_payload = None
+                self.output_messages = []
+
+            def create(self, operation_type, **kwargs):
+                self.requested_payload = kwargs.get("requested_payload")
+                return {"id": "op-1"}
+
+            def append_output(self, operation_id, message, stream="system", metadata=None, env=None):
+                self.output_messages.append({"operation_id": operation_id, "message": message, "stream": stream, "metadata": metadata or {}})
+
+            def transition(self, operation_id, status, message=None, result_payload=None, env=None):
+                return {"id": operation_id, "status": status, "result_payload": result_payload or {}}
+
+        image_backups = FakeImageBackups()
+        operations = FakeOperations()
+        scheduler.backup_system = FakeBackupSystem()
+        scheduler.image_backups = image_backups
+        scheduler.operations = operations
+        scheduler.Model._candidates = lambda limit, env=None: [{"service_id": "svc-1", "id": "image-1"}]
+        scheduler.Model._snapshot_candidates = lambda limit, env=None: [{"service_id": "svc-1", "id": "snapshot-1"}]
+
+        result = scheduler.Model.run({"force": True})
+
+        self.assertEqual(image_backups.image_ids, ["image-1"])
+        self.assertEqual(image_backups.snapshot_ids, ["snapshot-1"])
+        self.assertEqual(result["snapshots"], 1)
+        self.assertTrue(operations.requested_payload["snapshot_enabled"])
+        self.assertTrue(any("스냅샷" in item["message"] for item in operations.output_messages))
+
     def _frozen_now(self, module, now):
         real_datetime = module.datetime.datetime
 

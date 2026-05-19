@@ -1,3 +1,4 @@
+import json
 import shutil
 import threading
 from pathlib import Path
@@ -7,6 +8,47 @@ local_executor = wiz.model("struct/local_executor")
 operations = wiz.model("struct/operations")
 resources = wiz.model("struct/backup_system_resources")
 config = wiz.config("docker_infra")
+
+
+HARBOR_REQUIRED_SERVICES = {"core", "jobservice", "log", "portal", "postgresql", "proxy", "redis", "registry", "registryctl"}
+
+
+def _compose_ps_rows(stdout):
+    rows = []
+    for line in str(stdout or "").splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            item = json.loads(text)
+        except Exception:
+            continue
+        if isinstance(item, list):
+            rows.extend(row for row in item if isinstance(row, dict))
+        elif isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _compose_service_name(row):
+    return str(row.get("Service") or row.get("service") or "").strip()
+
+
+def _compose_service_running(row):
+    state = str(row.get("State") or row.get("state") or "").lower()
+    status = str(row.get("Status") or row.get("status") or "").lower()
+    return state == "running" or status.startswith("up ")
+
+
+def _harbor_ps_running(stdout):
+    rows = _compose_ps_rows(stdout)
+    if not rows:
+        return False
+    by_service = {_compose_service_name(row): row for row in rows if _compose_service_name(row)}
+    missing = HARBOR_REQUIRED_SERVICES - set(by_service.keys())
+    if missing:
+        return False
+    return all(_compose_service_running(by_service[service]) for service in HARBOR_REQUIRED_SERVICES)
 
 
 class BackupSystemRuntimeMixin:
@@ -255,7 +297,7 @@ class BackupSystemRuntimeMixin:
         result = local_executor.run("backup.harbor.ps", params={"compose_path": status["compose_path"]}, env=env)
         if result.get("status") != "ok":
             return self._set_state("failed", result.get("stderr") or result.get("stdout") or "백업 시스템 상태 확인에 실패했습니다.", env=env)
-        next_status = "running" if "running" in str(result.get("stdout") or "").lower() else "stopped"
+        next_status = "running" if _harbor_ps_running(result.get("stdout")) else "stopped"
         return self._set_state(next_status, None, env=env)
 
 

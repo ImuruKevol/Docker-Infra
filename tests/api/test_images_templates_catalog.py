@@ -10,6 +10,7 @@ IMAGES_API = ROOT / "src" / "app" / "page.images" / "api.py"
 IMAGES_MODEL = ROOT / "src" / "model" / "struct" / "images.py"
 IMAGES_LOCAL_MODEL = ROOT / "src" / "model" / "struct" / "images_local.py"
 IMAGES_SHARED_MODEL = ROOT / "src" / "model" / "struct" / "images_shared.py"
+IMAGES_TS = ROOT / "src" / "app" / "page.images" / "view.ts"
 SERVICES_API = ROOT / "src" / "app" / "page.services" / "api.py"
 FILE_TREE_MODEL = ROOT / "src" / "model" / "struct" / "file_tree.py"
 NODES_RUNTIME_FILES = ROOT / "src" / "model" / "struct" / "nodes_runtime_files.py"
@@ -30,6 +31,8 @@ class ImagesStaticContractTest(unittest.TestCase):
         images_model = IMAGES_MODEL.read_text(encoding="utf-8")
         images_local_model = IMAGES_LOCAL_MODEL.read_text(encoding="utf-8")
         images_shared_model = IMAGES_SHARED_MODEL.read_text(encoding="utf-8")
+        images_view = IMAGES_TEMPLATE.read_text(encoding="utf-8")
+        images_ts = IMAGES_TS.read_text(encoding="utf-8")
         services_api = SERVICES_API.read_text(encoding="utf-8")
         file_tree_model = FILE_TREE_MODEL.read_text(encoding="utf-8")
         nodes_runtime_files = NODES_RUNTIME_FILES.read_text(encoding="utf-8")
@@ -82,6 +85,10 @@ class ImagesStaticContractTest(unittest.TestCase):
         self.assertIn("file_tree.list", file_tree_route)
         self.assertIn("file_tree.upload", file_tree_upload_route)
         self.assertIn("wiz-component-file-tree", file_tree_usages)
+        self.assertIn("백업 저장소", images_view)
+        self.assertIn("백업 저장소", images_ts)
+        self.assertNotIn("span Harbor", images_view)
+        self.assertNotIn("Harbor 프로젝트", images_view)
 
 
 class ImagesLiveFlowTest(unittest.TestCase):

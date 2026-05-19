@@ -65,8 +65,9 @@ class ServiceImageBackupRunner:
             if service["namespace"] not in project_names:
                 harbor.create_project(service["namespace"], public=False, env=env)
 
-            self._run_step(operation["id"], ["docker", "image", "inspect", backup["image_ref"]], secret_values, allow_failure=True, env=env)
             inspect = _run(["docker", "image", "inspect", backup["image_ref"]], timeout=30)
+            self._append_step_output(operation["id"], ["docker", "image", "inspect", backup["image_ref"]], inspect, secret_values, allow_failure=True, env=env)
+            pulled_source = inspect.returncode != 0
             if inspect.returncode != 0:
                 self._run_step(operation["id"], ["docker", "pull", backup["image_ref"]], secret_values, timeout=900, env=env)
             self._run_step(operation["id"], ["docker", "tag", backup["image_ref"], backup_ref], secret_values, env=env)
@@ -78,7 +79,8 @@ class ServiceImageBackupRunner:
                 env=env,
             )
             self._run_step(operation["id"], ["docker", "push", backup_ref], secret_values, timeout=1200, env=env)
-            operation = operations.transition(operation["id"], "succeeded", result_payload={"backup_ref": backup_ref}, env=env)
+            local_cleanup = self._cleanup_local_images(operation["id"], backup_ref, backup["image_ref"], pulled_source, secret_values, env=env)
+            operation = operations.transition(operation["id"], "succeeded", result_payload={"backup_ref": backup_ref, "local_cleanup": local_cleanup}, env=env)
             return {"backup_ref": backup_ref, "operation": operation}
         except Exception as exc:
             operations.transition(operation["id"], "failed", message=str(exc), env=env)
@@ -88,12 +90,25 @@ class ServiceImageBackupRunner:
 
     def _run_step(self, operation_id, argv, secret_values, input_text=None, timeout=600, allow_failure=False, env=None):
         result = _run(argv, input_text=input_text, timeout=timeout)
-        text = f"$ {' '.join(argv)}\n{_output(result)}".strip()
-        if text:
-            operations.append_output(operation_id, text, stream="stdout" if result.returncode == 0 else "stderr", secret_values=secret_values, env=env)
+        self._append_step_output(operation_id, argv, result, secret_values, allow_failure=allow_failure, env=env)
         if result.returncode != 0 and not allow_failure:
             raise ServiceError(409, f"명령 실행에 실패했습니다: {' '.join(argv[:2])}", "SERVICE_IMAGE_BACKUP_COMMAND_FAILED", exit_code=result.returncode)
         return result
+
+    def _append_step_output(self, operation_id, argv, result, secret_values, allow_failure=False, env=None):
+        text = f"$ {' '.join(argv)}\n{_output(result)}".strip()
+        if text:
+            operations.append_output(operation_id, text, stream="stdout" if result.returncode == 0 else "stderr", secret_values=secret_values, env=env)
+
+    def _cleanup_local_images(self, operation_id, backup_ref, source_ref, pulled_source, secret_values, env=None):
+        refs = [backup_ref]
+        if pulled_source and source_ref != backup_ref:
+            refs.append(source_ref)
+        cleanup = []
+        for ref in refs:
+            result = self._run_step(operation_id, ["docker", "image", "rm", ref], secret_values, timeout=120, allow_failure=True, env=env)
+            cleanup.append({"ref": ref, "removed": result.returncode == 0})
+        return cleanup
 
 
 Model = ServiceImageBackupRunner()

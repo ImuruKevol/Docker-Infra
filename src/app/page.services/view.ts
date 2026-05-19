@@ -304,6 +304,17 @@ export class Component implements OnInit, OnDestroy {
         });
     }
 
+    private snapshotBackupErrorMessage(data: any, fallback: string) {
+        const failures = Array.isArray(data?.failures) ? data.failures : [];
+        if (!failures.length) return data?.message || fallback;
+        const rows = failures.slice(0, 4).map((item: any) => {
+            const target = item?.compose_service ? `${item.compose_service}: ` : '';
+            return `- ${target}${item?.message || item?.error_code || fallback}`;
+        });
+        const suffix = failures.length > rows.length ? `\n- 외 ${failures.length - rows.length}개 실패` : '';
+        return `${data?.message || fallback}\n\n${rows.join('\n')}${suffix}`;
+    }
+
     public async load(selectedId: string = '') {
         this.loading.set(true);
         this.error.set('');
@@ -871,7 +882,7 @@ export class Component implements OnInit, OnDestroy {
     public async deploySelectedService() {
         const serviceId = this.selected()?.id;
         if (!serviceId || this.busy()) return;
-        const ok = await this.confirm(`${this.selected()?.name || '서비스'} 설정을 서버에 적용합니다. 접속 주소와 포트 설정도 함께 확인합니다.`, this.deployActionLabel(), 'warning');
+        const ok = await this.confirm(`${this.selected()?.name || '서비스'} 설정을 서버에 다시 적용합니다. 접속 주소와 포트 설정도 함께 확인합니다.`, this.deployActionLabel(), 'warning');
         if (!ok) return;
         await this.deployService(serviceId, false);
     }
@@ -1698,17 +1709,24 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
-    private async deployService(serviceId: string, fromCreate: boolean = false) {
+    private async deployService(serviceId: string, fromCreate: boolean = false, options: any = {}) {
         this.busy.set(true);
         const { code, data } = await wiz.call('deploy_service_background', {
             service_id: serviceId,
+            ...(options || {}),
         });
         if ([200, 202].includes(code)) {
-            await this.load(serviceId);
+            const operation = data?.operation || data?.result?.operation || null;
+            const service = data?.service || data?.result?.service || null;
+            if (service?.id && this.selected()?.id === service.id) this.selected.set({ ...this.selected(), ...service });
             const message = fromCreate
                 ? '서비스를 저장했고 배포는 백그라운드에서 시작했습니다. 처리 로그에서 진행 상태를 확인할 수 있습니다.'
                 : '서비스 배포를 백그라운드에서 시작했습니다. 처리 로그에서 진행 상태를 확인할 수 있습니다.';
-            await this.alert(message, 'success');
+            if (operation?.id) {
+                await this.openOperationModal(operation, false);
+            } else {
+                await this.alert(message, 'success');
+            }
         } else {
             await this.alert(data?.message || '서비스 배포에 실패했습니다.');
             if (serviceId) await this.load(serviceId);
@@ -1743,7 +1761,7 @@ export class Component implements OnInit, OnDestroy {
         const serviceId = this.selected()?.id;
         if (!serviceId || !item?.id || this.busy()) return;
         const target = item.backup_ref || item.image_ref;
-        const ok = await this.confirm(`${item.compose_service} 구성을 ${target} 이미지 기준으로 되돌립니다.\n\n접속 주소는 유지되고, 서비스는 준비 중 상태로 저장됩니다. 실제 서버 반영은 서비스 적용을 다시 실행해야 합니다.`, '이미지 복원', 'warning');
+        const ok = await this.confirm(`${item.compose_service} 구성을 ${target} 이미지 기준으로 되돌립니다.\n\n접속 주소는 유지되고, 실제 서버 반영은 다시 적용을 실행해야 합니다.`, '이미지 복원', 'warning');
         if (!ok) return;
         this.busy.set(true);
         const { code, data } = await wiz.call('restore_image_backup', { service_id: serviceId, backup_id: item.id });
@@ -1804,9 +1822,21 @@ export class Component implements OnInit, OnDestroy {
         return Boolean(this.backupSystemStatus()?.enabled);
     }
 
+    public backupSystemCanBackup() {
+        const status = this.backupSystemStatus();
+        return Boolean(status?.enabled && status?.status === 'running');
+    }
+
+    public serviceSnapshotBackupTitle() {
+        if (this.backupSystemCanBackup()) {
+            return '실행 중인 컨테이너를 스냅샷으로 백업합니다.';
+        }
+        return '백업 시스템이 실행 중일 때 사용할 수 있습니다.';
+    }
+
     public versionRollbackHint() {
         if (this.backupSystemEnabled()) {
-            return '내장 Harbor 백업이 있는 버전은 Compose와 이미지 버전을 함께 되돌립니다.';
+            return '백업 저장소에 백업이 있는 버전은 Compose와 이미지 버전을 함께 되돌립니다.';
         }
         return '저장된 Compose 버전으로 되돌릴 수 있습니다.';
     }
@@ -1815,7 +1845,7 @@ export class Component implements OnInit, OnDestroy {
         const status = this.backupSystemStatus();
         if (!status?.enabled) return '이미지 롤백 꺼짐';
         if (status?.status === 'running') return '이미지 롤백 가능';
-        return `Harbor ${status?.status || '확인 필요'}`;
+        return `백업 저장소 ${status?.status || '확인 필요'}`;
     }
 
     public backupSystemBadgeClass() {
@@ -1839,22 +1869,36 @@ export class Component implements OnInit, OnDestroy {
 
     public rollbackImageRestoreValue() {
         const restore = this.rollbackImageRestoreSummary();
-        if (!this.backupSystemEnabled()) return '꺼짐';
         const count = Number(restore.available_count || 0);
-        return count > 0 ? `${count}개 가능` : '백업 없음';
+        if (count > 0) {
+            const snapshotCount = Number(restore.snapshot_count || 0);
+            if (snapshotCount > 0) return snapshotCount === count ? `스냅샷 ${snapshotCount}개` : `스냅샷 ${snapshotCount}개 포함`;
+            return `${count}개 가능`;
+        }
+        if (!this.backupSystemEnabled()) return '꺼짐';
+        return '백업 없음';
     }
 
     public rollbackImageRestoreText() {
         const restore = this.rollbackImageRestoreSummary();
-        if (!this.backupSystemEnabled()) return '내장 Harbor가 꺼져 있어 Compose 설정만 되돌립니다.';
         const count = Number(restore.available_count || 0);
-        if (count > 0) return `Harbor에 백업된 이미지 ${count}개를 Compose에 함께 반영합니다.`;
-        return '이 Compose 버전에 연결된 Harbor 이미지 백업이 없어 Compose 설정만 되돌립니다.';
+        if (count > 0) {
+            const snapshotCount = Number(restore.snapshot_count || 0);
+            if (snapshotCount > 0) {
+                const backupCount = Math.max(0, count - snapshotCount);
+                return backupCount > 0
+                    ? `저장된 컨테이너 스냅샷 ${snapshotCount}개와 이미지 백업 ${backupCount}개를 Compose에 함께 반영합니다.`
+                    : `저장된 컨테이너 스냅샷 ${snapshotCount}개를 Compose에 함께 반영합니다.`;
+            }
+            return `백업 저장소에 백업된 이미지 ${count}개를 Compose에 함께 반영합니다.`;
+        }
+        if (!this.backupSystemEnabled()) return '백업 저장소가 꺼져 있어 Compose 설정만 되돌립니다.';
+        return '이 Compose 버전에 연결된 이미지 백업이 없어 Compose 설정만 되돌립니다.';
     }
 
     public rollbackImageRestoreClass() {
         const restore = this.rollbackImageRestoreSummary();
-        if (this.backupSystemEnabled() && Number(restore.available_count || 0) > 0) {
+        if (Number(restore.available_count || 0) > 0) {
             return 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-200';
         }
         if (this.backupSystemEnabled()) {
@@ -1883,7 +1927,7 @@ export class Component implements OnInit, OnDestroy {
         return (values || []).length ? values.join(', ') : '없음';
     }
 
-    public async runRollback(deployAfterRollback: boolean = false) {
+    public async runRollback(deployAfterRollback: boolean = true) {
         const serviceId = this.selected()?.id;
         const versionId = this.rollbackTarget()?.id;
         if (!serviceId || !versionId || this.rollbackBusy()) return;
@@ -1901,7 +1945,12 @@ export class Component implements OnInit, OnDestroy {
         const nextServiceId = data.service?.id || serviceId;
         await this.load(nextServiceId);
         if (deployAfterRollback) {
-            await this.deployService(nextServiceId, false);
+            const imageRestoreCount = Number(data.result?.operation?.result_payload?.image_restore_count || 0);
+            await this.deployService(nextServiceId, false, {
+                force_recreate: true,
+                ensure_backup_registry: imageRestoreCount > 0,
+                deployment_reason: 'compose_rollback',
+            });
         } else {
             await this.alert('선택한 버전으로 되돌렸습니다. 적용 버튼을 누르면 서버에 반영됩니다.', 'success');
         }
@@ -1925,20 +1974,45 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
+    public async snapshotSelectedService() {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || this.busy() || !this.backupSystemCanBackup()) return;
+        const ok = await this.confirm('현재 서비스의 실행 중인 컨테이너를 스냅샷으로 백업합니다.\n\n파일 상태까지 저장하기 위해 컨테이너가 잠깐 일시 정지될 수 있으며, 그 동안 서비스 응답이 일시적으로 지연될 수 있습니다. 진행할까요?', '스냅샷 백업', 'warning');
+        if (!ok) return;
+        this.busy.set(true);
+        const { code, data } = await wiz.call('snapshot_service_image', { service_id: serviceId, pause: true, background: true });
+        this.busy.set(false);
+        if (code === 200) {
+            if (data?.service) this.selected.set(data.service);
+            if (data?.operation) {
+                await this.openOperationModal(data.operation);
+            } else {
+                await this.alert('서비스 스냅샷 백업을 시작했습니다.', 'success');
+            }
+        } else {
+            await this.alert(this.snapshotBackupErrorMessage(data, '서비스 스냅샷을 백업할 수 없습니다.'));
+        }
+        await this.service.render();
+    }
+
     public async snapshotServiceImage(item: any) {
         const serviceId = this.selected()?.id;
         if (!serviceId || !item?.id || this.busy()) return;
         const ok = await this.confirm(`${item.compose_service} 컨테이너를 현재 상태 그대로 스냅샷 백업합니다.\n\n파일 상태까지 저장하기 위해 실행 중인 컨테이너가 잠깐 일시 정지될 수 있습니다. 접속이 중요한 시간대라면 나중에 실행해주세요.`, '스냅샷 백업', 'warning');
         if (!ok) return;
         this.busy.set(true);
-        const { code, data } = await wiz.call('snapshot_service_image', { service_id: serviceId, backup_id: item.id, pause: true });
-        if (code === 200) {
-            this.applyDetail(data);
-            await this.alert('컨테이너 스냅샷 백업을 완료했습니다.', 'success');
-        } else {
-            await this.alert(data?.message || '컨테이너 스냅샷을 백업할 수 없습니다.');
-        }
+        const { code, data } = await wiz.call('snapshot_service_image', { service_id: serviceId, backup_id: item.id, pause: true, background: true });
         this.busy.set(false);
+        if (code === 200) {
+            if (data?.service) this.selected.set(data.service);
+            if (data?.operation) {
+                await this.openOperationModal(data.operation);
+            } else {
+                await this.alert('컨테이너 스냅샷 백업을 시작했습니다.', 'success');
+            }
+        } else {
+            await this.alert(this.snapshotBackupErrorMessage(data, '컨테이너 스냅샷을 백업할 수 없습니다.'));
+        }
         await this.service.render();
     }
 
@@ -1946,11 +2020,12 @@ export class Component implements OnInit, OnDestroy {
         return item?.source === 'container_snapshot' ? '스냅샷' : '이미지';
     }
 
-    public async openOperationModal(operation: any) {
+    public async openOperationModal(operation: any, refreshNow: boolean = true) {
         if (!operation?.id) return;
         this.operationDetail.set(operation);
         this.operationModalOpen.set(true);
-        await this.refreshOperationDetail();
+        if (refreshNow) await this.refreshOperationDetail();
+        else await this.service.render();
         this.startOperationPolling();
     }
 
@@ -2152,26 +2227,41 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public deployActionLabel() {
-        const status = this.detail()?.service?.status || this.selected()?.status;
-        return status === 'draft' ? '서비스 적용' : '다시 적용';
+        return '다시 적용';
     }
 
     public serviceStateTitle() {
-        const status = this.detail()?.service?.status || this.selected()?.status;
-        if (['deployed', 'active', 'running'].includes(status)) return '서비스가 운영 중입니다.';
-        if (status === 'draft') return '아직 서버에 적용되지 않았습니다.';
-        if (['failed', 'canceled'].includes(status)) return '확인이 필요한 상태입니다.';
-        return '처리 상태를 확인하는 중입니다.';
+        const operation = this.latestOperation();
+        if (this.isActiveOperation(operation)) return '작업이 진행 중입니다.';
+        const summary = this.runtimeContainerSummary();
+        const total = Number(summary.total || 0);
+        const running = Number(summary.running || 0);
+        if (total > 0 && running === total) return '컨테이너가 실행 중입니다.';
+        if (total > 0 && running > 0) return `${running}/${total}개 컨테이너 실행 중`;
+        if (this.primaryDomain()) return '접속 주소가 연결되어 있습니다.';
+        return '실행 상태를 확인하세요.';
     }
 
     public serviceStateMessage() {
-        const status = this.detail()?.service?.status || this.selected()?.status;
-        if (['deployed', 'active', 'running'].includes(status)) {
-            return this.primaryDomain() ? '접속 주소와 연결 설정이 준비되어 있습니다.' : '서비스는 적용되었지만 접속 주소는 아직 연결되지 않았습니다.';
+        const operation = this.latestOperation();
+        if (this.isActiveOperation(operation)) {
+            return operation?.message || '처리 로그에서 진행 상태를 확인할 수 있습니다.';
         }
-        if (status === 'draft') return '오른쪽 위의 서비스 적용 버튼을 누르면 서버에 반영됩니다.';
-        if (['failed', 'canceled'].includes(status)) return '최근 처리 내역을 확인하고 다시 적용해 주세요.';
-        return '작업이 끝나면 상태가 자동으로 바뀝니다.';
+        const checkedAt = this.runtimeStatus()?.checked_at;
+        const checkedText = checkedAt ? `상태 확인 ${this.formatDate(checkedAt)}` : '';
+        const summary = this.runtimeContainerSummary();
+        const total = Number(summary.total || 0);
+        const running = Number(summary.running || 0);
+        const domains = this.runtimeDomainSummary();
+        if (this.primaryDomain() && Number(domains.nginx_configured || 0) > 0) {
+            return checkedText ? `nginx 연결 확인됨 · ${checkedText}` : 'nginx 연결 설정이 확인되었습니다.';
+        }
+        if (total > 0) {
+            const text = `${running}/${total}개 컨테이너 실행 중`;
+            return checkedText ? `${text} · ${checkedText}` : text;
+        }
+        if (this.primaryDomain()) return '접속 주소가 등록되어 있습니다. 실행 탭에서 컨테이너 상태를 확인하세요.';
+        return '상태 확인을 눌러 실제 컨테이너와 연결 정보를 갱신하세요.';
     }
 
     public backupSummary() {
@@ -2942,13 +3032,13 @@ export class Component implements OnInit, OnDestroy {
     public activeBackgroundOperation() {
         return (this.detail()?.operations || []).find((operation: any) => (
             this.isActiveOperation(operation)
-            && ['service.deploy', 'service.ai.verify'].includes(String(operation?.type || ''))
+            && ['service.deploy', 'service.ai.verify', 'service.image.snapshot'].includes(String(operation?.type || ''))
         )) || null;
     }
 
     public operationLabel(type: string) {
         const labels: any = {
-            'service.deploy': '서비스 적용',
+            'service.deploy': '설정 적용',
             'service.ai.verify': 'AI 백그라운드 검증',
             'service.certbot.renew': '무료 인증서 갱신',
             'service.certbot.renewal.ensure': '무료 인증서 자동 갱신 설정',
@@ -2969,6 +3059,18 @@ export class Component implements OnInit, OnDestroy {
 
     public visibleImageBackups() {
         return (this.detail()?.image_backups || []).slice(0, 5);
+    }
+
+    public versionBackupSummary(version: any) {
+        return version?.image_backup_summary || {};
+    }
+
+    public versionSnapshotBackupCount(version: any) {
+        return Number(this.versionBackupSummary(version)?.snapshot_succeeded_count || 0);
+    }
+
+    public versionBackupCount(version: any) {
+        return Number(this.versionBackupSummary(version)?.backup_succeeded_count || 0);
     }
 
     public imageDisplayName(item: any) {
@@ -3020,7 +3122,7 @@ export class Component implements OnInit, OnDestroy {
 
     public statusLabel(status: string) {
         const labels: any = {
-            draft: '준비 중',
+            draft: '저장됨',
             pending: '처리 중',
             active: '운영 중',
             running: '운영 중',

@@ -133,7 +133,12 @@ class ServiceRollbackMixin:
                     WHERE service_id = %s
                       AND compose_version_id = %s
                     ORDER BY
-                      CASE WHEN backup_status = 'backup_succeeded' AND backup_ref IS NOT NULL THEN 0 ELSE 1 END,
+                      CASE
+                        WHEN source = 'container_snapshot' AND backup_status = 'backup_succeeded' AND backup_ref IS NOT NULL THEN 0
+                        WHEN backup_status = 'backup_succeeded' AND backup_ref IS NOT NULL THEN 1
+                        WHEN source = 'container_snapshot' THEN 2
+                        ELSE 3
+                      END,
                       updated_at DESC,
                       created_at DESC
                     """,
@@ -162,6 +167,8 @@ class ServiceRollbackMixin:
                     "image_ref": row.get("image_ref"),
                     "backup_ref": row.get("backup_ref"),
                     "backup_id": row.get("id"),
+                    "source": row.get("source"),
+                    "backup_kind": (row.get("metadata") or {}).get("backup_kind"),
                 })
             elif row:
                 pending.append({
@@ -176,8 +183,9 @@ class ServiceRollbackMixin:
             "backup_system": backup_state,
             "image_restore": {
                 "enabled": bool(backup_state.get("enabled")),
-                "can_apply": bool(backup_state.get("enabled") and items),
+                "can_apply": bool(items),
                 "available_count": len(items),
+                "snapshot_count": len([item for item in items if item.get("source") == "container_snapshot"]),
                 "pending_count": len(pending),
                 "missing_count": len(missing),
                 "items": items,
@@ -222,6 +230,17 @@ class ServiceRollbackMixin:
         current_content = compose_path.read_text(encoding="utf-8") if compose_path.is_file() else ""
         current = _compose_summary(_load_yaml(current_content))
         target = _compose_summary(validation["normalized"])
+        image_restore_context = self._image_restore_context(service_id, version, target, env=env)
+        planned_content, planned_validation, planned_image_refs = self._compose_with_image_restore_refs(
+            service,
+            target_content,
+            image_restore_context["image_restore"],
+        )
+        if planned_image_refs:
+            target_content = planned_content
+            validation = planned_validation
+            target = _compose_summary(validation["normalized"])
+            image_restore_context["image_restore"]["applied_count"] = len(planned_image_refs)
 
         added = sorted([name for name in target.keys() if name not in current])
         removed = sorted([name for name in current.keys() if name not in target])
@@ -249,8 +268,6 @@ class ServiceRollbackMixin:
                 "status": "matched" if matched else "warning",
                 "message": "연결 포트가 복원할 Compose에 있습니다." if matched else "현재 도메인 연결 포트가 복원할 Compose에 없습니다.",
             })
-
-        image_restore_context = self._image_restore_context(service_id, version, target, env=env)
 
         return {
             "service": service,

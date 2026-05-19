@@ -50,8 +50,9 @@ class ServiceImageSnapshotRunner:
     def _compose_service_name(self, item):
         runtime = str(item.get("runtime_service_name") or "")
         namespace = str(item.get("service_namespace") or "")
-        if namespace and runtime.startswith(f"{namespace}_"):
-            return runtime.split("_", 1)[1]
+        prefix = f"{namespace}_"
+        if namespace and runtime.startswith(prefix):
+            return runtime[len(prefix):]
         return runtime
 
     def _target_container(self, service, backup, env=None):
@@ -99,7 +100,13 @@ class ServiceImageSnapshotRunner:
             self._step(operation["id"], node, ["docker", "commit", f"--pause={str(bool(pause)).lower()}", container["id"], backup_ref], secrets, env=env)
             self._login(operation["id"], node, config, secrets, env=env)
             self._step(operation["id"], node, ["docker", "push", backup_ref], secrets, timeout=1200, env=env)
-            operation = operations.transition(operation["id"], "succeeded", result_payload={"backup_ref": backup_ref, "container_id": container["id"]}, env=env)
+            cleanup = self._step(operation["id"], node, ["docker", "image", "rm", backup_ref], secrets, timeout=120, allow_failure=True, env=env)
+            operation = operations.transition(
+                operation["id"],
+                "succeeded",
+                result_payload={"backup_ref": backup_ref, "container_id": container["id"], "local_cleanup": {"ref": backup_ref, "removed": cleanup.get("status") == "ok"}},
+                env=env,
+            )
             return {"backup_ref": backup_ref, "operation": operation, "node": node, "container": container}
         except Exception as exc:
             operations.transition(operation["id"], "failed", message=str(exc), env=env)
@@ -107,7 +114,7 @@ class ServiceImageSnapshotRunner:
                 raise
             raise ServiceError(502, str(exc), "SERVICE_IMAGE_SNAPSHOT_FAILED")
 
-    def _step(self, operation_id, node, argv, secret_values, timeout=900, env=None):
+    def _step(self, operation_id, node, argv, secret_values, timeout=900, allow_failure=False, env=None):
         if node.get("is_local_master"):
             result = _local_run(argv, timeout=timeout)
         else:
@@ -115,7 +122,7 @@ class ServiceImageSnapshotRunner:
         text = f"$ {' '.join(argv)}\n{_output(result)}".strip()
         if text:
             operations.append_output(operation_id, text, stream="stdout" if result.get("status") == "ok" else "stderr", secret_values=secret_values, env=env)
-        if result.get("status") != "ok":
+        if result.get("status") != "ok" and not allow_failure:
             raise ServiceError(409, f"스냅샷 명령 실행에 실패했습니다: {' '.join(argv[:2])}", "SERVICE_IMAGE_SNAPSHOT_COMMAND_FAILED", exit_code=result.get("exit_code"))
         return result
 

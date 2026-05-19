@@ -204,7 +204,14 @@ main(class="space-y-5 px-5 py-5")
                                         span 자동 백업 저장
                                     button(type="button", (click)="runBackupPolicyNow()", [disabled]="runningBackupPolicy() || backupSystem.status !== 'running'", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                         i(class="fa-solid", [ngClass]="runningBackupPolicy() ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'")
-                                        span 지금 백업 실행
+                                        span {{runningBackupPolicy() ? '백업 진행 중' : '지금 백업 실행'}}
+                                div(*ngIf="backupPolicyProgressVisible()", class="mt-3 overflow-hidden rounded-md border border-zinc-200 bg-zinc-950 dark:border-zinc-800")
+                                    div(class="flex items-center justify-between border-b border-zinc-800 px-3 py-2")
+                                        div(class="flex items-center gap-2 text-zinc-100")
+                                            i(class="fa-solid", [ngClass]="backupPolicyProgressIcon()")
+                                            span(class="text-xs font-semibold") 수동 백업 진행
+                                        span(class="text-xs font-semibold", [ngClass]="backupPolicyProgressDone() ? (backupPolicyOperation?.status === 'succeeded' ? 'text-emerald-300' : 'text-rose-300') : 'text-zinc-400'") {{backupPolicyProgressStatusLabel()}}
+                                    pre(class="max-h-72 min-h-32 overflow-auto whitespace-pre-wrap px-3 py-3 font-mono text-xs leading-5 text-zinc-100") {{backupPolicyProgressOutput()}}
                         div(class="rounded-md border border-rose-200 bg-rose-50 p-3 dark:border-rose-900/70 dark:bg-rose-950/30")
                             div(class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between")
                                 div

@@ -1,5 +1,25 @@
 import json
 
+try:
+    from psycopg import OperationalError as DatabaseOperationalError
+except Exception:
+    DatabaseOperationalError = RuntimeError
+
+
+DATABASE_ERRORS = (RuntimeError, DatabaseOperationalError) if DatabaseOperationalError is not RuntimeError else (RuntimeError,)
+
+
+def _is_service_error_like(exc):
+    return all(hasattr(exc, key) for key in ("status_code", "message", "error_code"))
+
+
+def _service_error_response(exc):
+    return getattr(exc, "status_code", 500), {
+        "message": getattr(exc, "message", str(exc)),
+        "error_code": getattr(exc, "error_code", "SERVICE_ERROR"),
+        **(getattr(exc, "extra", {}) or {}),
+    }
+
 
 def _request_payload():
     body = wiz.request.query()
@@ -115,7 +135,7 @@ def load():
 
     try:
         payload = catalog.services()
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -137,7 +157,7 @@ def edit_options():
             certs = webserver.certificates_for_domain(zone.get("domain"), zone_id=zone.get("id"))
             zones.append({**zone, "certificate_summary": certs.get("summary") or {}})
         payload = {"zones": zones}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -169,7 +189,7 @@ def validate_compose():
     except validator.ComposeValidationError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -293,7 +313,7 @@ def create_service():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -311,7 +331,7 @@ def deploy_service():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -325,11 +345,11 @@ def deploy_service_background():
 
     try:
         result = services_model.deploy_background(wiz.request.query())
-        payload = {"result": result}
+        payload = {"result": result, "operation": result.get("operation"), "service": result.get("service")}
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -347,7 +367,7 @@ def delete_service():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
@@ -369,7 +389,7 @@ def refresh_deploy_status():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -388,7 +408,7 @@ def renew_service_certificate():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -407,7 +427,7 @@ def ensure_service_certificate_renewal():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -429,7 +449,7 @@ def detail_service():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -452,7 +472,7 @@ def detail_service_logs():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -475,7 +495,7 @@ def detail_service_backups():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -497,7 +517,7 @@ def detail_service_advanced():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -515,7 +535,7 @@ def save_nginx_config():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
@@ -535,7 +555,7 @@ def save_compose_content():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
@@ -591,7 +611,7 @@ def service_container_action():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
@@ -667,7 +687,7 @@ def service_container_bulk_action():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
@@ -690,7 +710,7 @@ def update_service():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
@@ -708,7 +728,7 @@ def rollback_plan():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
@@ -734,7 +754,7 @@ def rollback_service():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
@@ -755,7 +775,7 @@ def operation_detail():
     except operations_model.OperationError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
@@ -776,7 +796,7 @@ def browse_files():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -802,7 +822,7 @@ def read_file():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -818,7 +838,7 @@ def refresh_image_records():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -834,7 +854,7 @@ def restore_image_backup():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -850,7 +870,7 @@ def backup_service_image():
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
@@ -862,12 +882,20 @@ def snapshot_service_image():
     code = 200
     payload = {}
     try:
-        payload = services_model.snapshot_service_image(wiz.request.query())
+        body = wiz.request.query()
+        if body.get("background"):
+            payload = services_model.snapshot_service_image_async(body)
+        else:
+            payload = services_model.snapshot_service_image(body)
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
-    except RuntimeError as exc:
+    except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        if not _is_service_error_like(exc):
+            raise
+        code, payload = _service_error_response(exc)
 
     wiz.response.status(code, **payload)

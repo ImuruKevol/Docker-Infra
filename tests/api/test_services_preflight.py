@@ -19,6 +19,8 @@ PREFLIGHT_MODEL = ROOT / "src" / "model" / "struct" / "services_preflight.py"
 SERVICES_MODEL = ROOT / "src" / "model" / "struct" / "services.py"
 UPDATE_MODEL = ROOT / "src" / "model" / "struct" / "services_update.py"
 ROLLBACK_MODEL = ROOT / "src" / "model" / "struct" / "services_rollback.py"
+RUNTIME_MODEL = ROOT / "src" / "model" / "struct" / "services_runtime.py"
+SNAPSHOT_RUNNER_MODEL = ROOT / "src" / "model" / "struct" / "service_image_snapshot_runner.py"
 STATUS_MODEL = ROOT / "src" / "model" / "struct" / "services_status.py"
 FLOW_MODEL = ROOT / "src" / "model" / "struct" / "services_flow.py"
 WIZARD_MODEL = ROOT / "src" / "model" / "struct" / "services_wizard.py"
@@ -202,9 +204,31 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn('"draft"', (ROOT / "src" / "model" / "struct" / "services.py").read_text(encoding="utf-8"))
         services_view = SERVICES_VIEW.read_text(encoding="utf-8")
         services_template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
+        services_api = SERVICES_API.read_text(encoding="utf-8")
+        services_runtime = RUNTIME_MODEL.read_text(encoding="utf-8")
+        snapshot_runner = SNAPSHOT_RUNNER_MODEL.read_text(encoding="utf-8")
         self.assertIn("versionSourceLabel", services_view)
         self.assertIn("versionDraftText", services_view)
         self.assertIn("versionSourceLabel(version)", services_template)
+        self.assertIn("snapshotSelectedService", services_view)
+        self.assertIn('(click)="snapshotSelectedService()"', services_template)
+        self.assertIn("백업 저장소에 백업이 있는 버전", services_view)
+        self.assertNotIn("백업 저장소에 백업이 있으면 이미지 참조도 함께 반영", services_template)
+        self.assertNotIn("Harbor 백업", services_template)
+        self.assertIn("잠깐 일시 정지", services_view)
+        self.assertIn("pause: true", services_view)
+        self.assertIn("background: true", services_view)
+        self.assertIn("openOperationModal(data.operation)", services_view)
+        self.assertIn("service.image.snapshot", services_view)
+        self.assertIn("snapshotBackupErrorMessage", services_view)
+        self.assertIn("versionSnapshotBackupCount(version)", services_template)
+        self.assertIn("image_backup_summary", services_runtime)
+        self.assertIn('source="manual_snapshot"', services_runtime)
+        self.assertIn("snapshot_service_image_async", services_runtime)
+        self.assertIn("progress_operation_id", services_runtime)
+        self.assertIn("_is_service_error_like", services_runtime)
+        self.assertIn("_service_error_response", services_api)
+        self.assertIn("runtime[len(prefix):]", snapshot_runner)
         self.assertIn("generated_secret_keys", assistant)
         for token in ["_complete_service_multiphase", "_service_plan_system_prompt", "_inspect_service_plan", "_service_review_system_prompt", "docker_infra_inspection", "repair_runtime", "runtime_diagnostics", "form.domains", "_assert_ai_runtime_compose_contract", "AI_RUNTIME_COMPOSE_CONTRACT_FAILED", "Do not use *_FILE", "can_select_ddns_domains", "can_register_ddns_records_via_deploy", "can_inspect_ddns_domains", "ddns_endpoint_id", "wildcard_suffix", "domain_provider_policy", "ddns_registration_flow", "ddns_repair_suggestion", "_service_zones_for_ai", "_ddns_repair_suggestion", "_ddns_verification_fallback_data", "_ddns_repair_fallback_data", "_ddns_direct_verification_data", "_ddns_direct_repair_data", "_compact_runtime_status", "_compact_recent_operations", "_register_ddns_after_ai_update", "_ddns_register_summary_text", "ddns_register_result", "_apply_ddns_repair_fallback", "_service_warnings", "_is_stale_ddns_registration_warning", "_ddns_child_domain", "_ddns_default_prefix", "never use sub.nanoha.kr itself as the service domain"]:
             self.assertIn(token, assistant)
@@ -269,6 +293,26 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
             self.assertNotIn(token, api)
             self.assertNotIn(token, view)
 
+    def test_service_management_hides_ambiguous_lifecycle_status(self):
+        view = SERVICES_VIEW.read_text(encoding="utf-8")
+        template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn("return '다시 적용';", view)
+        self.assertIn("실행 기준", template)
+        self.assertIn("runtimeContainerSummary", view)
+        self.assertEqual(template.count('(click)="deploySelectedService()"'), 1)
+        self.assertEqual(template.count('(click)="snapshotSelectedService()"'), 1)
+        self.assertLess(template.index("detailTab() === 'versions'"), template.index('(click)="snapshotSelectedService()"'))
+        self.assertLess(template.index('(click)="snapshotSelectedService()"'), template.index("versionSourceLabel(version)"))
+        self.assertNotIn("statusClass(item.status)", template)
+        self.assertNotIn("statusLabel(item.status)", template)
+        self.assertNotIn("statusClass(detail()?.service?.status)", template)
+        self.assertNotIn("statusLabel(detail()?.service?.status)", template)
+        self.assertNotIn("서비스 적용", view)
+        self.assertNotIn("서비스 적용", template)
+        self.assertNotIn("준비 중", view)
+        self.assertNotIn("준비 중", template)
+
     def test_service_edit_wizard_contract_is_wired(self):
         api = SERVICES_API.read_text(encoding="utf-8")
         view = SERVICES_VIEW.read_text(encoding="utf-8")
@@ -326,6 +370,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
         services = SERVICES_MODEL.read_text(encoding="utf-8")
         rollback = ROLLBACK_MODEL.read_text(encoding="utf-8")
+        deploy = DEPLOY_MODEL.read_text(encoding="utf-8")
 
         self.assertIn("def rollback_plan():", api)
         self.assertIn("def rollback_service():", api)
@@ -334,9 +379,35 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("public async openRollbackModal", view)
         self.assertIn("public async runRollback", view)
         self.assertIn("버전 되돌리기", template)
+        self.assertIn('(click)="runRollback()"', template)
+        self.assertNotIn('(click)="runRollback(false)"', template)
+        self.assertNotIn("되돌린 뒤 상태는 준비 중", template)
         self.assertIn("ServiceRollbackMixin", services)
         for token in ["def rollback_plan", "def rollback", "compose_rollback", "compose_versions", "service.compose.rollback"]:
             self.assertIn(token, rollback)
+        self.assertIn("source = 'container_snapshot'", rollback)
+        self.assertIn("planned_image_refs", rollback)
+        self.assertIn("force_recreate: true", view)
+        self.assertIn("ensure_backup_registry", view)
+        self.assertIn("deployment_reason: 'compose_rollback'", view)
+        self.assertIn("def _remove_stack_before_deploy", deploy)
+        self.assertIn("service.stack.remove", deploy)
+        self.assertIn("configure_backup_registry_for_node", deploy)
+        self.assertNotIn("docker.daemon.insecure_registries.ensure", deploy)
+        self.assertIn("def _ensure_backup_system_running_for_deploy", deploy)
+        self.assertIn("backup_system.refresh", deploy)
+        self.assertIn("backup_system.enable", deploy)
+        self.assertIn("def _docker_login_for_deploy", deploy)
+        self.assertIn("backup registry login wait", deploy)
+        self.assertIn("def _login_backup_registry_for_deploy", deploy)
+        self.assertIn("--password-stdin", deploy)
+        self.assertIn("backup_registry_login", deploy)
+        self.assertIn("task_error_history", deploy)
+        self.assertIn("_serialize = shared.serialize", deploy)
+        self.assertIn("Jsonb(_serialize(metadata))", deploy)
+        self.assertIn("force_recreate", deploy)
+        self.assertIn("ensure_backup_registry", deploy)
+        self.assertLess(deploy.index("_login_backup_registry_for_deploy(compose_path"), deploy.index("_remove_stack_before_deploy(stack_name"))
 
     def test_service_operation_output_polling_is_wired(self):
         api = SERVICES_API.read_text(encoding="utf-8")
@@ -345,8 +416,13 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
 
         self.assertIn("def operation_detail():", api)
         self.assertIn("def deploy_service_background():", api)
+        self.assertIn('"operation": result.get("operation")', api)
+        self.assertIn("DatabaseOperationalError", api)
+        self.assertIn("except DATABASE_ERRORS as exc", api)
         self.assertIn("deploy_service_background", view)
         self.assertIn("service_id", view)
+        self.assertIn("data?.result?.operation", view)
+        self.assertIn("openOperationModal(operation, false)", view)
         self.assertIn("operations_model.detail", api)
         self.assertIn("public async openOperationModal", view)
         self.assertIn("startOperationPolling", view)

@@ -39,11 +39,15 @@ export class Component implements OnInit, OnDestroy {
     public backupSystem: any = {};
     public backupPolicy: any = this.defaultBackupPolicy();
     public backupPolicyResult: any = null;
+    public backupPolicyOperation: any = null;
+    public backupPolicyLog: string = '';
+    public backupPolicyTimer: any = null;
     public backupInstallOperation: any = null;
     public backupInstallLog: string = '';
     public backupInstallTimer: any = null;
     public codexDeviceLoginTimer: any = null;
     public backupOperationPolling: boolean = false;
+    public backupPolicyOperationPolling: boolean = false;
     public backupHealth: any = null;
     public backupNodeRegistryResult: any = null;
     public cleanupPlan: any = null;
@@ -67,6 +71,7 @@ export class Component implements OnInit, OnDestroy {
     public ngOnDestroy() {
         for (const kind of ASSET_KINDS) this.releasePendingAsset(kind);
         this.stopBackupInstallPoll();
+        this.stopBackupPolicyPoll();
         this.stopCodexDeviceLoginPoll();
     }
 
@@ -566,6 +571,46 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
+    private pollBackupPolicyOperation(operationId: string) {
+        if (!operationId) return;
+        this.stopBackupPolicyPoll();
+        this.fetchBackupPolicyOperation(operationId);
+        this.backupPolicyTimer = window.setInterval(() => this.fetchBackupPolicyOperation(operationId), 1500);
+    }
+
+    private stopBackupPolicyPoll() {
+        if (!this.backupPolicyTimer) return;
+        window.clearInterval(this.backupPolicyTimer);
+        this.backupPolicyTimer = null;
+    }
+
+    private async fetchBackupPolicyOperation(operationId: string) {
+        if (!operationId || this.backupPolicyOperationPolling) return;
+        this.backupPolicyOperationPolling = true;
+        const { code, data } = await wiz.call('backup_operation_status', { operation_id: operationId });
+        this.backupPolicyOperationPolling = false;
+        if (code !== 200) {
+            this.backupPolicyLog += `백업 상태를 확인할 수 없습니다: ${data?.message || 'unknown error'}\n`;
+            this.runningBackupPolicy.set(false);
+            this.stopBackupPolicyPoll();
+            await this.service.render();
+            return;
+        }
+        this.backupPolicyOperation = data.operation || this.backupPolicyOperation;
+        this.backupPolicyLog = this.operationOutputText(this.backupPolicyOperation) || this.backupPolicyLog;
+        if (this.backupPolicyProgressDone()) {
+            this.runningBackupPolicy.set(false);
+            this.stopBackupPolicyPoll();
+            this.backupPolicyResult = this.backupPolicyOperation?.result_payload || this.backupPolicyResult;
+            const status = await wiz.call('backup_status', {});
+            if (status.code === 200) {
+                this.backupSystem = status.data.backup_system || this.backupSystem;
+                this.syncBackupPolicy();
+            }
+        }
+        await this.service.render();
+    }
+
     public openBackupResetModal() {
         this.resetConfirmText.set('');
         this.resetDeleteData.set(true);
@@ -629,19 +674,29 @@ export class Component implements OnInit, OnDestroy {
 
     public async runBackupPolicyNow() {
         if (this.runningBackupPolicy()) return;
-        const ok = await this.confirm('지금 백업 가능한 서비스 이미지를 내부 백업 시스템에 저장합니다. 진행할까요?', '지금 백업', 'warning');
+        const ok = await this.confirm('지금 백업 가능한 서비스 이미지와 실행 중인 컨테이너 스냅샷을 내부 백업 시스템에 저장합니다.\n\n스냅샷 대상 컨테이너는 파일 상태 저장을 위해 잠깐 일시 정지될 수 있습니다. 진행할까요?', '지금 백업', 'warning');
         if (!ok) return;
+        this.stopBackupPolicyPoll();
         this.runningBackupPolicy.set(true);
-        const { code, data } = await wiz.call('run_backup_policy_now', {});
-        this.runningBackupPolicy.set(false);
+        this.backupPolicyOperation = null;
+        this.backupPolicyLog = '수동 백업 요청을 시작합니다.\n';
+        await this.service.render();
+        const { code, data } = await wiz.call('run_backup_policy_now', { include_snapshots: true, snapshot_pause: true, background: true });
         if (code === 200) {
-            this.backupPolicyResult = data.result || null;
-            this.backupSystem = this.backupPolicyResult?.backup_system || this.backupSystem;
-            this.syncBackupPolicy();
-            await this.alert(this.backupPolicyResultLabel(), 'success');
+            this.backupSystem = data.backup_system || this.backupSystem;
+            this.backupPolicyOperation = data.operation || data.result?.operation || null;
+            this.backupPolicyResult = data.result || this.backupPolicyResult;
+            this.backupPolicyLog = this.operationOutputText(this.backupPolicyOperation) || this.backupPolicyLog;
+            if (this.backupPolicyOperation?.id) {
+                this.pollBackupPolicyOperation(this.backupPolicyOperation.id);
+            } else {
+                this.runningBackupPolicy.set(false);
+                this.backupPolicyLog += '백업 작업 ID를 받지 못했습니다.\n';
+            }
             await this.service.render();
             return;
         }
+        this.runningBackupPolicy.set(false);
         await this.alert(data?.message || '서비스 이미지 백업을 실행할 수 없습니다.');
         await this.service.render();
     }
@@ -1110,6 +1165,36 @@ export class Component implements OnInit, OnDestroy {
     public backupInstallOutput() {
         const output = this.operationOutputText(this.backupInstallOperation) || this.backupInstallLog;
         return output || '설치 로그를 기다리고 있습니다.\n';
+    }
+
+    public backupPolicyProgressVisible() {
+        return Boolean(this.backupPolicyOperation || this.backupPolicyLog);
+    }
+
+    public backupPolicyProgressDone() {
+        return ['succeeded', 'failed', 'canceled'].includes(this.backupPolicyOperation?.status);
+    }
+
+    public backupPolicyProgressStatusLabel() {
+        const status = this.backupPolicyOperation?.status;
+        if (status === 'succeeded') return '완료';
+        if (status === 'failed') return '실패';
+        if (status === 'canceled') return '취소됨';
+        if (status === 'running') return '진행 중';
+        if (status === 'pending') return '대기 중';
+        return this.runningBackupPolicy() ? '준비 중' : '대기';
+    }
+
+    public backupPolicyProgressIcon() {
+        const status = this.backupPolicyOperation?.status;
+        if (status === 'succeeded') return 'fa-circle-check';
+        if (status === 'failed' || status === 'canceled') return 'fa-triangle-exclamation';
+        return 'fa-spinner fa-spin';
+    }
+
+    public backupPolicyProgressOutput() {
+        const output = this.operationOutputText(this.backupPolicyOperation) || this.backupPolicyLog;
+        return output || '백업 로그를 기다리고 있습니다.\n';
     }
 
     public operationOutputText(operation: any) {

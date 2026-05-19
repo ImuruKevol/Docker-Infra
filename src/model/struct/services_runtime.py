@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 from psycopg.types.json import Jsonb
@@ -9,6 +10,7 @@ webserver = wiz.model("struct/webserver")
 shared = wiz.model("struct/services_shared")
 image_backups = wiz.model("struct/service_image_backups")
 backup_system = wiz.model("struct/backup_system")
+operations = wiz.model("struct/operations")
 ServiceError = shared.ServiceError
 _row = shared.row
 
@@ -23,6 +25,27 @@ def _backup_system_status(env=None):
         "status": status.get("status") or "disabled",
         "harbor_url": status.get("harbor_url") or "",
     }
+
+
+def _is_service_error_like(exc):
+    return all(hasattr(exc, key) for key in ("status_code", "message", "error_code"))
+
+
+def _raise_service_error_like(exc):
+    if not _is_service_error_like(exc):
+        raise exc
+    raise ServiceError(
+        getattr(exc, "status_code", 409),
+        getattr(exc, "message", str(exc)),
+        getattr(exc, "error_code", "SERVICE_ERROR"),
+        **(getattr(exc, "extra", {}) or {}),
+    )
+
+
+def _append_snapshot_progress(operation_id, message, stream="system", metadata=None, env=None):
+    if not operation_id or not message:
+        return
+    operations.append_output(operation_id, message if message.endswith("\n") else f"{message}\n", stream=stream, metadata=metadata or {}, env=env)
 
 
 class ServiceRuntimeMixin:
@@ -101,6 +124,43 @@ class ServiceRuntimeMixin:
             (service_id,),
         )
         return [_row(row) for row in cursor.fetchall()]
+
+    def _attach_version_backup_summaries(self, cursor, service_id, versions):
+        if not versions:
+            return versions
+        version_ids = [str(item["id"]) for item in versions if item.get("id")]
+        if not version_ids:
+            return versions
+        cursor.execute(
+            """
+            SELECT
+                compose_version_id::text AS version_id,
+                COUNT(*) AS record_count,
+                COUNT(*) FILTER (WHERE backup_status = 'backup_succeeded' AND backup_ref IS NOT NULL) AS backup_succeeded_count,
+                COUNT(*) FILTER (WHERE source = 'container_snapshot') AS snapshot_count,
+                COUNT(*) FILTER (
+                    WHERE source = 'container_snapshot'
+                      AND backup_status = 'backup_succeeded'
+                      AND backup_ref IS NOT NULL
+                ) AS snapshot_succeeded_count
+            FROM service_image_backups
+            WHERE service_id = %s
+              AND compose_version_id::text = ANY(%s)
+            GROUP BY compose_version_id
+            """,
+            (service_id, version_ids),
+        )
+        by_version = {str(row["version_id"]): _row(row) for row in cursor.fetchall()}
+        empty = {
+            "record_count": 0,
+            "backup_succeeded_count": 0,
+            "snapshot_count": 0,
+            "snapshot_succeeded_count": 0,
+        }
+        for version in versions:
+            summary = by_version.get(str(version.get("id"))) or {}
+            version["image_backup_summary"] = {key: int(summary.get(key) or 0) for key in empty}
+        return versions
 
     def _operation_select_columns(self, include_output=True):
         output_column = ", output" if include_output else ""
@@ -189,6 +249,7 @@ class ServiceRuntimeMixin:
             "operations": operations,
             "file_root": str(root),
             "runtime_status": (service.get("metadata") or {}).get("runtime_status") or {},
+            "backup_system": _backup_system_status(env=env),
         }
 
     def detail_logs(self, service_id, env=None):
@@ -205,10 +266,12 @@ class ServiceRuntimeMixin:
         return {"image_backups": image_backups.list_for_service(service_id, env=env)}
 
     def detail_advanced(self, service_id, env=None):
+        image_backups.ensure_schema(env=env)
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 service = self._service_row(cursor, service_id)
                 versions = self._versions(cursor, service_id)
+                versions = self._attach_version_backup_summaries(cursor, service_id, versions)
         return {
             "service": service,
             "versions": versions,
@@ -218,6 +281,25 @@ class ServiceRuntimeMixin:
             "nginx_configs": self._nginx_configs(service_id, env=env),
             "backup_system": _backup_system_status(env=env),
         }
+
+    def _record_current_image_rows(self, service_id, source="manual_refresh", env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                service = self._service_row(cursor, service_id)
+                cursor.execute("SELECT * FROM compose_versions WHERE service_id = %s ORDER BY version DESC LIMIT 1", (service_id,))
+                version = cursor.fetchone()
+        compose_path = Path(service["compose_path"]).expanduser()
+        if not compose_path.is_file():
+            raise ServiceError(404, "서비스 Compose 파일을 찾을 수 없습니다.", "SERVICE_COMPOSE_NOT_FOUND")
+        return image_backups.record(
+            service,
+            compose_path.read_text(encoding="utf-8"),
+            compose_version_id=str(version["id"]) if version else None,
+            source=source,
+            test_run_id=service.get("test_run_id"),
+            metadata={"namespace": service.get("namespace")},
+            env=env,
+        )
 
     def detail(self, service_id, env=None):
         payload = self.detail_overview(service_id, env=env)
@@ -308,23 +390,7 @@ class ServiceRuntimeMixin:
         service_id = payload.get("service_id")
         if not service_id:
             raise ServiceError(400, "service_id는 필수입니다.", "SERVICE_ID_REQUIRED")
-        with connect(env=env) as connection:
-            with connection.cursor() as cursor:
-                service = self._service_row(cursor, service_id)
-                cursor.execute("SELECT * FROM compose_versions WHERE service_id = %s ORDER BY version DESC LIMIT 1", (service_id,))
-                version = cursor.fetchone()
-        compose_path = Path(service["compose_path"]).expanduser()
-        if not compose_path.is_file():
-            raise ServiceError(404, "서비스 Compose 파일을 찾을 수 없습니다.", "SERVICE_COMPOSE_NOT_FOUND")
-        image_backups.record(
-            service,
-            compose_path.read_text(encoding="utf-8"),
-            compose_version_id=str(version["id"]) if version else None,
-            source="manual_refresh",
-            test_run_id=service.get("test_run_id"),
-            metadata={"namespace": service.get("namespace")},
-            env=env,
-        )
+        self._record_current_image_rows(service_id, source="manual_refresh", env=env)
         return self.detail(service_id, env=env)
 
     def restore_image_backup(self, payload, env=None):
@@ -349,15 +415,94 @@ class ServiceRuntimeMixin:
         image_backups.backup_to_harbor(service_id, backup_id, env=env)
         return self.detail(service_id, env=env)
 
+    def snapshot_service_image_async(self, payload, env=None):
+        payload = payload or {}
+        service_id = payload.get("service_id")
+        if not service_id:
+            raise ServiceError(400, "service_id는 필수입니다.", "SERVICE_ID_REQUIRED")
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                service = self._service_row(cursor, service_id)
+        operation = operations.create(
+            "service.image.snapshot",
+            target_type="service",
+            target_id=service_id,
+            message="서비스 스냅샷 백업을 시작합니다.",
+            requested_payload={**payload, "background": True},
+            metadata={"service_id": service_id, "namespace": service.get("namespace"), "background": True},
+            env=env,
+        )
+
+        def worker():
+            try:
+                _append_snapshot_progress(operation["id"], "스냅샷 백업 요청을 처리합니다.", metadata={"step": "start"}, env=env)
+                self.snapshot_service_image({**payload, "progress_operation_id": operation["id"], "background": False}, env=env)
+                latest = operations.detail(operation["id"], env=env)
+                operations.transition(
+                    operation["id"],
+                    "succeeded",
+                    message="서비스 스냅샷 백업을 완료했습니다.",
+                    result_payload={"service_id": service_id, "progress": len(latest.get("output") or [])},
+                    env=env,
+                )
+            except Exception as exc:
+                if not _is_service_error_like(exc):
+                    message = str(exc)
+                    error_code = "SERVICE_IMAGE_SNAPSHOT_FAILED"
+                    extra = {}
+                else:
+                    message = getattr(exc, "message", str(exc))
+                    error_code = getattr(exc, "error_code", "SERVICE_IMAGE_SNAPSHOT_FAILED")
+                    extra = getattr(exc, "extra", {}) or {}
+                _append_snapshot_progress(operation["id"], message, stream="stderr", metadata={"step": "failed", "error_code": error_code}, env=env)
+                try:
+                    operations.transition(operation["id"], "failed", message=message, result_payload={"error_code": error_code, **extra}, env=env)
+                except Exception:
+                    pass
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"service": service, "operation": operation}
+
     def snapshot_service_image(self, payload, env=None):
         payload = payload or {}
         service_id = payload.get("service_id")
         backup_id = payload.get("backup_id")
+        progress_operation_id = payload.get("progress_operation_id")
         if not service_id:
             raise ServiceError(400, "service_id는 필수입니다.", "SERVICE_ID_REQUIRED")
-        if not backup_id:
-            raise ServiceError(400, "backup_id는 필수입니다.", "SERVICE_IMAGE_BACKUP_ID_REQUIRED")
-        image_backups.snapshot_to_harbor(service_id, backup_id, pause=payload.get("pause", True), env=env)
+        if backup_id:
+            try:
+                _append_snapshot_progress(progress_operation_id, "컨테이너 스냅샷 백업을 시작합니다.", metadata={"step": "snapshot", "backup_id": backup_id}, env=env)
+                image_backups.snapshot_to_harbor(service_id, backup_id, pause=payload.get("pause", True), env=env)
+                _append_snapshot_progress(progress_operation_id, "컨테이너 스냅샷 백업을 완료했습니다.", metadata={"step": "snapshot", "backup_id": backup_id}, env=env)
+            except Exception as exc:
+                _append_snapshot_progress(progress_operation_id, getattr(exc, "message", str(exc)), stream="stderr", metadata={"step": "snapshot", "backup_id": backup_id}, env=env)
+                _raise_service_error_like(exc)
+            return self.detail(service_id, env=env)
+        rows = self._record_current_image_rows(service_id, source="manual_snapshot", env=env)
+        if not rows:
+            raise ServiceError(409, "스냅샷 백업할 이미지 구성이 없습니다.", "SERVICE_IMAGE_BACKUP_EMPTY")
+        _append_snapshot_progress(progress_operation_id, f"스냅샷 대상 {len(rows)}개를 확인했습니다.", metadata={"step": "targets", "count": len(rows)}, env=env)
+        failures = []
+        for row in rows:
+            try:
+                _append_snapshot_progress(progress_operation_id, f"{row.get('compose_service') or 'container'} 스냅샷 백업을 시작합니다.", metadata={"step": "snapshot", "backup_id": row["id"], "compose_service": row.get("compose_service")}, env=env)
+                image_backups.snapshot_to_harbor(service_id, row["id"], pause=payload.get("pause", True), env=env)
+                _append_snapshot_progress(progress_operation_id, f"{row.get('compose_service') or 'container'} 스냅샷 백업을 완료했습니다.", metadata={"step": "snapshot", "backup_id": row["id"], "compose_service": row.get("compose_service")}, env=env)
+            except Exception as exc:
+                if not _is_service_error_like(exc):
+                    raise
+                _append_snapshot_progress(progress_operation_id, f"{row.get('compose_service') or 'container'} 스냅샷 백업 실패: {getattr(exc, 'message', str(exc))}", stream="stderr", metadata={"step": "snapshot", "backup_id": row["id"], "compose_service": row.get("compose_service")}, env=env)
+                failures.append({
+                    "backup_id": row["id"],
+                    "compose_service": row.get("compose_service"),
+                    "message": getattr(exc, "message", str(exc)),
+                    "error_code": getattr(exc, "error_code", "SERVICE_ERROR"),
+                    "status_code": getattr(exc, "status_code", 409),
+                    **(getattr(exc, "extra", {}) or {}),
+                })
+        if failures:
+            raise ServiceError(409, "일부 스냅샷 백업에 실패했습니다.", "SERVICE_IMAGE_SNAPSHOT_PARTIAL_FAILED", failures=failures)
         return self.detail(service_id, env=env)
 
 
