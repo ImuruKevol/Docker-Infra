@@ -179,6 +179,36 @@ def register_slave():
     wiz.response.status(code, **payload)
 
 
+def unregister_server():
+    nodes_model = wiz.model("struct").nodes
+    monitoring = wiz.model("struct").nodes_monitoring
+    body = wiz.request.query()
+    node_id = body.get("node_id")
+    code = 200
+    payload = {}
+
+    try:
+        if not node_id:
+            code = 400
+            payload = {"message": "node_id는 필수입니다.", "error_code": "NODE_ID_REQUIRED"}
+        else:
+            result = nodes_model.unregister_slave(node_id, body.get("confirmation_name"))
+            payload = _with_monitoring_state(result, monitoring)
+    except nodes_model.NodeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except nodes_model.LocalCommandError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _error_payload(exc)
+
+    wiz.response.status(code, **payload)
+
+
 def check_node():
     nodes_model = wiz.model("struct").nodes
     body = wiz.request.query()

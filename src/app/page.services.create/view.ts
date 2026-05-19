@@ -343,9 +343,7 @@ export class Component implements OnInit {
     private providerStreamMessage(provider: any) {
         const label = String(provider?.label || provider?.type || 'AI').trim();
         const model = String(provider?.model || '').trim();
-        const cliLabel = provider?.uses_custom_cli
-            ? '커스텀 Codex CLI'
-            : String(provider?.cli_label || '').trim();
+        const cliLabel = String(provider?.cli_label || '').trim();
         const modelLabel = model ? `${label} / ${model}` : label;
         return [modelLabel, cliLabel].filter((item) => !!item).join(' · ');
     }

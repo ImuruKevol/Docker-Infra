@@ -10,6 +10,9 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -39,29 +42,26 @@ def _find_workspace_root(project_root):
     explicit = os.environ.get("DOCKER_INFRA_ROOT")
     if explicit:
         candidate = Path(explicit).expanduser().resolve()
-        if (candidate / "codex" / "codex-rs").exists():
+        if candidate.exists():
             return candidate
 
     source_file = Path(__file__).resolve()
     for parent in [project_root] + list(project_root.parents) + list(source_file.parents):
-        if (parent / "codex" / "codex-rs").exists():
+        if (parent / "project").exists() and (parent / "config").exists():
             return parent
 
     fallback = Path("/root/docker-infra")
-    if (fallback / "codex" / "codex-rs").exists():
+    if fallback.exists():
         return fallback
     return project_root.parents[1]
 
 
 PROJECT_ROOT = _find_project_root()
 WORKSPACE_ROOT = _find_workspace_root(PROJECT_ROOT)
-CODEX_SOURCE_ROOT = WORKSPACE_ROOT / "codex"
 PYTHON_BIN = "/opt/conda/envs/docker-infra/bin/python"
 MCP_SCRIPT = PROJECT_ROOT / "tools" / "docker_infra_mcp.py"
 CODEX_RUNTIME_ROOT = PROJECT_ROOT / ".runtime" / "codex"
 CODEX_TIMEOUT_SECONDS = 1200
-CODEX_BUILD_TIMEOUT_SECONDS = 1800
-CODEX_BUILD_CHECK_INTERVAL_SECONDS = 60
 CODEX_STATUS_TIMEOUT_SECONDS = 15
 CODEX_TEST_TIMEOUT_SECONDS = 180
 CODEX_DEVICE_LOGIN_START_TIMEOUT_SECONDS = 5
@@ -214,14 +214,6 @@ def _subprocess_env(env=None):
     return run_env
 
 
-def _is_relative_to(path, parent):
-    try:
-        Path(path).resolve().relative_to(Path(parent).resolve())
-        return True
-    except Exception:
-        return False
-
-
 def _is_executable_file(path):
     try:
         return Path(path).is_file() and os.access(path, os.X_OK)
@@ -249,8 +241,6 @@ class CodexRuntime:
     CodexRuntimeError = CodexRuntimeError
 
     def __init__(self):
-        self._last_build_check_at = 0
-        self._last_source_mtime = 0
         self._device_login = None
         self._device_login_lock = threading.Lock()
 
@@ -283,7 +273,6 @@ class CodexRuntime:
                 "source": "system",
                 "version": active.get("version") or "",
                 "available": bool(active.get("available")),
-                "uses_custom_cli": False,
             },
             "system": system,
             "login": login,
@@ -580,8 +569,6 @@ class CodexRuntime:
 
     def _codex_login_executable(self, config):
         config = self._normalize_codex_config(config or {})
-        if config["cli_mode"] == "custom":
-            return self.codex_executable()
         executable = self._system_codex_executable()
         if executable and _is_executable_file(executable):
             return executable
@@ -636,32 +623,6 @@ class CodexRuntime:
             "version": self._version_for(executable) if available else "",
         }
 
-    def _custom_codex_status(self):
-        try:
-            executable = self.codex_executable()
-            available = bool(executable and _is_executable_file(executable))
-            binary_mtime = Path(executable).stat().st_mtime if available else None
-            return {
-                "source": "custom",
-                "executable": executable or "",
-                "available": available,
-                "version": self._version_for(executable) if available else "",
-                "workspace_root": str(WORKSPACE_ROOT),
-                "source_root": str(CODEX_SOURCE_ROOT),
-                "binary_mtime": binary_mtime,
-                "source_mtime": self._last_source_mtime or self._codex_source_mtime(),
-            }
-        except Exception as exc:
-            return {
-                "source": "custom",
-                "executable": "",
-                "available": False,
-                "workspace_root": str(WORKSPACE_ROOT),
-                "source_root": str(CODEX_SOURCE_ROOT),
-                "error": getattr(exc, "message", str(exc)),
-                "error_code": getattr(exc, "error_code", "CODEX_CUSTOM_STATUS_FAILED"),
-            }
-
     def _codex_env(self, config):
         run_env = _subprocess_env()
         codex_home = str((config or {}).get("codex_home") or "").strip()
@@ -707,222 +668,6 @@ class CodexRuntime:
             "checked_at": _utcnow(),
         }
 
-    def codex_executable(self):
-        explicit = os.environ.get("DOCKER_INFRA_CODEX_BIN")
-        explicit_details = None
-        if explicit:
-            candidate = Path(explicit).expanduser()
-            if _is_executable_file(candidate):
-                return str(candidate)
-            explicit_details = {
-                "path": explicit,
-                "exists": candidate.exists(),
-                "is_file": candidate.is_file(),
-                "executable": os.access(candidate, os.X_OK),
-            }
-
-        checked = []
-        candidate = self._existing_codex_binary(checked=checked)
-        if candidate:
-            return self._ensure_codex_binary_current(candidate, explicit_details=explicit_details, checked=checked)
-
-        path_executable = shutil.which("codex")
-        if path_executable and _is_relative_to(path_executable, CODEX_SOURCE_ROOT) and _is_executable_file(path_executable):
-            return self._ensure_codex_binary_current(Path(path_executable), explicit_details=explicit_details, checked=checked)
-
-        build_result = self._build_codex_binary(skip_existing=False)
-        if build_result.get("executable"):
-            return build_result["executable"]
-        candidate = self._existing_codex_binary()
-        if candidate:
-            return str(candidate)
-
-        raise CodexRuntimeError(
-            503,
-            "수정한 Codex 소스의 실행 파일을 찾을 수 없습니다. /root/docker-infra/codex/codex-rs에서 Codex CLI 빌드가 가능한지 확인하거나 DOCKER_INFRA_CODEX_BIN을 지정하세요.",
-            "CODEX_EXECUTABLE_NOT_FOUND",
-            {
-                "workspace_root": str(WORKSPACE_ROOT),
-                "codex_source_root": str(CODEX_SOURCE_ROOT),
-                "explicit": explicit_details,
-                "checked": checked,
-                "path_codex": path_executable,
-                "build": build_result,
-            },
-        )
-
-    def _existing_codex_binary(self, checked=None):
-        for candidate in self._candidate_codex_binaries():
-            if checked is not None:
-                checked.append(str(candidate))
-            if _is_executable_file(candidate):
-                return candidate
-        return None
-
-    def _ensure_codex_binary_current(self, candidate, explicit_details=None, checked=None):
-        if not self._build_check_due():
-            return str(candidate)
-        if not self._source_newer_than(candidate):
-            self._mark_build_checked()
-            return str(candidate)
-
-        build_result = self._build_codex_binary(skip_existing=False)
-        if build_result.get("success") and build_result.get("executable"):
-            self._mark_build_checked()
-            return build_result["executable"]
-
-        raise CodexRuntimeError(
-            503,
-            "수정한 Codex CLI 소스가 실행 파일보다 최신이지만 자동 빌드에 실패했습니다.",
-            "CODEX_BUILD_FAILED",
-            {
-                "workspace_root": str(WORKSPACE_ROOT),
-                "codex_source_root": str(CODEX_SOURCE_ROOT),
-                "current_executable": str(candidate),
-                "explicit": explicit_details,
-                "checked": checked or [],
-                "source_mtime": self._last_source_mtime,
-                "executable_mtime": Path(candidate).stat().st_mtime if Path(candidate).exists() else None,
-                "build": build_result,
-            },
-        )
-
-    def _build_check_due(self):
-        return time.time() - self._last_build_check_at >= CODEX_BUILD_CHECK_INTERVAL_SECONDS
-
-    def _mark_build_checked(self):
-        self._last_build_check_at = time.time()
-
-    def _source_newer_than(self, executable):
-        try:
-            executable_mtime = Path(executable).stat().st_mtime
-            source_mtime = self._codex_source_mtime()
-            self._last_source_mtime = source_mtime
-            return source_mtime > executable_mtime + 1
-        except Exception:
-            return False
-
-    def _codex_source_mtime(self):
-        source_root = CODEX_SOURCE_ROOT / "codex-rs"
-        latest = 0
-        for base, dirs, files in os.walk(source_root):
-            dirs[:] = [name for name in dirs if name not in {"target", ".git"}]
-            for name in files:
-                if not name.endswith((".rs", ".toml", ".lock")):
-                    continue
-                try:
-                    latest = max(latest, (Path(base) / name).stat().st_mtime)
-                except Exception:
-                    pass
-        return latest
-
-    def _candidate_codex_binaries(self):
-        target_root = CODEX_SOURCE_ROOT / "codex-rs" / "target"
-        preferred = [
-            target_root / "release" / "codex",
-            target_root / "debug" / "codex",
-        ]
-        discovered = []
-        if target_root.exists():
-            try:
-                discovered = sorted(
-                    [path for path in target_root.glob("**/codex") if path.is_file()],
-                    key=self._candidate_sort_key,
-                )
-            except Exception:
-                discovered = []
-        return _dedupe_paths(preferred + discovered)
-
-    def _candidate_sort_key(self, path):
-        parts = Path(path).parts
-        if "release" in parts:
-            tier = 0
-        elif "debug" in parts:
-            tier = 1
-        else:
-            tier = 2
-        return (tier, len(parts), str(path))
-
-    def _build_codex_binary(self, skip_existing=True):
-        enabled = str(os.environ.get("DOCKER_INFRA_CODEX_AUTO_BUILD", "1")).lower()
-        if enabled in {"0", "false", "no", "off"}:
-            return {"attempted": False, "disabled": True}
-
-        manifest = CODEX_SOURCE_ROOT / "codex-rs" / "Cargo.toml"
-        if not manifest.exists():
-            return {"attempted": False, "reason": "manifest_not_found", "manifest": str(manifest)}
-
-        cargo = shutil.which("cargo")
-        if not cargo:
-            return {"attempted": False, "reason": "cargo_not_found"}
-
-        CODEX_RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
-        lock_path = CODEX_RUNTIME_ROOT / "codex-build.lock"
-        command = [cargo, "build", "-p", "codex-cli", "--bin", "codex"]
-        try:
-            with lock_path.open("w", encoding="utf-8") as lock_file:
-                try:
-                    import fcntl
-
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                except Exception:
-                    pass
-
-                if skip_existing:
-                    for candidate in self._candidate_codex_binaries():
-                        if _is_executable_file(candidate):
-                            return {"attempted": False, "executable": str(candidate), "reason": "built_by_other_process"}
-
-                completed = subprocess.run(
-                    command,
-                    cwd=str(CODEX_SOURCE_ROOT / "codex-rs"),
-                    capture_output=True,
-                    text=True,
-                    timeout=CODEX_BUILD_TIMEOUT_SECONDS,
-                    check=False,
-                )
-        except subprocess.TimeoutExpired as exc:
-            return {
-                "attempted": True,
-                "success": False,
-                "reason": "timeout",
-                "command": command,
-                "stdout": _trim(exc.stdout),
-                "stderr": _trim(exc.stderr),
-            }
-        except Exception as exc:
-            return {"attempted": True, "success": False, "reason": "exception", "command": command, "message": str(exc)}
-
-        if completed.returncode != 0:
-            return {
-                "attempted": True,
-                "success": False,
-                "reason": "cargo_build_failed",
-                "exit_code": completed.returncode,
-                "command": command,
-                "stdout": _trim(completed.stdout),
-                "stderr": _trim(completed.stderr),
-            }
-
-        for candidate in self._candidate_codex_binaries():
-            if _is_executable_file(candidate):
-                return {
-                    "attempted": True,
-                    "success": True,
-                    "executable": str(candidate),
-                    "exit_code": completed.returncode,
-                }
-
-        return {
-            "attempted": True,
-            "success": False,
-            "reason": "binary_not_found_after_build",
-            "exit_code": completed.returncode,
-            "command": command,
-            "stdout": _trim(completed.stdout),
-            "stderr": _trim(completed.stderr),
-        }
-
     def complete_json(self, provider, system, context, env=None):
         provider = self._normalize_provider(provider or {})
         request_context = context if isinstance(context, dict) else {}
@@ -935,28 +680,41 @@ class CodexRuntime:
             mcp_request_context = dict(request_context)
             mcp_request_context["mcp_enabled_tools"] = mcp_enabled_tools
             mcp_request_context["ai_request_summary"] = prompt_context
-            mcp_context_path.write_text(
-                json.dumps(self._mcp_context(env=env, request_context=mcp_request_context), ensure_ascii=False),
-                encoding="utf-8",
-            )
-            if provider["type"] != "codex":
-                (runtime_home_path / "config.toml").write_text(
-                    self._config_toml(provider, mcp_context_path, mcp_enabled_tools),
+            mcp_context = self._mcp_context(env=env, request_context=mcp_request_context)
+            last_message_path = runtime_home_path / "last-message.txt"
+            if provider["type"] == "codex":
+                mcp_context_path.write_text(
+                    json.dumps(mcp_context, ensure_ascii=False),
                     encoding="utf-8",
                 )
-            last_message_path = runtime_home_path / "last-message.txt"
+            else:
+                prompt_context = self._direct_api_prompt_context(prompt_context, mcp_context)
             prompt = self._prompt(system, prompt_context, provider, mcp_enabled_tools)
-            result = self._run_codex(provider, runtime_home_path, last_message_path, prompt, mcp_context_path, mcp_enabled_tools)
+            if provider["type"] == "codex":
+                result = self._run_codex(
+                    provider,
+                    runtime_home_path,
+                    last_message_path,
+                    prompt,
+                    mcp_context_path,
+                    mcp_enabled_tools,
+                )
+                engine = "codex"
+                cli_mode = provider.get("cli_mode") or "system"
+            else:
+                result = self._run_direct_api(provider, prompt)
+                engine = "direct_api"
+                cli_mode = "api"
             metadata = {
-                "engine": "codex",
+                "engine": engine,
                 "provider": provider["type"],
                 "provider_id": provider["provider_id"],
                 "provider_label": _provider_label(provider["type"]),
                 "model": provider["model"],
                 "reasoning_effort": provider.get("reasoning_effort") or "",
-                "cli_mode": provider.get("cli_mode") or ("system" if provider["type"] == "codex" else "custom"),
-                "uses_custom_cli": provider["type"] != "codex",
+                "cli_mode": cli_mode,
                 "executable": result.get("executable") or "",
+                "api_endpoint": result.get("api_endpoint") or "",
                 "codex_exit_code": result["exit_code"],
             }
             return {"text": result["text"], "metadata": metadata}
@@ -1013,7 +771,8 @@ class CodexRuntime:
                     "provider_id": "docker-infra-gemini",
                     "provider_name": "Gemini",
                     "model": str(model).replace("models/", "", 1),
-                    "base_url": "https://generativelanguage.googleapis.com/%s/openai" % api_version.strip("/"),
+                    "api_version": api_version.strip("/"),
+                    "base_url": "https://generativelanguage.googleapis.com/%s" % api_version.strip("/"),
                     "env_key": "GEMINI_API_KEY",
                     "env_value": token,
                 }
@@ -1089,6 +848,35 @@ class CodexRuntime:
             "instruction": "Use docker_infra.infra_context for registered servers, DDNS endpoints, runtime values, and this request summary before making infra claims.",
         }
         return self._fit_prompt_context(compact)
+
+    def _direct_api_prompt_context(self, prompt_context, mcp_context):
+        prompt_context = dict(prompt_context if isinstance(prompt_context, dict) else {})
+        prompt_context["context_delivery"] = {
+            "prompt": "embedded_direct_api",
+            "reason": "OpenAI, Gemini, and Ollama providers are called directly without a Codex CLI or MCP session",
+            "enabled_mcp_tools": [],
+            "instruction": "Use only the embedded Docker Infra context in this request. Do not claim that MCP tools were called.",
+        }
+        embedded_runtime_context = self._truncate_context_value(
+            {
+                "nodes": (mcp_context or {}).get("nodes") or [],
+                "placement": (mcp_context or {}).get("placement"),
+                "domain_zones": (mcp_context or {}).get("domain_zones") or [],
+                "ddns_endpoints": (mcp_context or {}).get("ddns_endpoints") or [],
+                "allowed_probe_hosts": (mcp_context or {}).get("allowed_probe_hosts") or [],
+                "runtime_values": (mcp_context or {}).get("runtime_values") or {},
+            },
+            depth=1,
+            string_limit=2500,
+            list_limit=16,
+        )
+        current_context = prompt_context.get("docker_infra_context")
+        if isinstance(current_context, dict):
+            prompt_context["docker_infra_context"] = dict(current_context)
+            prompt_context["docker_infra_context"]["embedded_runtime_context"] = embedded_runtime_context
+        else:
+            prompt_context["docker_infra_context"] = embedded_runtime_context
+        return self._fit_prompt_context(prompt_context)
 
     def _semantic_prompt_context(self, context):
         context = context if isinstance(context, dict) else {}
@@ -1383,43 +1171,6 @@ class CodexRuntime:
     def _is_sensitive_context_key(self, key):
         return bool(SENSITIVE_CONTEXT_KEY_RE.search(str(key or "")))
 
-    def _config_toml(self, provider, mcp_context_path, enabled_tools):
-        provider_lines = [
-            f"model = {_json_string(provider['model'])}",
-            f"model_provider = {_json_string(provider['provider_id'])}",
-            'sandbox_mode = "read-only"',
-            "",
-            f"[model_providers.{provider['provider_id']}]",
-            f"name = {_json_string(provider['provider_name'])}",
-            f"base_url = {_json_string(provider['base_url'])}",
-            'wire_api = "responses"',
-            "requires_openai_auth = false",
-            "request_max_retries = 0",
-            "stream_max_retries = 0",
-            "stream_idle_timeout_ms = 1200000",
-        ]
-        if provider.get("env_key"):
-            provider_lines.append(f"env_key = {_json_string(provider['env_key'])}")
-
-        python_bin = _python_executable()
-        return "\n".join(
-            provider_lines
-            + [
-                "",
-                "[mcp_servers.docker_infra]",
-                f"command = {_json_string(python_bin)}",
-                f"args = [{_json_string(str(MCP_SCRIPT))}]",
-                f"enabled_tools = {_toml_string_list(enabled_tools)}",
-                'default_tools_approval_mode = "approve"',
-                "",
-                "[mcp_servers.docker_infra.env]",
-                f"DOCKER_INFRA_ROOT = {_json_string(str(WORKSPACE_ROOT))}",
-                f"DOCKER_INFRA_MCP_CONTEXT_FILE = {_json_string(str(mcp_context_path))}",
-                'DOCKER_INFRA_MCP_TIMEOUT_SECONDS = "30"',
-                "",
-            ]
-        )
-
     def _mcp_context(self, env=None, request_context=None):
         request_context = request_context if isinstance(request_context, dict) else {}
         rows = []
@@ -1515,23 +1266,28 @@ class CodexRuntime:
                 "model": provider.get("model"),
             },
         }
-        execution_note = (
-            "You are running inside Docker Infra through the logged-in Codex CLI session.\n"
-            if provider.get("type") == "codex"
-            else "You are running inside Docker Infra through the locally modified Codex CLI source.\n"
-        )
+        if provider.get("type") == "codex":
+            execution_note = "You are running inside Docker Infra through the logged-in Codex CLI session.\n"
+            tool_note = (
+                "Use only the docker_infra MCP tools explicitly enabled for this request. "
+                f"Enabled docker_infra MCP tools: {enabled_label}.\n"
+                "The request context embedded below is compacted; do not assume omitted runtime logs are unavailable. "
+                "Call docker_infra.infra_context for Docker Infra's registered servers, DDNS endpoints, runtime values, and request summary when needed.\n"
+                "If another MCP tool is unavailable or not exposed in this session, do not report that as an operator-facing error; "
+                "fall back to the enabled tools and provided Docker Infra context.\n\n"
+            )
+        else:
+            execution_note = "You are running inside Docker Infra through a direct provider API call.\n"
+            tool_note = (
+                "No Codex CLI or MCP tools are available in this execution path. "
+                "Use only the embedded Docker Infra context below, and do not claim that external tools were called.\n\n"
+            )
         return (
             execution_note
-            +
-            "Return only one JSON object that satisfies the system and context below. "
+            + "Return only one JSON object that satisfies the system and context below. "
             "Do not edit files, do not include markdown fences, and do not describe the answer outside JSON.\n"
-            "Use only the docker_infra MCP tools explicitly enabled for this request. "
-            f"Enabled docker_infra MCP tools: {enabled_label}.\n"
-            "The request context embedded below is compacted; do not assume omitted runtime logs are unavailable. "
-            "Call docker_infra.infra_context for Docker Infra's registered servers, DDNS endpoints, runtime values, and request summary when needed.\n"
-            "If another MCP tool is unavailable or not exposed in this session, do not report that as an operator-facing error; "
-            "fall back to the enabled tools and provided Docker Infra context.\n\n"
-            "<docker_infra_ai_request>\n"
+            + tool_note
+            + "<docker_infra_ai_request>\n"
             f"{json.dumps(payload, ensure_ascii=False, sort_keys=True)}\n"
             "</docker_infra_ai_request>"
         )
@@ -1558,20 +1314,231 @@ class CodexRuntime:
             args.extend(["-c", f"{key}={encoded}"])
         return args
 
+    def _run_direct_api(self, provider, prompt):
+        provider_type = provider["type"]
+        if provider_type == "openai":
+            return self._complete_openai_api(provider, prompt)
+        if provider_type == "gemini":
+            return self._complete_gemini_api(provider, prompt)
+        if provider_type == "ollama":
+            return self._complete_ollama_api(provider, prompt)
+        raise CodexRuntimeError(400, "직접 API 호출을 지원하지 않는 provider입니다.", "AI_API_PROVIDER_NOT_SUPPORTED")
+
+    def _complete_openai_api(self, provider, prompt):
+        headers = {
+            "Authorization": "Bearer %s" % provider["env_value"],
+        }
+        responses_url = self._join_url(provider["base_url"], "responses")
+        responses_payload = {
+            "model": provider["model"],
+            "input": prompt,
+            "text": {"format": {"type": "json_object"}},
+        }
+        try:
+            response = self._http_post_json(responses_url, responses_payload, headers, provider, "OPENAI_API_REQUEST_FAILED")
+            text = self._extract_openai_responses_text(response)
+            if text:
+                return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": responses_url}
+        except CodexRuntimeError as exc:
+            if exc.status_code not in {400, 404, 422}:
+                raise
+
+        chat_url = self._join_url(provider["base_url"], "chat/completions")
+        chat_payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": "Return only one JSON object. Do not include markdown fences."},
+                {"role": "user", "content": prompt},
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2,
+        }
+        response = self._http_post_json(chat_url, chat_payload, headers, provider, "OPENAI_API_REQUEST_FAILED")
+        text = self._extract_chat_completion_text(response)
+        if not text:
+            raise CodexRuntimeError(502, "OpenAI API 응답이 비어 있습니다.", "OPENAI_EMPTY_RESPONSE")
+        return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": chat_url}
+
+    def _complete_gemini_api(self, provider, prompt):
+        model = urllib.parse.quote(str(provider["model"]).replace("models/", "", 1), safe="")
+        api_version = str(provider.get("api_version") or "v1beta").strip("/")
+        url = "https://generativelanguage.googleapis.com/%s/models/%s:generateContent?key=%s" % (
+            api_version,
+            model,
+            urllib.parse.quote(provider["env_value"], safe=""),
+        )
+        payload = {
+            "systemInstruction": {
+                "parts": [{"text": "Return only one JSON object. Do not include markdown fences."}],
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}],
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "temperature": 0.2,
+            },
+        }
+        response = self._http_post_json(url, payload, {}, provider, "GEMINI_API_REQUEST_FAILED")
+        text = self._extract_gemini_text(response)
+        if not text:
+            raise CodexRuntimeError(502, "Gemini API 응답이 비어 있습니다.", "GEMINI_EMPTY_RESPONSE")
+        safe_url = url.split("?key=", 1)[0]
+        return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": safe_url}
+
+    def _complete_ollama_api(self, provider, prompt):
+        native_url = self._join_url(self._ollama_native_base_url(provider["base_url"]), "api/chat")
+        native_payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": "Return only one JSON object. Do not include markdown fences."},
+                {"role": "user", "content": prompt},
+            ],
+            "format": "json",
+            "stream": False,
+            "options": {"temperature": 0.2},
+        }
+        try:
+            response = self._http_post_json(native_url, native_payload, {}, provider, "OLLAMA_API_REQUEST_FAILED")
+            message = response.get("message") if isinstance(response.get("message"), dict) else {}
+            text = message.get("content") or response.get("response") or ""
+            if text:
+                return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": native_url}
+        except CodexRuntimeError as exc:
+            if exc.status_code not in {400, 404, 405}:
+                raise
+
+        chat_url = self._join_url(provider["base_url"], "chat/completions")
+        chat_payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": "Return only one JSON object. Do not include markdown fences."},
+                {"role": "user", "content": prompt},
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2,
+        }
+        response = self._http_post_json(chat_url, chat_payload, {}, provider, "OLLAMA_API_REQUEST_FAILED")
+        text = self._extract_chat_completion_text(response)
+        if not text:
+            raise CodexRuntimeError(502, "Ollama API 응답이 비어 있습니다.", "OLLAMA_EMPTY_RESPONSE")
+        return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": chat_url}
+
+    def _http_post_json(self, url, payload, headers, provider, error_code):
+        request_headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "docker-infra-ai/1.0",
+        }
+        request_headers.update(headers or {})
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(url, data=body, headers=request_headers, method="POST")
+        timeout = int(provider.get("timeout_seconds") or CODEX_TIMEOUT_SECONDS)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_body = response.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            response_body = exc.read().decode("utf-8", "replace")
+            raise CodexRuntimeError(
+                exc.code,
+                "%s API 호출이 실패했습니다." % _provider_label(provider["type"]),
+                error_code,
+                {
+                    "status": exc.code,
+                    "reason": getattr(exc, "reason", ""),
+                    "response": _trim(response_body, 4000),
+                    "url": self._redact_url(url),
+                },
+            )
+        except urllib.error.URLError as exc:
+            raise CodexRuntimeError(
+                502,
+                "%s API에 연결할 수 없습니다: %s" % (_provider_label(provider["type"]), getattr(exc, "reason", exc)),
+                error_code,
+                {"url": self._redact_url(url)},
+            )
+        except TimeoutError:
+            raise CodexRuntimeError(
+                504,
+                "%s API 호출 시간이 초과되었습니다." % _provider_label(provider["type"]),
+                error_code,
+                {"url": self._redact_url(url)},
+            )
+        try:
+            return json.loads(response_body or "{}")
+        except Exception as exc:
+            raise CodexRuntimeError(
+                502,
+                "%s API 응답을 JSON으로 해석할 수 없습니다: %s" % (_provider_label(provider["type"]), exc),
+                error_code,
+                {"response": _trim(response_body, 4000), "url": self._redact_url(url)},
+            )
+
+    def _extract_openai_responses_text(self, response):
+        if response.get("output_text"):
+            return str(response.get("output_text")).strip()
+        chunks = []
+        for item in response.get("output") or []:
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content") or []:
+                if not isinstance(content, dict):
+                    continue
+                text = content.get("text") or content.get("output_text")
+                if text:
+                    chunks.append(str(text))
+        return "".join(chunks).strip()
+
+    def _extract_chat_completion_text(self, response):
+        choices = response.get("choices") if isinstance(response.get("choices"), list) else []
+        if not choices:
+            return ""
+        message = choices[0].get("message") if isinstance(choices[0], dict) else {}
+        content = message.get("content") if isinstance(message, dict) else ""
+        if isinstance(content, list):
+            chunks = []
+            for item in content:
+                if isinstance(item, dict):
+                    chunks.append(str(item.get("text") or item.get("content") or ""))
+                elif item:
+                    chunks.append(str(item))
+            return "".join(chunks).strip()
+        return str(content or "").strip()
+
+    def _extract_gemini_text(self, response):
+        chunks = []
+        for candidate in response.get("candidates") or []:
+            content = candidate.get("content") if isinstance(candidate, dict) else {}
+            for part in (content.get("parts") if isinstance(content, dict) else []) or []:
+                if isinstance(part, dict) and part.get("text"):
+                    chunks.append(str(part.get("text")))
+        return "".join(chunks).strip()
+
+    def _join_url(self, base_url, path):
+        return "%s/%s" % (str(base_url or "").rstrip("/"), str(path or "").lstrip("/"))
+
+    def _ollama_native_base_url(self, base_url):
+        base_url = str(base_url or "http://127.0.0.1:11434").rstrip("/")
+        if base_url.endswith("/v1"):
+            return base_url[:-3]
+        return base_url
+
+    def _redact_url(self, url):
+        return str(url or "").split("?key=", 1)[0]
+
     def _run_codex(self, provider, runtime_home, last_message_path, prompt, mcp_context_path, enabled_tools):
-        if provider["type"] == "codex":
-            executable = self._codex_login_executable(provider)
-            config_args = self._codex_login_config_args(provider, mcp_context_path, enabled_tools)
-        else:
-            executable = self.codex_executable()
-            config_args = []
+        executable = self._codex_login_executable(provider)
+        config_args = self._codex_login_config_args(provider, mcp_context_path, enabled_tools)
         command = [
             executable,
             "exec",
             "--json",
             "--ephemeral",
             "--skip-git-repo-check",
-            *(["--ignore-user-config"] if provider["type"] == "codex" else []),
+            "--ignore-user-config",
             "--sandbox",
             "read-only",
             *config_args,
@@ -1583,17 +1550,8 @@ class CodexRuntime:
             str(last_message_path),
             "-",
         ]
-        if provider["type"] != "codex":
-            provider_arg_index = command.index("-C")
-            command[provider_arg_index:provider_arg_index] = ["--model-provider", provider["provider_id"]]
-        run_env = _subprocess_env()
-        if provider["type"] == "codex":
-            run_env = self._codex_env(provider)
-        else:
-            run_env["CODEX_HOME"] = str(runtime_home)
+        run_env = self._codex_env(provider)
         run_env["NO_COLOR"] = "1"
-        if provider.get("env_key") and provider.get("env_value"):
-            run_env[provider["env_key"]] = provider["env_value"]
         try:
             completed = subprocess.run(
                 command,

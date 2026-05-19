@@ -136,6 +136,30 @@ class SSHExecutor:
             with known_hosts.open("a", encoding="utf-8") as handle:
                 handle.write(scan.stdout)
         return str(known_hosts)
+    def remove_known_host(self, host, port=None, env=None):
+        port = int(port or 22)
+        known_hosts = self.known_hosts_file(env=env)
+        targets = [host] if port == 22 else [f"[{host}]:{port}", host]
+        results = []
+        for target in targets:
+            try:
+                completed = subprocess.run(
+                    ["ssh-keygen", "-R", target, "-f", str(known_hosts)],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                results.append({
+                    "target": target,
+                    "status": "ok" if completed.returncode == 0 else "error",
+                    "exit_code": completed.returncode,
+                    "stdout": _trim(completed.stdout),
+                    "stderr": _trim(completed.stderr),
+                })
+            except Exception as exc:
+                results.append({"target": target, "status": "error", "exit_code": None, "stderr": str(exc)})
+        return {"known_hosts": str(known_hosts), "targets": targets, "results": results}
     def known_hosts_for_run(self, host, port=None, env=None):
         known_hosts = self.known_hosts_file(env=env)
         if self.known_fingerprint(host, port=port, env=env):

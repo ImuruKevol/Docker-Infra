@@ -18,7 +18,6 @@ ALLOWED_STEPS = {
     "postgres",
     "python",
     "node",
-    "codex",
     "bundle",
     "migrate",
     "service",

@@ -24,8 +24,6 @@ class InstallerContractTest(unittest.TestCase):
             "docker-infra.env.example",
             "README.md",
             "payload/wiz-bundle.tar.zst",
-            "payload/codex-bin/linux-x86_64/codex",
-            "payload/codex-bin/linux-aarch64/codex",
             "payload/requirements.txt",
             "payload/checksums.sha256",
         ]:
@@ -57,15 +55,6 @@ class InstallerContractTest(unittest.TestCase):
             "npm install -g \"$OFFICIAL_CODEX_PACKAGE\"",
             "@openai/codex",
             "DOCKER_INFRA_SYSTEM_CODEX_BIN",
-            "DOCKER_INFRA_CODEX_BIN",
-            "CODEX_CUSTOM_BIN_DIR",
-            "CODEX_INSTALL_BIN_DEFAULT=\"$INSTALL_BASE/codex-custom/bin/docker-infra-codex\"",
-            "LEGACY_CODEX_INSTALL_BIN=\"$INSTALL_BASE/codex/bin/codex\"",
-            "target_bin=\"$CODEX_INSTALL_BIN_DEFAULT\"",
-            "custom Codex CLI host architecture",
-            "custom Codex CLI payload selected",
-            "validate_custom_codex_payload_arch",
-            "custom Codex CLI payload architecture mismatch",
             "WIZ_BUNDLE_ARCHIVE",
             "tar --zstd",
             "sha256sum -c checksums.sha256",
@@ -86,6 +75,8 @@ class InstallerContractTest(unittest.TestCase):
             self.assertIn(token, script)
         self.assertNotIn("cargo build", script)
         self.assertNotIn("CODEX_CUSTOM_ARCHIVE", script)
+        self.assertNotIn("CODEX_CUSTOM_BIN", script)
+        self.assertNotIn("DOCKER_INFRA_CODEX_BIN", script)
         self.assertNotIn("rustc", script)
         self.assertNotIn("cargo", script)
         self.assertNotIn('"$WIZ_BIN" service regist "$SERVICE_NAME" "$APP_PORT" bundle', script)
@@ -101,7 +92,6 @@ class InstallerContractTest(unittest.TestCase):
         self.assertIn("cleanup.sh", script)
         self.assertIn("cp -a \"$SCRIPT_DIR/payload\"", script)
         self.assertIn("PAYLOAD_DIR=$INSTALLER_ROOT/payload", script)
-        self.assertIn("CODEX_CUSTOM_BIN_DIR=$INSTALLER_ROOT/payload/codex-bin", script)
         self.assertIn("/installer-api${path}", html)
         self.assertIn("api('/run'", html)
         self.assertIn("adminPassword", html)
@@ -128,6 +118,7 @@ class InstallerContractTest(unittest.TestCase):
         self.assertIn("단계 종료:", api)
         self.assertIn("result = \"success\" if code == 0 else \"failed\"", api)
         self.assertIn('"node"', api)
+        self.assertNotIn('"codex"', api)
         self.assertIn('"cleanup"', api)
 
     def test_env_template_includes_database_and_codex_runtime(self):
@@ -138,7 +129,6 @@ class InstallerContractTest(unittest.TestCase):
             "DOCKER_INFRA_DB_PASSWORD",
             "DOCKER_INFRA_SECRET_KEY",
             "DOCKER_INFRA_SYSTEM_CODEX_BIN",
-            "DOCKER_INFRA_CODEX_AUTO_BUILD=0",
             "CODEX_HOME",
             "DOCKER_INFRA_DDNS_PUBLIC_IP_URLS",
             "DOCKER_INFRA_DDNS_STATE_FILE",
@@ -146,20 +136,15 @@ class InstallerContractTest(unittest.TestCase):
         ]:
             self.assertIn(token, env)
         self.assertIn("DOCKER_INFRA_SYSTEM_CODEX_BIN=/usr/local/bin/codex", env)
-        self.assertIn("DOCKER_INFRA_CODEX_BIN=/opt/docker-infra/codex-custom/bin/docker-infra-codex", env)
+        self.assertNotIn("DOCKER_INFRA_CODEX_BIN", env)
+        self.assertNotIn("DOCKER_INFRA_CODEX_AUTO_BUILD", env)
 
-    def test_codex_payload_is_binary_only(self):
+    def test_installer_payload_excludes_custom_codex(self):
         payload = INSTALLER / "payload"
-        codex_bins = [
-            payload / "codex-bin/linux-x86_64/codex",
-            payload / "codex-bin/linux-aarch64/codex",
-        ]
         checksums = (payload / "checksums.sha256").read_text(encoding="utf-8")
 
-        for codex_bin in codex_bins:
-            self.assertTrue(codex_bin.is_file(), codex_bin)
-            self.assertTrue(codex_bin.stat().st_mode & stat.S_IXUSR, codex_bin)
-            self.assertIn(str(codex_bin.relative_to(payload)), checksums)
+        self.assertFalse((payload / "codex-bin").exists())
+        self.assertNotIn("codex-bin/", checksums)
         self.assertFalse((payload / "codex-bin/codex").exists())
         self.assertFalse((payload / "codex-custom.tar.zst").exists())
 
@@ -187,10 +172,9 @@ class InstallerContractTest(unittest.TestCase):
             "tar --zstd -cf",
             "tar --zstd -tf",
             "sha256sum -c",
-            "codex-bin/linux-x86_64/codex",
-            "codex-bin/linux-aarch64/codex",
         ]:
             self.assertIn(token, script)
+        self.assertNotIn("codex-bin", script)
 
     def test_wiz_service_update_script_applies_archive_to_existing_install(self):
         script = (WORKSPACE / "update-wiz-service.sh").read_text(encoding="utf-8")
@@ -224,7 +208,6 @@ class InstallerContractTest(unittest.TestCase):
             "/etc/nginx/sites-enabled/$site.conf",
             "$INSTALLER_ROOT",
             "$WIZ_ROOT",
-            "$INSTALL_BASE/codex-custom",
             "$INSTALL_BASE/codex",
             "It does not uninstall apt packages, pip packages, npm packages",
             "--purge-data",

@@ -6,6 +6,7 @@ shared = wiz.model("struct/nodes_shared")
 NodeLocalMasterMixin = wiz.model("struct/nodes_local_master")
 NodeRegistryMixin = wiz.model("struct/nodes_registry")
 NodeManageMixin = wiz.model("struct/nodes_manage")
+NodeDeleteMixin = wiz.model("struct/nodes_delete")
 NodeRuntimeMixin = wiz.model("struct/nodes_runtime")
 NodeBackupRegistryMixin = wiz.model("struct/nodes_backup_registry")
 NodeJoinMixin = wiz.model("struct/nodes_join")
@@ -18,7 +19,7 @@ _node_to_dict = shared.node_to_dict
 _credential_to_public = shared.credential_to_public
 
 
-class NodeService(NodeLocalMasterMixin, NodeRegistryMixin, NodeManageMixin, NodeRuntimeMixin, NodeBackupRegistryMixin, NodeJoinMixin, NodeReporterMixin):
+class NodeService(NodeLocalMasterMixin, NodeRegistryMixin, NodeManageMixin, NodeDeleteMixin, NodeRuntimeMixin, NodeBackupRegistryMixin, NodeJoinMixin, NodeReporterMixin):
     NodeError = NodeError
     LocalCommandError = local_executor_model.LocalCommandError
 

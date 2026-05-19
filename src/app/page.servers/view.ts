@@ -28,6 +28,9 @@ export class Component implements OnInit, OnDestroy {
     public lastOperation = signal<any>(null);
     public serverModalOpen = signal<boolean>(false);
     public editingNodeId = signal<string>('');
+    public deleteModalOpen = signal<boolean>(false);
+    public deleteConfirmInput = signal<string>('');
+    public deletingNode = signal<any>(null);
     public actionModalOpen = signal<boolean>(false);
     public actionTitle = signal<string>('');
     public actionResult = signal<any>(null);
@@ -458,6 +461,30 @@ export class Component implements OnInit, OnDestroy {
         this.resetServerForm();
     }
 
+    public openDeleteServer() {
+        const node = this.selected();
+        if (!node) return;
+        if (node.is_local_master) {
+            void this.alert('중심 서버는 등록 해제할 수 없습니다.', 'info');
+            return;
+        }
+        const runningServices = this.runningServiceGroups();
+        if (runningServices.length > 0) {
+            void this.alert(this.runningServicesBlockMessage(runningServices), 'warning');
+            return;
+        }
+        this.deletingNode.set(node);
+        this.deleteConfirmInput.set('');
+        this.deleteModalOpen.set(true);
+    }
+
+    public closeDeleteModal() {
+        if (this.busy()) return;
+        this.deleteModalOpen.set(false);
+        this.deleteConfirmInput.set('');
+        this.deletingNode.set(null);
+    }
+
     public closeActionModal() {
         this.actionModalOpen.set(false);
         this.actionResult.set(null);
@@ -879,6 +906,72 @@ export class Component implements OnInit, OnDestroy {
             const detail = data?.check?.reason || data?.reason;
             await this.alert(data?.message || detail || fallback);
             this.serverForm.password = '';
+        }
+        this.busy.set(false);
+        await this.service.render();
+    }
+
+    public deleteConfirmName() {
+        return String(this.deletingNode()?.name || '').trim();
+    }
+
+    public deleteConfirmMatches() {
+        return Boolean(this.deleteConfirmName()) && this.deleteConfirmInput().trim() === this.deleteConfirmName();
+    }
+
+    public deleteSubmitLabel() {
+        return this.busy() ? '등록 해제 중' : '등록 해제';
+    }
+
+    public async unregisterSelectedServer() {
+        const node = this.deletingNode() || this.selected();
+        if (!node?.id || node.is_local_master) return;
+        if (!this.deleteConfirmMatches()) {
+            await this.alert('서버 이름을 정확히 입력해야 등록 해제가 가능합니다.');
+            return;
+        }
+
+        this.busy.set(true);
+        this.stopAutoRefresh();
+        const { code, data } = await wiz.call("unregister_server", {
+            node_id: node.id,
+            confirmation_name: this.deleteConfirmInput().trim(),
+        });
+        if (code === 200) {
+            this.deleteModalOpen.set(false);
+            this.deleteConfirmInput.set('');
+            this.deletingNode.set(null);
+            if (data.monitoring) this.monitoringState.set(data.monitoring);
+            this.nodes.set(data.nodes || []);
+            const epoch = this.beginSelection(data.selected || null);
+            this.restartAutoRefresh();
+            this.actionTitle.set('서버 등록 해제 결과');
+            const swarmRemoveStatus = data.cleanup?.master_cleanup?.swarm_remove?.status;
+            const keyFileStatus = data.cleanup?.key_file?.status;
+            this.actionResult.set({
+                checks: {
+                    remote_cleanup: data.cleanup?.remote_cleanup?.status || 'ok',
+                    swarm_remove: swarmRemoveStatus === 'skipped' ? 'ok' : (swarmRemoveStatus || 'ok'),
+                    known_hosts: 'ok',
+                    database: data.cleanup?.database?.deleted ? 'ok' : 'warning',
+                    key_file: ['removed', 'skipped'].includes(keyFileStatus) ? 'ok' : 'warning',
+                    operation: data.operation?.status || 'unknown',
+                },
+                operation: data.operation,
+            });
+            this.actionModalOpen.set(true);
+            if (data.selected?.id) {
+                void this.loadMacros(data.selected.id);
+                void this.fetchCachedDetail(data.selected.id, true, epoch);
+            }
+        } else {
+            if (data?.operation) {
+                this.actionTitle.set('서버 등록 해제 실패');
+                this.actionResult.set({ checks: { operation: data.operation.status || 'failed' }, operation: data.operation });
+                this.actionModalOpen.set(true);
+            }
+            this.restartAutoRefresh();
+            await this.alert(data?.message || '서버 등록 해제를 완료할 수 없습니다.');
         }
         this.busy.set(false);
         await this.service.render();
@@ -1646,6 +1739,7 @@ export class Component implements OnInit, OnDestroy {
             error: '오류',
             succeeded: '완료',
             canceled: '취소됨',
+            skipped: '건너뜀',
             warning: '확인 필요',
             ok: '정상',
             unknown: '알 수 없음'
@@ -1670,7 +1764,7 @@ export class Component implements OnInit, OnDestroy {
         if (['active', 'ready', 'ok', 'succeeded'].includes(status)) {
             return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
         }
-        if (['reachable', 'pending', 'warning', 'unknown', 'canceled'].includes(status)) {
+        if (['reachable', 'pending', 'warning', 'unknown', 'canceled', 'skipped'].includes(status)) {
             return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300';
         }
         if (['unreachable', 'failed', 'error'].includes(status)) {
@@ -1784,6 +1878,23 @@ export class Component implements OnInit, OnDestroy {
         return { label: '중지됨', status: 'failed' };
     }
 
+    public runningServiceCount(group: any) {
+        const summary = group?.summary || {};
+        const running = Number(summary.running || 0);
+        if (running > 0) return running;
+        return (group?.containers || []).filter((container: any) => this.containerState(container) === 'running').length;
+    }
+
+    public runningServiceGroups() {
+        return this.serviceGroups().filter((group: any) => this.runningServiceCount(group) > 0);
+    }
+
+    public runningServicesBlockMessage(groups: any[] = this.runningServiceGroups()) {
+        const names = groups.slice(0, 5).map((group: any) => this.serviceDisplayName(group)).join(', ');
+        const suffix = groups.length > 5 ? ` 외 ${groups.length - 5}개` : '';
+        return `실행 중인 서비스가 있어 서버 등록 해제를 진행할 수 없습니다. 먼저 서비스를 중지하거나 다른 서버로 이동해주세요. (${names}${suffix})`;
+    }
+
     public serviceRuntimeLabel(group: any) {
         return this.serviceRuntimeStatus(group).label;
     }
@@ -1842,7 +1953,12 @@ export class Component implements OnInit, OnDestroy {
             command: '명령 실행',
             containers: '컨테이너 새로고침',
             swarm: 'Swarm 상태',
-            network: 'Overlay 네트워크'
+            network: 'Overlay 네트워크',
+            remote_cleanup: '삭제 대상 서버 정리',
+            swarm_remove: 'Swarm 노드 제거',
+            known_hosts: 'known_hosts 정리',
+            database: '등록 정보 삭제',
+            key_file: 'SSH key 파일 정리'
         };
         return Object.keys(checks).map((key) => {
             const raw = checks[key];

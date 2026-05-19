@@ -30,6 +30,7 @@ CONFIG_ENV_NAME = "config.env"
 LOCAL_EXECUTOR_ALLOWLIST_ENV = "DOCKER_INFRA_LOCAL_EXECUTOR_ALLOWLIST"
 DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "swarm.init",
+    "swarm.node.remove",
     "swarm.network.ensure",
     "docker.container.start",
     "docker.container.stop",
@@ -52,8 +53,10 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "backup.harbor.restart",
     "docker.daemon.insecure_registries.ensure",
     "monitoring.node_exporter.ensure",
+    "monitoring.node_exporter.remove",
     "monitoring.node_exporter.status",
     "monitoring.metrics_collector.ensure",
+    "monitoring.metrics_collector.remove",
     "monitoring.metrics_collector.status",
     "ddns.dispatcher.ensure",
 ]

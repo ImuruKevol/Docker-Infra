@@ -1267,6 +1267,50 @@
                         }
                     }
                 }
+            },
+            "delete": {
+                "summary": "Unregister a managed node",
+                "description": "Unregister a non-master node after remote cleanup. `confirmation_name` must exactly match the current node name.",
+                "tags": [
+                    "nodes"
+                ],
+                "security": [
+                    {
+                        "sessionCookie": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "node_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/NodeUnregisterRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NodeUnregisterResponse"
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         "/api/nodes/{node_id}/check": {
@@ -2839,6 +2883,19 @@
                     }
                 }
             },
+            "NodeUnregisterRequest": {
+                "type": "object",
+                "required": [
+                    "confirmation_name"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "confirmation_name": {
+                        "type": "string",
+                        "description": "Current node name typed exactly by the user."
+                    }
+                }
+            },
             "SSHCommandResult": {
                 "type": "object",
                 "required": [
@@ -2941,6 +2998,57 @@
                                 "items": {
                                     "$ref": "#/components/schemas/Node"
                                 }
+                            }
+                        }
+                    }
+                }
+            },
+            "NodeUnregisterResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {
+                        "type": "integer"
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "deleted_node_id",
+                            "operation",
+                            "nodes",
+                            "cleanup"
+                        ],
+                        "additionalProperties": true,
+                        "properties": {
+                            "deleted_node_id": {
+                                "type": "string"
+                            },
+                            "operation": {
+                                "type": "object"
+                            },
+                            "nodes": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/Node"
+                                }
+                            },
+                            "selected": {
+                                "allOf": [
+                                    {
+                                        "$ref": "#/components/schemas/Node"
+                                    }
+                                ],
+                                "nullable": true
+                            },
+                            "cleanup": {
+                                "type": "object"
+                            },
+                            "monitoring": {
+                                "type": "object"
                             }
                         }
                     }

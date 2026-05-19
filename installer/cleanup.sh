@@ -49,7 +49,7 @@ It does not uninstall apt packages, pip packages, npm packages, PostgreSQL packa
 
 Scopes:
   preinstall  Remove installer API service, installer nginx site, env, and installer HTML/payload.
-  install     Remove Docker Infra WIZ service files, deployed bundle, custom Codex binary, runtime env, and app nginx site.
+  install     Remove Docker Infra WIZ service files, deployed bundle, runtime env, and app nginx site.
   all         Run install cleanup first, then preinstall cleanup.
 
 Options:
@@ -137,9 +137,7 @@ cleanup_install() {
     remove_nginx_site "$NGINX_SITE_NAME"
     remove_path \
         "$WIZ_ROOT" \
-        "$INSTALL_BASE/codex-custom" \
         "$INSTALL_BASE/codex" \
-        "$INSTALL_BASE/codex-src" \
         "$ENV_FILE" \
         "$INITIAL_SETUP_FILE"
     if [[ "$PURGE_DATA" == "1" ]]; then

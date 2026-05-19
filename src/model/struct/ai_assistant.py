@@ -117,7 +117,7 @@ class AIAssistant:
                     "badge": self._provider_label(provider),
                     "badgeClass": self._provider_badge_class(provider, state.get("level")),
                     "state": state,
-                    "cli_mode": "custom",
+                    "cli_mode": "api",
                 }
             )
         default_ref = self._default_model_ref(config)
@@ -590,7 +590,7 @@ class AIAssistant:
                     data = self._ddns_repair_fallback_data(context, exc)
                     if data is None:
                         raise
-                    yield {"type": "status", "message": "Codex 수정 호출이 실패해 DDNS 추천값으로 자동 보정합니다."}
+                    yield {"type": "status", "message": "AI 수정 호출이 실패해 DDNS 추천값으로 자동 보정합니다."}
             if data is None:
                 raise AIAssistantError(502, "AI 응답 JSON 객체가 비어 있습니다.", "AI_EMPTY_RESPONSE")
             yield {"type": "status", "message": "AI 수정안을 검증하고 허용된 터미널 조치를 실행합니다."}
@@ -1433,12 +1433,12 @@ class AIAssistant:
             "base_content": (context or {}).get("base_content") or "",
             "components": (context or {}).get("components") or [],
             "generated_secret_keys": [],
-            "summary": "Codex 수정 호출이 실패해 등록된 DDNS 서버와 추천 도메인으로 서비스 도메인을 보정했습니다.",
+            "summary": "AI 수정 호출이 실패해 등록된 DDNS 서버와 추천 도메인으로 서비스 도메인을 보정했습니다.",
             "warnings": [
-                "Codex 수정 호출 실패로 DDNS deterministic fallback을 사용했습니다.",
+                "AI 수정 호출 실패로 DDNS deterministic fallback을 사용했습니다.",
                 "추천 도메인이 의도와 다르면 도메인 설정에서 prefix를 수정한 뒤 다시 배포하세요.",
             ],
-            "thinking_summary": "Used deterministic DDNS repair fallback after Codex runtime failure.",
+            "thinking_summary": "Used deterministic DDNS repair fallback after AI runtime failure.",
             "notes": "",
         }
 
@@ -3108,9 +3108,12 @@ class AIAssistant:
     def _stream_json_with_provider(self, target, context, provider, system=None, env=None):
         public_provider = self._provider_public(provider)
         yield {"type": "provider", "provider": public_provider}
-        yield {"type": "status", "message": "요구사항과 현재 설정을 Codex 실행 컨텍스트로 정리합니다."}
+        yield {"type": "status", "message": "요구사항과 현재 설정을 AI 실행 컨텍스트로 정리합니다."}
         system = system or self._system_prompt(target)
-        yield {"type": "status", "message": "Codex를 통해 선택한 모델로 AI 응답 JSON을 생성합니다."}
+        if provider.get("type") == "codex":
+            yield {"type": "status", "message": "Codex 로그인 세션으로 AI 응답 JSON을 생성합니다."}
+        else:
+            yield {"type": "status", "message": "%s API를 직접 호출해 AI 응답 JSON을 생성합니다." % self._provider_label(provider.get("type"))}
         result = None
         def run_codex():
             yield {"type": "codex_result", "result": codex_runtime.complete_json(provider, system, context, env=env)}
@@ -3193,7 +3196,7 @@ class AIAssistant:
                 yield {
                     "type": "heartbeat",
                     "label": "대기 중",
-                    "message": "Codex CLI가 선택한 모델 응답을 기다리는 중입니다. (%s초 경과)" % elapsed_seconds,
+                    "message": "선택한 AI 모델 응답을 기다리는 중입니다. (%s초 경과)" % elapsed_seconds,
                     "elapsed_seconds": elapsed_seconds,
                     "heartbeat_count": heartbeat_count,
                 }
@@ -3600,9 +3603,8 @@ class AIAssistant:
     def _provider_public(self, provider, metadata=None):
         metadata = metadata or {}
         provider_type = provider.get("type")
-        cli_mode = metadata.get("cli_mode") or provider.get("cli_mode") or ("system" if provider_type == "codex" else "custom")
-        uses_custom_cli = bool(metadata.get("uses_custom_cli")) if "uses_custom_cli" in metadata else cli_mode == "custom"
-        cli_label = "커스텀 Codex CLI" if uses_custom_cli else ("Codex 로그인" if provider_type == "codex" else "")
+        cli_mode = metadata.get("cli_mode") or provider.get("cli_mode") or ("system" if provider_type == "codex" else "api")
+        cli_label = "Codex 로그인" if provider_type == "codex" else "직접 API"
         return {
             "type": provider_type,
             "label": provider.get("label"),
@@ -3610,21 +3612,22 @@ class AIAssistant:
             "reasoning_effort": metadata.get("reasoning_effort") or provider.get("reasoning_effort"),
             "cli_mode": cli_mode,
             "cli_label": cli_label,
-            "uses_custom_cli": uses_custom_cli,
-            "engine": metadata.get("engine") or "codex",
+            "engine": metadata.get("engine") or ("codex" if provider_type == "codex" else "direct_api"),
             "executable": metadata.get("executable") or "",
+            "api_endpoint": metadata.get("api_endpoint") or "",
         }
 
     def _codex_execution_status_event(self, metadata):
         metadata = metadata or {}
-        cli_label = "커스텀 Codex CLI" if metadata.get("uses_custom_cli") else "일반 Codex CLI"
+        is_direct_api = (metadata.get("engine") == "direct_api") or metadata.get("cli_mode") == "api"
+        cli_label = "직접 API" if is_direct_api else "일반 Codex CLI"
         bits = [cli_label, self._clean_text(metadata.get("provider_label")), self._clean_text(metadata.get("model"))]
-        executable = self._clean_text(metadata.get("executable"))
-        if executable:
-            bits.append(executable)
+        target = self._clean_text(metadata.get("api_endpoint") if is_direct_api else metadata.get("executable"))
+        if target:
+            bits.append(target)
         return {
             "type": "status",
-            "label": "Codex 실행 확인",
+            "label": "API 호출 확인" if is_direct_api else "Codex 실행 확인",
             "message": " · ".join([bit for bit in bits if bit]),
         }
 

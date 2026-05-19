@@ -23,14 +23,30 @@ class NodesSwarmStaticContractTest(unittest.TestCase):
             self.assertEqual(config["controller"], "user")
 
         document = OPENAPI_JSON.read_text(encoding="utf-8")
+        node_path_controller = (ROOT / "src" / "route" / "api-nodes-path" / "controller.py").read_text(encoding="utf-8")
+        servers_api = (ROOT / "src" / "app" / "page.servers" / "api.py").read_text(encoding="utf-8")
+        servers_view = (ROOT / "src" / "app" / "page.servers" / "view.pug").read_text(encoding="utf-8")
+        servers_view_ts = (ROOT / "src" / "app" / "page.servers" / "view.ts").read_text(encoding="utf-8")
+        nodes_model = (ROOT / "src" / "model" / "struct" / "nodes.py").read_text(encoding="utf-8")
+        nodes_delete = (ROOT / "src" / "model" / "struct" / "nodes_delete.py").read_text(encoding="utf-8")
         for token in [
             "/api/system/local-master/ensure",
             "/api/nodes",
             "/api/nodes/{node_id}/check",
             "/api/nodes/{node_id}/join",
             "NodeJoinResponse",
+            "NodeUnregisterRequest",
+            "NodeUnregisterResponse",
         ]:
             self.assertIn(token, document)
+        self.assertIn("DELETE", node_path_controller)
+        self.assertIn("unregister_slave", node_path_controller)
+        self.assertIn("def unregister_server", servers_api)
+        self.assertIn("openDeleteServer()", servers_view)
+        self.assertIn("runningServiceGroups", servers_view_ts)
+        self.assertIn("NodeDeleteMixin", nodes_model)
+        self.assertIn("NODE_RUNNING_SERVICES_BLOCK_UNREGISTER", nodes_delete)
+        self.assertIn("live_containers", nodes_delete)
 
 
 class NodesSwarmLiveFlowTest(unittest.TestCase):

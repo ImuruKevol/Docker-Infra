@@ -60,7 +60,6 @@ INSTALLER_ROOT=$INSTALLER_ROOT
 PAYLOAD_DIR=$INSTALLER_ROOT/payload
 PIP_REQUIREMENTS=$INSTALLER_ROOT/payload/requirements.txt
 WIZ_BUNDLE_ARCHIVE=$INSTALLER_ROOT/payload/wiz-bundle.tar.zst
-CODEX_CUSTOM_BIN_DIR=$INSTALLER_ROOT/payload/codex-bin
 INSTALLER_SERVICE_NAME=docker-infra-installer.service
 INSTALLER_NGINX_SITE=docker-infra-installer
 EOF

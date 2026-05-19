@@ -16,8 +16,6 @@ LOG_DIR="${LOG_DIR:-/var/log/docker-infra}"
 APP_HOST="${APP_HOST:-127.0.0.1}"
 APP_PORT="${APP_PORT:-3000}"
 NGINX_SITE_NAME="${NGINX_SITE_NAME:-docker-infra}"
-CODEX_INSTALL_BIN_DEFAULT="$INSTALL_BASE/codex-custom/bin/docker-infra-codex"
-LEGACY_CODEX_INSTALL_BIN="$INSTALL_BASE/codex/bin/codex"
 INSTALLER_SERVICE_NAME="${INSTALLER_SERVICE_NAME:-docker-infra-installer.service}"
 INSTALLER_NGINX_SITE="${INSTALLER_NGINX_SITE:-docker-infra-installer}"
 NODE_SOURCE_SETUP_URL="${NODE_SOURCE_SETUP_URL:-https://deb.nodesource.com/setup_lts.x}"
@@ -38,8 +36,6 @@ PROJECT_ROOT="${DOCKER_INFRA_PROJECT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 WORKSPACE_ROOT="${DOCKER_INFRA_WORKSPACE_ROOT:-$(cd "$PROJECT_ROOT/../.." && pwd)}"
 BUNDLE_ROOT="${BUNDLE_ROOT:-$WORKSPACE_ROOT/bundle}"
 WIZ_BUNDLE_ARCHIVE="${WIZ_BUNDLE_ARCHIVE:-$PAYLOAD_DIR/wiz-bundle.tar.zst}"
-CODEX_CUSTOM_BIN="${CODEX_CUSTOM_BIN:-}"
-CODEX_CUSTOM_BIN_DIR="${CODEX_CUSTOM_BIN_DIR:-$PAYLOAD_DIR/codex-bin}"
 PIP_REQUIREMENTS="${PIP_REQUIREMENTS:-$PAYLOAD_DIR/requirements.txt}"
 if [[ ! -f "$PIP_REQUIREMENTS" ]]; then
     PIP_REQUIREMENTS="$PROJECT_ROOT/requirements.txt"
@@ -213,15 +209,8 @@ ensure_runtime_env() {
     local db_schema="${DOCKER_INFRA_DB_SCHEMA:-public}"
     local secret_key="${DOCKER_INFRA_SECRET_KEY:-$(random_secret)}"
     local official_codex_bin="${DOCKER_INFRA_SYSTEM_CODEX_BIN:-$(command -v codex || true)}"
-    if [[ "$official_codex_bin" == "$LEGACY_CODEX_INSTALL_BIN" ]]; then
-        official_codex_bin="$(command -v codex || true)"
-    fi
     if [[ -z "$official_codex_bin" ]]; then
         official_codex_bin="/usr/local/bin/codex"
-    fi
-    local codex_bin="${DOCKER_INFRA_CODEX_BIN:-$CODEX_INSTALL_BIN_DEFAULT}"
-    if [[ "$codex_bin" == "$LEGACY_CODEX_INSTALL_BIN" ]]; then
-        codex_bin="$CODEX_INSTALL_BIN_DEFAULT"
     fi
     local env_tmp
     env_tmp="$(mktemp)"
@@ -241,8 +230,6 @@ ensure_runtime_env() {
         write_env_line "DOCKER_INFRA_BACKUP_HARBOR_HTTPS_PORT" "${DOCKER_INFRA_BACKUP_HARBOR_HTTPS_PORT:-5443}"
         write_env_line "DOCKER_INFRA_SESSION_COOKIE_SECURE" "${DOCKER_INFRA_SESSION_COOKIE_SECURE:-false}"
         write_env_line "DOCKER_INFRA_SYSTEM_CODEX_BIN" "$official_codex_bin"
-        write_env_line "DOCKER_INFRA_CODEX_BIN" "$codex_bin"
-        write_env_line "DOCKER_INFRA_CODEX_AUTO_BUILD" "${DOCKER_INFRA_CODEX_AUTO_BUILD:-0}"
         write_env_line "CODEX_HOME" "${CODEX_HOME:-$DATA_ROOT/codex-home}"
     } >"$env_tmp"
 
@@ -335,91 +322,6 @@ install_nodejs_and_official_codex() {
     "$official_bin" --version >/dev/null
     set_env_value "DOCKER_INFRA_SYSTEM_CODEX_BIN" "$official_bin"
     log "official Codex CLI installed at $official_bin"
-}
-
-host_arch() {
-    case "$(uname -m)" in
-        x86_64|amd64)
-            printf 'linux-x86_64'
-            ;;
-        aarch64|arm64)
-            printf 'linux-aarch64'
-            ;;
-        *)
-            fail "unsupported custom Codex CLI architecture: $(uname -m)"
-            ;;
-    esac
-}
-
-custom_codex_payload_source() {
-    local arch="$1"
-    if [[ -n "$CODEX_CUSTOM_BIN" ]]; then
-        require_executable "$CODEX_CUSTOM_BIN"
-        printf '%s' "$CODEX_CUSTOM_BIN"
-        return
-    fi
-
-    local arch_bin="$CODEX_CUSTOM_BIN_DIR/$arch/codex"
-    if [[ -x "$arch_bin" ]]; then
-        printf '%s' "$arch_bin"
-        return
-    fi
-
-    local legacy_bin="$CODEX_CUSTOM_BIN_DIR/codex"
-    if [[ "$arch" == "linux-x86_64" && -x "$legacy_bin" ]]; then
-        printf '%s' "$legacy_bin"
-        return
-    fi
-
-    fail "custom Codex CLI payload for $arch is missing: expected $arch_bin"
-}
-
-validate_custom_codex_payload_arch() {
-    local source_bin="$1"
-    local arch="$2"
-    local expected_machine
-    local actual_machine
-
-    case "$arch" in
-        linux-x86_64)
-            expected_machine="62"
-            ;;
-        linux-aarch64)
-            expected_machine="183"
-            ;;
-        *)
-            fail "unsupported custom Codex CLI architecture: $arch"
-            ;;
-    esac
-
-    actual_machine="$(od -An -j18 -N2 -tu2 "$source_bin" 2>/dev/null | tr -d '[:space:]' || true)"
-    if [[ "$actual_machine" != "$expected_machine" ]]; then
-        fail "custom Codex CLI payload architecture mismatch: host=$arch binary_machine=${actual_machine:-unknown} source=$source_bin"
-    fi
-}
-
-install_codex_cli() {
-    ensure_runtime_env
-    load_runtime_env
-    verify_payload_checksums
-
-    local arch
-    local source_bin
-    local target_bin="${DOCKER_INFRA_CODEX_BIN:-$CODEX_INSTALL_BIN_DEFAULT}"
-    if [[ "$target_bin" == "$LEGACY_CODEX_INSTALL_BIN" ]]; then
-        target_bin="$CODEX_INSTALL_BIN_DEFAULT"
-    fi
-    arch="$(host_arch)"
-    log "custom Codex CLI host architecture: $arch"
-    source_bin="$(custom_codex_payload_source "$arch")"
-    log "custom Codex CLI payload selected: $source_bin"
-    validate_custom_codex_payload_arch "$source_bin" "$arch"
-    install -d -m 0755 "$(dirname "$target_bin")"
-    require_executable "$source_bin"
-    install -m 0755 "$source_bin" "$target_bin"
-    "$target_bin" --version >/dev/null
-    set_env_value "DOCKER_INFRA_CODEX_BIN" "$target_bin"
-    log "custom Codex CLI installed from $source_bin to $target_bin"
 }
 
 build_and_deploy_bundle() {
@@ -669,7 +571,6 @@ run_all_steps() {
     install_postgresql_database
     install_python_packages
     install_nodejs_and_official_codex
-    install_codex_cli
     build_and_deploy_bundle
     run_database_migrations
     register_wiz_service
@@ -689,7 +590,6 @@ Steps:
   postgres   Create PostgreSQL role, database, and schema.
   python     Install Python pip packages from requirements.txt.
   node       Install Node.js LTS, npm, and official @openai/codex.
-  codex      Install the packaged custom Codex CLI binary.
   bundle     Deploy packaged WIZ bundle files, or build and deploy them.
   migrate    Apply Docker Infra database migrations.
   service    Register and start the WIZ systemd service.
@@ -721,7 +621,6 @@ main() {
         postgres) install_postgresql_database ;;
         python) install_python_packages ;;
         node) install_nodejs_and_official_codex ;;
-        codex) install_codex_cli ;;
         bundle) build_and_deploy_bundle ;;
         migrate) run_database_migrations ;;
         service) register_wiz_service ;;

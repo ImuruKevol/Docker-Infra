@@ -13,11 +13,14 @@ payload = {}
 
 try:
     if len(parts) == 1:
-        if method != "GET":
+        if method == "GET":
+            payload = {"node": nodes.detail(node_id)}
+        elif method == "DELETE":
+            body = wiz.request.query()
+            payload = nodes.unregister_slave(node_id, body.get("confirmation_name"))
+        else:
             code = 405
             payload = {"message": "지원하지 않는 method입니다.", "error_code": "METHOD_NOT_ALLOWED"}
-        else:
-            payload = {"node": nodes.detail(node_id)}
     else:
         action = parts[1]
         if action == "check" and method == "POST":

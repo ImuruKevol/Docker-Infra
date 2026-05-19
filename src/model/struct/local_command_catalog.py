@@ -11,6 +11,7 @@ MAX_CAPTURE_CHARS = 20000
 NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$")
 REGISTRY_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,255}$")
+SWARM_NODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 METRICS_COLLECTOR_AGENT_VERSION = "2026-05-13-container-labels-v1"
 
 
@@ -58,6 +59,13 @@ def _swarm_init_command(params):
     if advertise_addr:
         command.extend(["--advertise-addr", str(advertise_addr)])
     return command
+
+
+def _swarm_node_remove_command(params):
+    node_id = str((params or {}).get("node_id") or "").strip()
+    if SWARM_NODE_RE.match(node_id) is None:
+        raise LocalCommandError(400, "swarm node_id 형식이 올바르지 않습니다.", "INVALID_SWARM_NODE_ID")
+    return ["docker", "node", "rm", "-f", node_id]
 
 
 def _container_ids(params):
@@ -127,6 +135,30 @@ def _node_exporter_status_command(params):
         f"$SUDO systemctl is-active --quiet {shlex.quote(service_name)}\n"
         "printf 'Running\n'\n"
         f"$SUDO systemctl --no-pager --full status {shlex.quote(service_name)} | sed -n '1,12p'\n"
+    )
+    return ["sh", "-lc", script]
+
+
+def _node_exporter_remove_command(params):
+    container_name = str((params or {}).get("container_name") or "docker-infra-node-exporter").strip()
+    if NETWORK_NAME_RE.match(container_name) is None:
+        raise LocalCommandError(400, "node_exporter container 이름이 올바르지 않습니다.", "INVALID_NODE_EXPORTER_CONTAINER")
+    service_name = str((params or {}).get("service_name") or "docker-infra-node-exporter.service").strip()
+    unit_name = service_name[:-8] if service_name.endswith(".service") else service_name
+    if NETWORK_NAME_RE.match(unit_name) is None:
+        raise LocalCommandError(400, "node_exporter service 이름이 올바르지 않습니다.", "INVALID_NODE_EXPORTER_SERVICE")
+    script = (
+        "set -eu\n"
+        "SUDO=''\n"
+        "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+        f"SERVICE_NAME={shlex.quote(service_name)}\n"
+        f"CONTAINER_NAME={shlex.quote(container_name)}\n"
+        "$SUDO systemctl stop \"$SERVICE_NAME\" >/dev/null 2>&1 || true\n"
+        "$SUDO systemctl disable \"$SERVICE_NAME\" >/dev/null 2>&1 || true\n"
+        "$SUDO rm -f \"/etc/systemd/system/$SERVICE_NAME\"\n"
+        "if command -v docker >/dev/null 2>&1; then $SUDO docker rm -f \"$CONTAINER_NAME\" >/dev/null 2>&1 || true; fi\n"
+        "$SUDO systemctl daemon-reload >/dev/null 2>&1 || true\n"
+        "printf 'Node exporter removed\\n'\n"
     )
     return ["sh", "-lc", script]
 
@@ -286,6 +318,30 @@ def _metrics_collector_status_command(params):
         "printf 'Metrics collector timer running\\n'\n"
         "$SUDO systemctl --no-pager --full status \"$TIMER_NAME\" | sed -n '1,12p'\n"
         "$SUDO systemctl --no-pager --full status \"$SERVICE_NAME\" | sed -n '1,8p' || true\n"
+    )
+    return ["sh", "-lc", script]
+
+
+def _metrics_collector_remove_command(params):
+    paths = _metrics_collector_paths(params)
+    script = (
+        "set -eu\n"
+        "SUDO=''\n"
+        "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+        f"SERVICE_NAME={shlex.quote(paths['service_name'])}\n"
+        f"TIMER_NAME={shlex.quote(paths['timer_name'])}\n"
+        f"SCRIPT_PATH={shlex.quote(paths['script_path'])}\n"
+        f"ENV_PATH={shlex.quote(paths['env_path'])}\n"
+        f"STATE_FILE={shlex.quote(paths['state_file'])}\n"
+        "$SUDO systemctl stop \"$TIMER_NAME\" >/dev/null 2>&1 || true\n"
+        "$SUDO systemctl disable \"$TIMER_NAME\" >/dev/null 2>&1 || true\n"
+        "$SUDO systemctl stop \"$SERVICE_NAME\" >/dev/null 2>&1 || true\n"
+        "$SUDO systemctl disable \"$SERVICE_NAME\" >/dev/null 2>&1 || true\n"
+        "$SUDO rm -f \"/etc/systemd/system/$SERVICE_NAME\" \"/etc/systemd/system/$TIMER_NAME\" \"$SCRIPT_PATH\" \"$ENV_PATH\" \"$STATE_FILE\"\n"
+        "$SUDO rmdir \"$(dirname \"$ENV_PATH\")\" >/dev/null 2>&1 || true\n"
+        "$SUDO rmdir \"$(dirname \"$STATE_FILE\")\" >/dev/null 2>&1 || true\n"
+        "$SUDO systemctl daemon-reload >/dev/null 2>&1 || true\n"
+        "printf 'Metrics collector removed\\n'\n"
     )
     return ["sh", "-lc", script]
 
@@ -913,8 +969,10 @@ COMMAND_SPECS = {
     "backup.harbor.ps": {"category": "backup", "factory": _backup_harbor_ps_command},
     "docker.daemon.insecure_registries.ensure": {"category": "docker", "factory": _docker_daemon_insecure_registries_command, "destructive": True, "default_timeout_seconds": 180},
     "monitoring.node_exporter.ensure": {"category": "monitoring", "factory": _node_exporter_ensure_command, "destructive": True, "default_timeout_seconds": 120},
+    "monitoring.node_exporter.remove": {"category": "monitoring", "factory": _node_exporter_remove_command, "destructive": True, "default_timeout_seconds": 60},
     "monitoring.node_exporter.status": {"category": "monitoring", "factory": _node_exporter_status_command, "default_timeout_seconds": 20},
     "monitoring.metrics_collector.ensure": {"category": "monitoring", "factory": _metrics_collector_ensure_command, "destructive": True, "default_timeout_seconds": 120},
+    "monitoring.metrics_collector.remove": {"category": "monitoring", "factory": _metrics_collector_remove_command, "destructive": True, "default_timeout_seconds": 60},
     "monitoring.metrics_collector.status": {"category": "monitoring", "factory": _metrics_collector_status_command, "default_timeout_seconds": 20},
     "ddns.dispatcher.ensure": {"category": "ddns", "factory": _ddns_dispatcher_ensure_command, "destructive": True, "default_timeout_seconds": 60},
     "system.metrics": {"category": "system", "argv": ["sh", "-lc", SYSTEM_METRICS_SCRIPT]},
@@ -926,6 +984,7 @@ COMMAND_SPECS = {
     "swarm.nodes": {"category": "swarm", "argv": ["docker", "node", "ls", "--format", "{{json .}}"]},
     "swarm.nodes.inspect": {"category": "swarm", "argv": ["sh", "-lc", "docker node inspect $(docker node ls -q)"]},
     "swarm.init": {"category": "swarm", "factory": _swarm_init_command, "destructive": True},
+    "swarm.node.remove": {"category": "swarm", "factory": _swarm_node_remove_command, "destructive": True},
     "swarm.join-token.worker": {"category": "swarm", "argv": ["docker", "swarm", "join-token", "-q", "worker"]},
     "swarm.join-token.manager": {"category": "swarm", "argv": ["docker", "swarm", "join-token", "-q", "manager"]},
     "swarm.network.inspect": {"category": "swarm", "factory": _inspect_network_command},

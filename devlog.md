@@ -258,3 +258,6 @@
 | 2026-05-19 | 256 | 서비스 상세 상단 서버 버튼 배치와 요약 카드 제거 | [상세](devlog/2026-05-19/256-service-detail-header-server-button.md) |
 | 2026-05-19 | 257 | 이미지 삭제 진행 표시와 로컬 서버 전환 로딩 개선 | [상세](devlog/2026-05-19/257-images-delete-loading-local-switch.md) |
 | 2026-05-19 | 258 | 이미지 관리 로컬 저장소 서버별 화면 캐시 추가 | [상세](devlog/2026-05-19/258-images-local-node-cache.md) |
+| 2026-05-19 | 259 | 서버 관리 일반 서버 등록 해제와 원격 정리 흐름 추가 | [상세](devlog/2026-05-19/259-server-unregister-cleanup-flow.md) |
+| 2026-05-19 | 260 | 서버 등록 해제 전 실행 중 서비스 차단 추가 | [상세](devlog/2026-05-19/260-server-unregister-running-service-guard.md) |
+| 2026-05-19 | 261 | custom Codex 실행 경로 제거와 provider 직접 API 호출 전환 | [상세](devlog/2026-05-19/261-custom-codex-removal-direct-api.md) |

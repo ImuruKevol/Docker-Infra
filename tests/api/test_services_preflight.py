@@ -236,7 +236,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn('"can_register_ddns_records_via_deploy": True', assistant)
         self.assertIn("Do not warn that requested DDNS subdomains are unregistered", assistant)
         self.assertIn("never remove all public domains just because the DDNS record is not registered yet", assistant)
-        self.assertIn("Codex 수정 호출 실패로 DDNS deterministic fallback", assistant)
+        self.assertIn("AI 수정 호출 실패로 DDNS deterministic fallback", assistant)
         self.assertIn("기존 DDNS 등록 정보와 공인 IP가 같아 DDNS API 호출은 생략되었습니다.", assistant)
         for token in ["has_enabled_models", "시스템 설정에서 사용 중인 AI 모델이 없습니다.", "선택한 Codex 모델을 사용하려면 Codex 로그인을 사용 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED"]:
             self.assertIn(token, assistant)
@@ -263,7 +263,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         for token in ["_active_deploy_operation", "deduplicated"]:
             self.assertIn(token, deploy)
         self.assertIn("--prune", local_commands)
-        for token in ["_candidate_codex_binaries", "_build_codex_binary", "_source_newer_than", "CODEX_BUILD_CHECK_INTERVAL_SECONDS", "DOCKER_INFRA_CODEX_AUTO_BUILD", "codex-build.lock"]:
+        for token in ["_run_direct_api", "_complete_openai_api", "_complete_gemini_api", "_complete_ollama_api", "_direct_api_prompt_context", "embedded_direct_api"]:
             self.assertIn(token, codex_runtime)
         self.assertIn("domains", wizard)
         services_update = (ROOT / "src" / "model" / "struct" / "services_update.py").read_text(encoding="utf-8")
