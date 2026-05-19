@@ -261,3 +261,4 @@
 | 2026-05-19 | 259 | 서버 관리 일반 서버 등록 해제와 원격 정리 흐름 추가 | [상세](devlog/2026-05-19/259-server-unregister-cleanup-flow.md) |
 | 2026-05-19 | 260 | 서버 등록 해제 전 실행 중 서비스 차단 추가 | [상세](devlog/2026-05-19/260-server-unregister-running-service-guard.md) |
 | 2026-05-19 | 261 | custom Codex 실행 경로 제거와 provider 직접 API 호출 전환 | [상세](devlog/2026-05-19/261-custom-codex-removal-direct-api.md) |
+| 2026-05-19 | 262 | 시스템 설정에 공식 Codex CLI npm 업데이트 기능 추가 | [상세](devlog/2026-05-19/262-codex-cli-npm-update.md) |

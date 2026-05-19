@@ -360,6 +360,66 @@ def ai_codex_test():
     wiz.response.status(code, **payload)
 
 
+def ai_codex_cli_update_check():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    code = 200
+    payload = {}
+    try:
+        body = wiz.request.query()
+        current = ai_settings._normalize_config(ai_settings._saved_config())
+        codex_config = body.get("codex") if isinstance(body.get("codex"), dict) else body
+        codex_config = {**(current.get("codex") or {}), **(codex_config or {})}
+        payload = {"update": codex_runtime.cli_update_status(codex_config)}
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_codex_cli_upgrade():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    code = 200
+    payload = {}
+    try:
+        body = wiz.request.query()
+        current = ai_settings._normalize_config(ai_settings._saved_config())
+        codex_config = body.get("codex") if isinstance(body.get("codex"), dict) else body
+        codex_config = {**(current.get("codex") or {}), **(codex_config or {})}
+        payload = codex_runtime.upgrade_cli_async(codex_config)
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_codex_cli_upgrade_status():
+    operations = wiz.model("struct/operations")
+    body = wiz.request.query()
+    operation_id = body.get("operation_id")
+    if not operation_id:
+        wiz.response.status(400, message="operation_id는 필수입니다.", error_code="OPERATION_ID_REQUIRED")
+        return
+    code = 200
+    payload = {}
+    try:
+        payload = {"operation": operations.detail(operation_id)}
+    except operations.OperationError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
 def ai_codex_device_login_start():
     ai_settings = wiz.model("struct/ai_settings")
     codex_runtime = wiz.model("struct/codex_runtime")

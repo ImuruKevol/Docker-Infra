@@ -5,6 +5,7 @@ import os
 import pty
 import re
 import select
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +19,7 @@ from pathlib import Path
 
 nodes_model = wiz.model("struct/nodes")
 placement_selector = wiz.model("struct/services_placement")
+operations = wiz.model("struct/operations")
 
 
 def _find_project_root():
@@ -65,6 +67,9 @@ CODEX_TIMEOUT_SECONDS = 1200
 CODEX_STATUS_TIMEOUT_SECONDS = 15
 CODEX_TEST_TIMEOUT_SECONDS = 180
 CODEX_DEVICE_LOGIN_START_TIMEOUT_SECONDS = 5
+CODEX_NPM_PACKAGE = "@openai/codex"
+CODEX_NPM_VIEW_TIMEOUT_SECONDS = 30
+CODEX_NPM_INSTALL_TIMEOUT_SECONDS = 900
 CODEX_LOGIN_DEFAULT_MODEL = "gpt-5.5"
 CODEX_LOGIN_DEFAULT_REASONING_EFFORT = "xhigh"
 CODEX_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
@@ -99,6 +104,13 @@ SYSTEM_CODEX_EXECUTABLE_CANDIDATES = [
     "/root/.local/bin/codex",
     "/root/.npm-global/bin/codex",
     "/opt/homebrew/bin/codex",
+]
+SYSTEM_NPM_EXECUTABLE_CANDIDATES = [
+    "/usr/local/bin/npm",
+    "/usr/bin/npm",
+    "/bin/npm",
+    "/opt/conda/bin/npm",
+    "/opt/homebrew/bin/npm",
 ]
 MCP_TOOL_ALLOWLIST = {
     "infra_context",
@@ -306,6 +318,140 @@ class CodexRuntime:
             "metadata": result.get("metadata") or {},
             "status": self.status(config),
         }
+
+    def cli_update_status(self, config=None, env=None):
+        config = self._normalize_codex_config(config or {})
+        codex_status = self.status(config)
+        npm = self._npm_status(env=env)
+        latest_version = self._npm_latest_version(npm.get("executable"), env=env)
+        active = codex_status.get("active") or {}
+        current_raw = active.get("version") or ""
+        current_version = self._version_number(current_raw)
+        update_available = bool(
+            latest_version
+            and (
+                not current_version
+                or self._compare_versions(current_version, latest_version) < 0
+            )
+        )
+        return {
+            "checked_at": _utcnow(),
+            "package_name": CODEX_NPM_PACKAGE,
+            "current_version": current_version,
+            "current_version_raw": current_raw,
+            "latest_version": latest_version,
+            "update_available": update_available,
+            "npm": npm,
+            "codex_status": codex_status,
+            "commands": {
+                "check": f"npm view {CODEX_NPM_PACKAGE} version --json",
+                "upgrade": f"npm install -g {CODEX_NPM_PACKAGE}@latest",
+            },
+        }
+
+    def upgrade_cli_async(self, config=None, env=None):
+        config = self._normalize_codex_config(config or {})
+        update = self.cli_update_status(config, env=env)
+        operation = operations.create(
+            "codex.cli.upgrade",
+            target_type="system",
+            target_id="codex-cli",
+            message="Codex CLI 업그레이드를 시작합니다.",
+            requested_payload={
+                "package_name": CODEX_NPM_PACKAGE,
+                "current_version": update.get("current_version"),
+                "latest_version": update.get("latest_version"),
+                "command": update.get("commands", {}).get("upgrade"),
+            },
+            metadata={"background": True, "package_name": CODEX_NPM_PACKAGE},
+            env=env,
+        )
+
+        def worker():
+            try:
+                self._run_cli_upgrade_operation(operation["id"], config, update, env=env)
+            except Exception as exc:
+                self._finish_cli_upgrade_failure(operation["id"], exc, env=env)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"operation": operation, "update": update}
+
+    def _run_cli_upgrade_operation(self, operation_id, config, before, env=None):
+        npm_executable = ((before or {}).get("npm") or {}).get("executable")
+        if not npm_executable or not _is_executable_file(npm_executable):
+            raise CodexRuntimeError(
+                503,
+                "npm 실행 파일을 찾을 수 없습니다.",
+                "CODEX_NPM_EXECUTABLE_NOT_FOUND",
+                {"npm": before.get("npm") if isinstance(before, dict) else {}},
+            )
+
+        current = before.get("current_version") or "미설치"
+        latest = before.get("latest_version") or "확인 실패"
+        self._append_cli_upgrade_output(
+            operation_id,
+            f"공식 Codex CLI npm 패키지: {CODEX_NPM_PACKAGE}\n현재 버전: {current}\n최신 버전: {latest}\n",
+            env=env,
+        )
+        command = [npm_executable, "install", "-g", f"{CODEX_NPM_PACKAGE}@latest"]
+        result = self._run_logged_command(
+            operation_id,
+            command,
+            timeout=CODEX_NPM_INSTALL_TIMEOUT_SECONDS,
+            env=env,
+        )
+        after_status = self.status(config)
+        after_active = after_status.get("active") or {}
+        after_raw = after_active.get("version") or ""
+        after_version = self._version_number(after_raw)
+        after = {
+            **before,
+            "checked_at": _utcnow(),
+            "current_version": after_version,
+            "current_version_raw": after_raw,
+            "update_available": bool(
+                before.get("latest_version")
+                and (
+                    not after_version
+                    or self._compare_versions(after_version, before.get("latest_version")) < 0
+                )
+            ),
+            "codex_status": after_status,
+        }
+        result_payload = {
+            "ok": result.get("exit_code") == 0,
+            "exit_code": result.get("exit_code"),
+            "timed_out": bool(result.get("timed_out")),
+            "package_name": CODEX_NPM_PACKAGE,
+            "before": before,
+            "after": after,
+        }
+        if result.get("exit_code") != 0:
+            message = self._npm_failure_message(result)
+            operations.transition(operation_id, "failed", message=message, result_payload=result_payload, env=env)
+            return
+        operations.transition(
+            operation_id,
+            "succeeded",
+            message="Codex CLI 업그레이드를 완료했습니다.",
+            result_payload=result_payload,
+            env=env,
+        )
+
+    def _finish_cli_upgrade_failure(self, operation_id, exc, env=None):
+        message = getattr(exc, "message", str(exc))
+        result_payload = {
+            "ok": False,
+            "error_code": getattr(exc, "error_code", "CODEX_CLI_UPGRADE_FAILED"),
+        }
+        details = getattr(exc, "details", None)
+        if isinstance(details, dict):
+            result_payload.update(details)
+        try:
+            operations.append_output(operation_id, message + "\n", stream="stderr", env=env)
+            operations.transition(operation_id, "failed", message=message, result_payload=result_payload, env=env)
+        except Exception:
+            pass
 
     def start_device_login(self, config=None):
         config = self._normalize_codex_config(config or {})
@@ -567,6 +713,66 @@ class CodexRuntime:
                 return str(candidate)
         return ""
 
+    def _npm_executable(self):
+        explicit = os.environ.get("DOCKER_INFRA_NPM_BIN")
+        if explicit:
+            candidate = Path(explicit).expanduser()
+            if _is_executable_file(candidate):
+                return str(candidate)
+        path_executable = shutil.which("npm", path=_augmented_path())
+        if path_executable and _is_executable_file(path_executable):
+            return path_executable
+        for candidate_path in SYSTEM_NPM_EXECUTABLE_CANDIDATES:
+            candidate = Path(candidate_path).expanduser()
+            if _is_executable_file(candidate):
+                return str(candidate)
+        return ""
+
+    def _npm_status(self, env=None):
+        executable = self._npm_executable()
+        available = bool(executable and _is_executable_file(executable))
+        version = ""
+        if available:
+            result = self._command_result([executable, "--version"], env=env, timeout=CODEX_STATUS_TIMEOUT_SECONDS)
+            if result.get("exit_code") == 0:
+                version = (result.get("stdout") or "").strip()
+        return {
+            "executable": executable or "",
+            "available": available,
+            "version": version,
+        }
+
+    def _npm_latest_version(self, npm_executable=None, env=None):
+        executable = npm_executable or self._npm_executable()
+        if not executable or not _is_executable_file(executable):
+            raise CodexRuntimeError(
+                503,
+                "npm 실행 파일을 찾을 수 없습니다.",
+                "CODEX_NPM_EXECUTABLE_NOT_FOUND",
+                {"npm_executable": executable or ""},
+            )
+        result = self._command_result(
+            [executable, "view", CODEX_NPM_PACKAGE, "version", "--json"],
+            env=env,
+            timeout=CODEX_NPM_VIEW_TIMEOUT_SECONDS,
+        )
+        if result.get("exit_code") != 0:
+            raise CodexRuntimeError(
+                502,
+                "npm에서 Codex CLI 최신 버전을 확인할 수 없습니다.",
+                "CODEX_NPM_VIEW_FAILED",
+                {"npm": self._safe_command_result(result)},
+            )
+        latest = self._version_number(self._npm_json_stdout(result.get("stdout")))
+        if not latest:
+            raise CodexRuntimeError(
+                502,
+                "npm 최신 버전 응답을 해석할 수 없습니다.",
+                "CODEX_NPM_VERSION_PARSE_FAILED",
+                {"npm": self._safe_command_result(result)},
+            )
+        return latest
+
     def _codex_login_executable(self, config):
         config = self._normalize_codex_config(config or {})
         executable = self._system_codex_executable()
@@ -578,6 +784,14 @@ class CodexRuntime:
             "CODEX_LOGIN_EXECUTABLE_NOT_FOUND",
             {"path_codex": executable},
         )
+
+    def _safe_command_result(self, result):
+        return {
+            "exit_code": result.get("exit_code"),
+            "timeout": bool(result.get("timeout") or result.get("timed_out")),
+            "stdout": _trim(result.get("stdout"), 1000),
+            "stderr": _trim(result.get("stderr") or result.get("error"), 1000),
+        }
 
     def _command_result(self, command, env=None, timeout=CODEX_STATUS_TIMEOUT_SECONDS):
         try:
@@ -604,6 +818,118 @@ class CodexRuntime:
             }
         except Exception as exc:
             return {"exit_code": None, "error": str(exc), "stdout": "", "stderr": ""}
+
+    def _run_logged_command(self, operation_id, command, timeout=CODEX_STATUS_TIMEOUT_SECONDS, env=None):
+        started = time.monotonic()
+        self._append_cli_upgrade_output(operation_id, "$ " + shlex.join(command) + "\n", env=env)
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                env=_subprocess_env(env),
+            )
+        except Exception as exc:
+            return {
+                "exit_code": None,
+                "stdout": "",
+                "stderr": str(exc),
+                "duration_ms": int((time.monotonic() - started) * 1000),
+            }
+
+        chunks = {"stdout": [], "stderr": []}
+
+        def consume(pipe, stream):
+            try:
+                for line in iter(pipe.readline, ""):
+                    chunks[stream].append(line)
+                    self._append_cli_upgrade_output(operation_id, line, stream=stream, env=env)
+            finally:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+        threads = [
+            threading.Thread(target=consume, args=(process.stdout, "stdout"), daemon=True),
+            threading.Thread(target=consume, args=(process.stderr, "stderr"), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+
+        timed_out = False
+        try:
+            exit_code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            exit_code = process.wait()
+            timeout_message = f"npm install timed out after {timeout}s\n"
+            chunks["stderr"].append(timeout_message)
+            self._append_cli_upgrade_output(operation_id, timeout_message, stream="stderr", env=env)
+
+        for thread in threads:
+            thread.join(timeout=2)
+        return {
+            "exit_code": exit_code,
+            "stdout": _trim("".join(chunks["stdout"]), 20000),
+            "stderr": _trim("".join(chunks["stderr"]), 20000),
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "timed_out": timed_out,
+        }
+
+    def _append_cli_upgrade_output(self, operation_id, message, stream="system", env=None):
+        if not operation_id or not message:
+            return
+        operations.append_output(operation_id, message, stream=stream, env=env)
+
+    def _npm_json_stdout(self, stdout):
+        text = str(stdout or "").strip()
+        if not text:
+            return ""
+        try:
+            value = json.loads(text)
+            if isinstance(value, str):
+                return value
+        except Exception:
+            pass
+        return text.strip().strip('"').strip("'")
+
+    def _version_number(self, value):
+        match = re.search(r"\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b", str(value or ""))
+        return match.group(0) if match else ""
+
+    def _version_parts(self, value):
+        version = self._version_number(value)
+        if not version:
+            return None
+        core = version.split("-", 1)[0].split("+", 1)[0]
+        try:
+            return tuple(int(part) for part in core.split(".")[:3])
+        except ValueError:
+            return None
+
+    def _compare_versions(self, left, right):
+        left_parts = self._version_parts(left)
+        right_parts = self._version_parts(right)
+        if not left_parts or not right_parts:
+            return 0
+        if left_parts < right_parts:
+            return -1
+        if left_parts > right_parts:
+            return 1
+        return 0
+
+    def _npm_failure_message(self, result):
+        if result.get("timed_out"):
+            return "Codex CLI 업그레이드 시간이 초과되었습니다."
+        text = (result.get("stderr") or result.get("stdout") or "").strip()
+        if not text:
+            return "Codex CLI 업그레이드 명령이 실패했습니다."
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        return "Codex CLI 업그레이드 명령이 실패했습니다: " + (lines[-1] if lines else text)[:500]
 
     def _version_for(self, executable):
         if not executable:

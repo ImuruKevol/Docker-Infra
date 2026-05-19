@@ -22,6 +22,8 @@ export class Component implements OnInit, OnDestroy {
     public refreshingAiResources = signal<boolean>(false);
     public refreshingCodexStatus = signal<boolean>(false);
     public testingCodex = signal<boolean>(false);
+    public checkingCodexUpdate = signal<boolean>(false);
+    public upgradingCodexCli = signal<boolean>(false);
     public codexDeviceLoginBusy = signal<boolean>(false);
     public codexDeviceLoginPolling = signal<boolean>(false);
     public codexDeviceLogin = signal<any>(null);
@@ -35,6 +37,9 @@ export class Component implements OnInit, OnDestroy {
     public aiSources: any = {};
     public aiCodexStatus: any = {};
     public aiCodexTestResult: any = null;
+    public codexUpdate: any = null;
+    public codexUpdateOperation: any = null;
+    public codexUpdateLog: string = '';
     public aiProviderErrors: any = {};
     public backupSystem: any = {};
     public backupPolicy: any = this.defaultBackupPolicy();
@@ -46,8 +51,10 @@ export class Component implements OnInit, OnDestroy {
     public backupInstallLog: string = '';
     public backupInstallTimer: any = null;
     public codexDeviceLoginTimer: any = null;
+    public codexUpdateTimer: any = null;
     public backupOperationPolling: boolean = false;
     public backupPolicyOperationPolling: boolean = false;
+    public codexUpdateOperationPolling: boolean = false;
     public backupHealth: any = null;
     public backupNodeRegistryResult: any = null;
     public cleanupPlan: any = null;
@@ -72,6 +79,7 @@ export class Component implements OnInit, OnDestroy {
         for (const kind of ASSET_KINDS) this.releasePendingAsset(kind);
         this.stopBackupInstallPoll();
         this.stopBackupPolicyPoll();
+        this.stopCodexUpdatePoll();
         this.stopCodexDeviceLoginPoll();
     }
 
@@ -243,6 +251,101 @@ export class Component implements OnInit, OnDestroy {
             return;
         }
         await this.alert(data?.message || 'Codex 로그인 실행 테스트에 실패했습니다.');
+        await this.service.render();
+    }
+
+    public async checkCodexCliUpdate() {
+        if (this.checkingCodexUpdate()) return;
+        this.checkingCodexUpdate.set(true);
+        await this.service.render();
+        const { code, data } = await wiz.call('ai_codex_cli_update_check', { codex: this.codexConfigPayload() });
+        this.checkingCodexUpdate.set(false);
+        if (code === 200) {
+            this.syncCodexUpdate(data.update || null);
+            await this.service.render();
+            return;
+        }
+        await this.alert(data?.message || 'Codex CLI 최신 버전을 확인할 수 없습니다.');
+        await this.service.render();
+    }
+
+    public async upgradeCodexCli() {
+        if (this.upgradingCodexCli()) return;
+        if (!this.codexUpdate?.latest_version) {
+            await this.checkCodexCliUpdate();
+            if (!this.codexUpdate?.latest_version) return;
+        }
+        const latest = this.codexUpdate?.latest_version || 'latest';
+        const ok = await this.confirm(`npm install -g @openai/codex@latest 명령으로 Codex CLI를 ${latest} 버전으로 업그레이드합니다. 진행할까요?`, '업그레이드', 'warning');
+        if (!ok) return;
+        this.stopCodexUpdatePoll();
+        this.upgradingCodexCli.set(true);
+        this.codexUpdateOperation = null;
+        this.codexUpdateLog = 'Codex CLI 업그레이드 요청을 시작합니다.\n';
+        await this.service.render();
+        const { code, data } = await wiz.call('ai_codex_cli_upgrade', { codex: this.codexConfigPayload() });
+        if (code === 200) {
+            this.syncCodexUpdate(data.update || this.codexUpdate);
+            this.codexUpdateOperation = data.operation || null;
+            this.codexUpdateLog = this.operationOutputText(this.codexUpdateOperation) || this.codexUpdateLog;
+            if (this.codexUpdateOperation?.id) {
+                this.pollCodexUpdateOperation(this.codexUpdateOperation.id);
+            } else {
+                this.upgradingCodexCli.set(false);
+                this.codexUpdateLog += '업그레이드 작업 ID를 받지 못했습니다.\n';
+            }
+            await this.service.render();
+            return;
+        }
+        this.upgradingCodexCli.set(false);
+        await this.alert(data?.message || 'Codex CLI 업그레이드를 시작할 수 없습니다.');
+        await this.service.render();
+    }
+
+    private syncCodexUpdate(update: any) {
+        if (!update) return;
+        this.codexUpdate = update;
+        if (update.codex_status) this.aiCodexStatus = update.codex_status || this.aiCodexStatus;
+    }
+
+    private pollCodexUpdateOperation(operationId: string) {
+        if (!operationId) return;
+        this.stopCodexUpdatePoll();
+        this.fetchCodexUpdateOperation(operationId);
+        this.codexUpdateTimer = window.setInterval(() => this.fetchCodexUpdateOperation(operationId), 1500);
+    }
+
+    private stopCodexUpdatePoll() {
+        if (!this.codexUpdateTimer) return;
+        window.clearInterval(this.codexUpdateTimer);
+        this.codexUpdateTimer = null;
+    }
+
+    private async fetchCodexUpdateOperation(operationId: string) {
+        if (!operationId || this.codexUpdateOperationPolling) return;
+        this.codexUpdateOperationPolling = true;
+        const { code, data } = await wiz.call('ai_codex_cli_upgrade_status', { operation_id: operationId });
+        this.codexUpdateOperationPolling = false;
+        if (code !== 200) {
+            this.codexUpdateLog += `업그레이드 상태를 확인할 수 없습니다: ${data?.message || 'unknown error'}\n`;
+            this.upgradingCodexCli.set(false);
+            this.stopCodexUpdatePoll();
+            await this.service.render();
+            return;
+        }
+        this.codexUpdateOperation = data.operation || this.codexUpdateOperation;
+        this.codexUpdateLog = this.operationOutputText(this.codexUpdateOperation) || this.codexUpdateLog;
+        if (this.codexUpdateDone()) {
+            this.upgradingCodexCli.set(false);
+            this.stopCodexUpdatePoll();
+            const after = this.codexUpdateOperation?.result_payload?.after;
+            if (after) this.syncCodexUpdate(after);
+            if (this.codexUpdateOperation?.status === 'succeeded') {
+                await this.alert('Codex CLI 업그레이드를 완료했습니다.', 'success');
+            } else if (this.codexUpdateOperation?.status === 'failed') {
+                await this.alert(this.codexUpdateOperation?.message || 'Codex CLI 업그레이드에 실패했습니다.');
+            }
+        }
         await this.service.render();
     }
 
@@ -949,6 +1052,78 @@ export class Component implements OnInit, OnDestroy {
             { label: '버전', value: active.version || '-' },
             { label: '로그인', value: login.message || this.codexLoginStatus() },
         ];
+    }
+
+    public codexUpdateRows() {
+        const update = this.codexUpdate || {};
+        const npm = update.npm || {};
+        return [
+            { label: 'npm', value: npm.available ? `${npm.version || '-'} · ${npm.executable || '-'}` : 'npm 없음' },
+            { label: '패키지', value: update.package_name || '@openai/codex' },
+            { label: '현재', value: update.current_version || update.current_version_raw || '-' },
+            { label: '최신', value: update.latest_version || '-' },
+        ];
+    }
+
+    public codexUpdateStatusLabel() {
+        if (!this.codexUpdate) return '아직 확인하지 않음';
+        if (!this.codexUpdate?.npm?.available) return 'npm 없음';
+        if (!this.codexUpdate?.current_version) return '설치 필요';
+        if (this.codexUpdate?.update_available) return '업데이트 가능';
+        return '최신 상태';
+    }
+
+    public codexUpdateStatusClass() {
+        if (!this.codexUpdate) return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+        if (!this.codexUpdate?.npm?.available) return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300';
+        if (this.codexUpdate?.update_available || !this.codexUpdate?.current_version) return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+        return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
+    }
+
+    public codexUpdateCheckedAt() {
+        const value = this.codexUpdate?.checked_at;
+        if (!value) return '없음';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '없음';
+        return date.toLocaleString();
+    }
+
+    public codexUpdateVisible() {
+        return Boolean(this.codexUpdate);
+    }
+
+    public codexUpdateCanUpgrade() {
+        return Boolean(this.codexUpdate?.latest_version && (this.codexUpdate?.update_available || !this.codexUpdate?.current_version));
+    }
+
+    public codexUpdateDone() {
+        return ['succeeded', 'failed', 'canceled'].includes(this.codexUpdateOperation?.status);
+    }
+
+    public codexUpdateOperationVisible() {
+        return Boolean(this.codexUpdateOperation || this.codexUpdateLog);
+    }
+
+    public codexUpdateOperationStatusLabel() {
+        const status = this.codexUpdateOperation?.status;
+        if (status === 'succeeded') return '완료';
+        if (status === 'failed') return '실패';
+        if (status === 'canceled') return '취소됨';
+        if (status === 'running') return '진행 중';
+        if (status === 'pending') return '대기 중';
+        return this.upgradingCodexCli() ? '준비 중' : '대기';
+    }
+
+    public codexUpdateOperationIcon() {
+        const status = this.codexUpdateOperation?.status;
+        if (status === 'succeeded') return 'fa-circle-check';
+        if (status === 'failed' || status === 'canceled') return 'fa-triangle-exclamation';
+        return 'fa-spinner fa-spin';
+    }
+
+    public codexUpdateOperationOutput() {
+        const output = this.operationOutputText(this.codexUpdateOperation) || this.codexUpdateLog;
+        return output || '업그레이드 로그를 기다리고 있습니다.\n';
     }
 
     public codexTestSummary() {
