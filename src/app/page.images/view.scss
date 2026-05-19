@@ -2,3 +2,35 @@
     display: block;
     min-height: 100%;
 }
+
+.image-operation-progress {
+    position: relative;
+}
+
+.image-operation-progress::before {
+    animation: image-operation-progress 1.15s ease-in-out infinite;
+    background: currentColor;
+    border-radius: 9999px;
+    content: "";
+    inset: 0 auto 0 -35%;
+    position: absolute;
+    width: 35%;
+}
+
+@keyframes image-operation-progress {
+    0% {
+        transform: translateX(0);
+    }
+
+    100% {
+        transform: translateX(390%);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .image-operation-progress::before {
+        animation: none;
+        inset: 0;
+        width: 100%;
+    }
+}

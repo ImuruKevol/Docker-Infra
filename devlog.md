@@ -256,3 +256,5 @@
 | 2026-05-19 | 254 | 서비스 상세 서버 표시를 Docker Infra 등록 정보 기준으로 보정 | [상세](devlog/2026-05-19/254-service-detail-registered-server-label.md) |
 | 2026-05-19 | 255 | 서비스 상세 서버 요약에서 서버 상세 링크 추가 | [상세](devlog/2026-05-19/255-service-detail-server-link.md) |
 | 2026-05-19 | 256 | 서비스 상세 상단 서버 버튼 배치와 요약 카드 제거 | [상세](devlog/2026-05-19/256-service-detail-header-server-button.md) |
+| 2026-05-19 | 257 | 이미지 삭제 진행 표시와 로컬 서버 전환 로딩 개선 | [상세](devlog/2026-05-19/257-images-delete-loading-local-switch.md) |
+| 2026-05-19 | 258 | 이미지 관리 로컬 저장소 서버별 화면 캐시 추가 | [상세](devlog/2026-05-19/258-images-local-node-cache.md) |

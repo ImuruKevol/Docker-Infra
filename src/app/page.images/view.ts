@@ -5,6 +5,7 @@ type ImageTab = 'harbor' | 'local';
 type LocalUsageFilter = 'all' | 'used' | 'unused';
 type LocalSortKey = 'last_used_desc' | 'last_used_asc' | 'size_desc' | 'size_asc';
 type LocalImageConfirmMode = '' | 'prune' | 'delete';
+type ImageOperationTone = 'info' | 'warning' | 'danger';
 
 export class Component implements OnInit {
     public loading = signal<boolean>(true);
@@ -34,6 +35,7 @@ export class Component implements OnInit {
     public localSummaryByNode = signal<Record<string, any>>({});
     public selectedNodeId = signal<string>('');
     public localDetail = signal<any>(null);
+    public localLoadError = signal<string>('');
     public localSearch = signal<string>('');
     public localUsageFilter = signal<LocalUsageFilter>('all');
     public localSort = signal<LocalSortKey>('last_used_desc');
@@ -53,7 +55,13 @@ export class Component implements OnInit {
     public localImageConfirmEstimate = signal<string>('');
     public localImageConfirmAction = signal<string>('확인');
     public localImageConfirmItems = signal<any[]>([]);
+    public imageOperationBusy = signal<boolean>(false);
+    public imageOperationTitle = signal<string>('');
+    public imageOperationMessage = signal<string>('');
+    public imageOperationTone = signal<ImageOperationTone>('info');
     private localImageConfirmResolve: ((confirmed: boolean) => void) | null = null;
+    private localLoadRequestId = 0;
+    private localDetailCache: Record<string, any> = {};
 
     constructor(public service: Service) { }
 
@@ -85,11 +93,54 @@ export class Component implements OnInit {
         });
     }
 
+    private async startImageOperation(title: string, message: string, tone: ImageOperationTone = 'info') {
+        this.imageOperationTitle.set(title);
+        this.imageOperationMessage.set(message);
+        this.imageOperationTone.set(tone);
+        this.imageOperationBusy.set(true);
+        await this.service.render();
+    }
+
+    private async finishImageOperation() {
+        this.imageOperationBusy.set(false);
+        this.imageOperationTitle.set('');
+        this.imageOperationMessage.set('');
+        await this.service.render();
+    }
+
+    private emptyLocalSummary() {
+        return { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 };
+    }
+
+    private localDetailCacheItem(nodeId: string) {
+        return this.localDetailCache[String(nodeId || '').trim()] || null;
+    }
+
+    private applyLocalDetail(data: any, nodeId: string = this.selectedNodeId()) {
+        const key = String(nodeId || '').trim();
+        if (!key || !data) return;
+        const summary = data.summary || this.emptyLocalSummary();
+        this.localDetailCache = { ...this.localDetailCache, [key]: data };
+        this.localSummaryByNode.set({
+            ...this.localSummaryByNode(),
+            [key]: summary,
+        });
+        if (this.selectedNodeId() === key) {
+            this.localDetail.set(data);
+            this.selectedLocalItems.set([]);
+            this.localDeleteEstimate.set(null);
+            this.localLoadError.set('');
+        }
+    }
+
     public async load() {
         this.loading.set(true);
         this.error.set('');
         this.harborDetail.set(null);
         this.localDetail.set(null);
+        this.localLoadError.set('');
+        this.localDetailCache = {};
+        this.localLoadRequestId += 1;
         const { code, data } = await wiz.call('load', {});
         if (code !== 200) {
             this.error.set(data?.message || '이미지 정보를 불러올 수 없습니다.');
@@ -213,22 +264,44 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
-    public async loadLocalDetail(nodeId: string, silent: boolean = false) {
+    public async loadLocalDetail(nodeId: string, silent: boolean = false, force: boolean = false) {
         if (!nodeId) return;
-        this.localBusy.set(true);
+        const requestId = ++this.localLoadRequestId;
+        const isNodeChange = this.selectedNodeId() !== nodeId;
         this.selectedNodeId.set(nodeId);
         this.selectedLocalItems.set([]);
         this.localDeleteEstimate.set(null);
+        this.localLoadError.set('');
         this.closeLocalImageConfirm(false);
+        const cached = force ? null : this.localDetailCacheItem(nodeId);
+        if (cached) {
+            this.localBusy.set(false);
+            this.applyLocalDetail(cached, nodeId);
+            await this.service.render();
+            return;
+        }
+        this.localBusy.set(true);
+        if (isNodeChange || !this.localDetail()) {
+            this.localDetail.set(null);
+        }
+        await this.service.render();
         const { code, data } = await wiz.call('local_detail', { node_id: nodeId });
         if (code === 200) {
-            this.localDetail.set(data);
+            this.localDetailCache = { ...this.localDetailCache, [nodeId]: data };
             this.localSummaryByNode.set({
                 ...this.localSummaryByNode(),
-                [nodeId]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
+                [nodeId]: data.summary || this.emptyLocalSummary(),
             });
+            if (requestId !== this.localLoadRequestId || this.selectedNodeId() !== nodeId) return;
+            this.applyLocalDetail(data, nodeId);
         } else if (!silent) {
-            await this.alert(data?.message || '서버 로컬 이미지를 불러올 수 없습니다.');
+            if (requestId !== this.localLoadRequestId || this.selectedNodeId() !== nodeId) return;
+            const message = data?.message || '서버 로컬 이미지를 불러올 수 없습니다.';
+            this.localLoadError.set(message);
+            await this.alert(message);
+        } else {
+            if (requestId !== this.localLoadRequestId || this.selectedNodeId() !== nodeId) return;
+            this.localLoadError.set(data?.message || '서버 로컬 이미지를 불러올 수 없습니다.');
         }
         this.localBusy.set(false);
         await this.service.render();
@@ -285,22 +358,13 @@ export class Component implements OnInit {
         return `${loaded || '이미지'} import를 완료했습니다.`;
     }
 
-    private applyLocalDetail(data: any) {
-        this.localDetail.set(data);
-        this.localSummaryByNode.set({
-            ...this.localSummaryByNode(),
-            [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
-        });
-        this.selectedLocalItems.set([]);
-        this.localDeleteEstimate.set(null);
-    }
-
     public async uploadLocalImageArchive(event: Event) {
         const input = event.target as HTMLInputElement;
         const file = input?.files && input.files[0];
         if (input) input.value = '';
         if (!file) return;
-        if (!this.selectedNodeId()) {
+        const nodeId = this.selectedNodeId();
+        if (!nodeId) {
             await this.alert('먼저 서버를 선택해주세요.');
             return;
         }
@@ -310,7 +374,7 @@ export class Component implements OnInit {
         }
 
         const fd = new FormData();
-        fd.append('node_id', this.selectedNodeId());
+        fd.append('node_id', nodeId);
         fd.append('file', file, file.name);
         this.localUploadBusy.set(true);
         this.localUploadProgress.set(0);
@@ -327,7 +391,7 @@ export class Component implements OnInit {
         const data = response?.data || response;
         if (code === 200) {
             const message = this.localImportResultText(data.import_result);
-            this.applyLocalDetail(data);
+            this.applyLocalDetail(data, nodeId);
             this.resetLocalUploadState();
             await this.alert(message, 'success');
             await this.service.render();
@@ -644,10 +708,37 @@ export class Component implements OnInit {
         ];
     }
 
+    public imageOperationToneClass() {
+        if (this.imageOperationTone() === 'danger') {
+            return 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-200';
+        }
+        if (this.imageOperationTone() === 'warning') {
+            return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+        }
+        return 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200';
+    }
+
+    public imageOperationProgressClass() {
+        if (this.imageOperationTone() === 'danger') {
+            return 'bg-rose-100 text-rose-500 dark:bg-rose-950 dark:text-rose-400';
+        }
+        if (this.imageOperationTone() === 'warning') {
+            return 'bg-amber-100 text-amber-500 dark:bg-amber-950 dark:text-amber-400';
+        }
+        return 'bg-sky-100 text-sky-500 dark:bg-sky-950 dark:text-sky-400';
+    }
+
+    public imageOperationIconClass() {
+        if (this.imageOperationTone() === 'warning') return 'fa-broom';
+        if (this.imageOperationTone() === 'danger') return 'fa-trash';
+        return 'fa-spinner fa-spin';
+    }
+
     public async deleteHarborTag(item: any) {
         const ok = await this.confirm(`${item.repository_name}:${item.tag} 태그를 백업 저장소에서 삭제합니다.`, '백업 저장소 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
+        await this.startImageOperation('이미지 삭제 중', `${item.repository_name}:${item.tag} 태그를 백업 저장소에서 삭제하고 있습니다.`, 'danger');
         const { code, data } = await wiz.call('delete_harbor', {
             project_name: this.selectedProject(),
             repository_name: item.repository_name,
@@ -656,11 +747,14 @@ export class Component implements OnInit {
         if (code === 200) {
             this.harborTags.set(data.tags || []);
             this.selectedHarborItems.set([]);
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert('백업 저장소 이미지를 삭제했습니다.', 'success');
         } else {
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert(data?.message || '백업 저장소 이미지를 삭제할 수 없습니다.');
         }
-        this.harborBusy.set(false);
         await this.service.render();
     }
 
@@ -670,6 +764,7 @@ export class Component implements OnInit {
         const ok = await this.confirm(`선택한 백업 저장소 이미지 ${items.length}개를 삭제합니다.`, '백업 저장소 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
+        await this.startImageOperation('선택 이미지 삭제 중', `선택한 백업 저장소 이미지 ${items.length}개를 삭제하고 있습니다.`, 'danger');
         const { code, data } = await wiz.call('delete_harbor', {
             project_name: this.selectedProject(),
             repository_name: this.selectedRepository(),
@@ -678,11 +773,14 @@ export class Component implements OnInit {
         if (code === 200) {
             this.harborTags.set(data.tags || []);
             this.selectedHarborItems.set([]);
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert('선택한 백업 저장소 이미지를 삭제했습니다.', 'success');
         } else {
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert(data?.message || '백업 저장소 이미지를 삭제할 수 없습니다.');
         }
-        this.harborBusy.set(false);
         await this.service.render();
     }
 
@@ -691,6 +789,7 @@ export class Component implements OnInit {
         const ok = await this.confirm(`${this.selectedProject()} 백업 저장소 프로젝트를 통째로 삭제합니다.`, '프로젝트 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
+        await this.startImageOperation('프로젝트 삭제 중', `${this.selectedProject()} 백업 저장소 프로젝트와 포함된 이미지를 삭제하고 있습니다.`, 'danger');
         const { code, data } = await wiz.call('delete_harbor_project', {
             project_name: this.selectedProject(),
         });
@@ -703,11 +802,14 @@ export class Component implements OnInit {
             this.selectedRepository.set('');
             this.selectedHarborRepositories.set([]);
             this.selectedHarborItems.set([]);
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert('백업 저장소 프로젝트를 삭제했습니다.', 'success');
         } else {
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert(data?.message || '백업 저장소 프로젝트를 삭제할 수 없습니다.');
         }
-        this.harborBusy.set(false);
         await this.service.render();
     }
 
@@ -717,6 +819,7 @@ export class Component implements OnInit {
         const ok = await this.confirm(`${repositoryName} 이미지를 백업 저장소 프로젝트에서 삭제합니다.`, '백업 저장소 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
+        await this.startImageOperation('저장소 이미지 삭제 중', `${repositoryName} 이미지를 백업 저장소 프로젝트에서 삭제하고 있습니다.`, 'danger');
         const { code, data } = await wiz.call('delete_harbor_repository', {
             project_name: this.selectedProject(),
             repository_name: repositoryName,
@@ -732,11 +835,14 @@ export class Component implements OnInit {
                     await this.loadHarborTags(nextRepository, true);
                 }
             }
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert('백업 저장소 이미지를 삭제했습니다.', 'success');
         } else {
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert(data?.message || '백업 저장소 이미지를 삭제할 수 없습니다.');
         }
-        this.harborBusy.set(false);
         await this.service.render();
     }
 
@@ -746,6 +852,7 @@ export class Component implements OnInit {
         const ok = await this.confirm(`선택한 백업 저장소 이미지 ${items.length}개를 삭제합니다.`, '백업 저장소 삭제');
         if (!ok) return;
         this.harborBusy.set(true);
+        await this.startImageOperation('선택 저장소 삭제 중', `선택한 백업 저장소 이미지 ${items.length}개를 삭제하고 있습니다.`, 'danger');
         const selectedRepository = this.selectedRepository();
         const { code, data } = await wiz.call('delete_harbor_repository', {
             project_name: this.selectedProject(),
@@ -762,11 +869,14 @@ export class Component implements OnInit {
                     await this.loadHarborTags(nextRepository, true);
                 }
             }
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert('선택한 백업 저장소 이미지를 삭제했습니다.', 'success');
         } else {
+            this.harborBusy.set(false);
+            await this.finishImageOperation();
             await this.alert(data?.message || '백업 저장소 이미지를 삭제할 수 없습니다.');
         }
-        this.harborBusy.set(false);
         await this.service.render();
     }
 
@@ -819,12 +929,12 @@ export class Component implements OnInit {
         return `실제 확보 예상: ${this.formatBytes(estimate.reclaimable_bytes, '0 B')} (${method}${displayText}${retainedText}${blockedText}${missingText})`;
     }
 
-    private async estimateSelectedLocalDelete(items: any[]) {
+    private async estimateSelectedLocalDelete(items: any[], nodeId: string = this.selectedNodeId()) {
         this.localDeleteEstimate.set(null);
         this.localDeleteEstimateBusy.set(true);
         await this.service.render();
         const { code, data } = await wiz.call('local_delete_estimate', {
-            node_id: this.selectedNodeId(),
+            node_id: nodeId,
             items,
         });
         this.localDeleteEstimateBusy.set(false);
@@ -912,12 +1022,12 @@ export class Component implements OnInit {
         if (resolve) resolve(confirmed);
     }
 
-    private async estimateLocalPrune() {
-        if (!this.selectedNodeId()) return null;
+    private async estimateLocalPrune(nodeId: string = this.selectedNodeId()) {
+        if (!nodeId) return null;
         this.localPruneEstimateBusy.set(true);
         await this.service.render();
         const { code, data } = await wiz.call('local_prune_estimate', {
-            node_id: this.selectedNodeId(),
+            node_id: nodeId,
             action: 'image',
         });
         this.localPruneEstimateBusy.set(false);
@@ -930,37 +1040,36 @@ export class Component implements OnInit {
         return null;
     }
 
-    private async applyLocalPruneResult(data: any) {
-        this.localDetail.set(data);
-        this.localSummaryByNode.set({
-            ...this.localSummaryByNode(),
-            [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
-        });
-        this.selectedLocalItems.set([]);
-        this.localDeleteEstimate.set(null);
+    private async applyLocalPruneResult(data: any, nodeId: string = this.selectedNodeId()) {
+        this.applyLocalDetail(data, nodeId);
     }
 
-    private async executeLocalPrune() {
+    private async executeLocalPrune(nodeId: string = this.selectedNodeId(), nodeName: string = this.selectedNodeName()) {
         this.localPruneBusy.set(true);
-        await this.service.render();
+        await this.startImageOperation('미사용 이미지 정리 중', `${nodeName} 서버에서 미사용 Docker 이미지를 정리하고 있습니다.`, 'warning');
         const { code, data } = await wiz.call('local_prune', {
-            node_id: this.selectedNodeId(),
+            node_id: nodeId,
             action: 'image',
             confirmed: true,
         });
         if (code === 200) {
-            await this.applyLocalPruneResult(data);
+            await this.applyLocalPruneResult(data, nodeId);
+            this.localPruneBusy.set(false);
+            await this.finishImageOperation();
             await this.alert(this.pruneResultText(data.prune_result), 'success');
         } else {
+            this.localPruneBusy.set(false);
+            await this.finishImageOperation();
             await this.alert(data?.message || '미사용 이미지 정리를 실행할 수 없습니다.');
         }
-        this.localPruneBusy.set(false);
         await this.service.render();
     }
 
     public async runImagePrune() {
-        if (!this.selectedNodeId()) return;
-        const estimate = await this.estimateLocalPrune();
+        const nodeId = this.selectedNodeId();
+        const nodeName = this.selectedNodeName();
+        if (!nodeId) return;
+        const estimate = await this.estimateLocalPrune(nodeId);
         const ok = await this.confirmLocalImageAction({
             mode: 'prune',
             title: '미사용 이미지 정리',
@@ -970,7 +1079,7 @@ export class Component implements OnInit {
             items: this.localPruneCandidates(),
         });
         if (!ok) return;
-        await this.executeLocalPrune();
+        await this.executeLocalPrune(nodeId, nodeName);
     }
 
     public async deleteLocalImage(item: any) {
@@ -979,34 +1088,40 @@ export class Component implements OnInit {
             return;
         }
         const label = item.repository && item.tag ? `${item.repository}:${item.tag}` : item.image_id;
+        const nodeId = this.selectedNodeId();
+        const nodeName = this.selectedNodeName();
         const ok = await this.confirm(`${label} 이미지를 이 서버 로컬 저장소에서 삭제합니다.`, '로컬 삭제');
-        if (!ok) return;
+        if (!ok || !nodeId) return;
         this.localBusy.set(true);
+        await this.startImageOperation('로컬 이미지 삭제 중', `${label} 이미지를 ${nodeName} 서버 로컬 저장소에서 삭제하고 있습니다.`, 'danger');
         const { code, data } = await wiz.call('delete_local', {
-            node_id: this.selectedNodeId(),
+            node_id: nodeId,
             image_ref: item.remove_ref,
         });
         if (code === 200) {
-            this.localDetail.set(data);
-            this.localSummaryByNode.set({
-                ...this.localSummaryByNode(),
-                [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
-            });
-            this.selectedLocalItems.set(this.selectedLocalItems().filter((itemKey: string) => itemKey !== this.localImageKey(item)));
-            this.localDeleteEstimate.set(null);
+            this.applyLocalDetail(data, nodeId);
+            if (this.selectedNodeId() === nodeId) {
+                this.selectedLocalItems.set(this.selectedLocalItems().filter((itemKey: string) => itemKey !== this.localImageKey(item)));
+                this.localDeleteEstimate.set(null);
+            }
+            this.localBusy.set(false);
+            await this.finishImageOperation();
             await this.alert('로컬 이미지를 삭제했습니다.', 'success');
         } else {
+            this.localBusy.set(false);
+            await this.finishImageOperation();
             await this.alert(data?.message || '로컬 이미지를 삭제할 수 없습니다.');
         }
-        this.localBusy.set(false);
         await this.service.render();
     }
 
     public async deleteSelectedLocalImages() {
+        const nodeId = this.selectedNodeId();
+        const nodeName = this.selectedNodeName();
         const rows = this.selectedLocalDeleteImageRows();
         const items = rows.map((item: any) => ({ image_ref: item.remove_ref }));
-        if (!items.length) return;
-        const estimate = await this.estimateSelectedLocalDelete(items);
+        if (!nodeId || !items.length) return;
+        const estimate = await this.estimateSelectedLocalDelete(items, nodeId);
         const ok = await this.confirmLocalImageAction({
             mode: 'delete',
             title: '선택 이미지 삭제',
@@ -1017,23 +1132,21 @@ export class Component implements OnInit {
         });
         if (!ok) return;
         this.localBusy.set(true);
+        await this.startImageOperation('선택 이미지 삭제 중', `선택한 로컬 이미지 ${items.length}개를 ${nodeName} 서버에서 삭제하고 있습니다.`, 'danger');
         const { code, data } = await wiz.call('delete_local', {
-            node_id: this.selectedNodeId(),
+            node_id: nodeId,
             items,
         });
         if (code === 200) {
-            this.localDetail.set(data);
-            this.localSummaryByNode.set({
-                ...this.localSummaryByNode(),
-                [this.selectedNodeId()]: data.summary || { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 },
-            });
-            this.selectedLocalItems.set([]);
-            this.localDeleteEstimate.set(null);
+            this.applyLocalDetail(data, nodeId);
+            this.localBusy.set(false);
+            await this.finishImageOperation();
             await this.alert('선택한 로컬 이미지를 삭제했습니다.', 'success');
         } else {
+            this.localBusy.set(false);
+            await this.finishImageOperation();
             await this.alert(data?.message || '로컬 이미지를 삭제할 수 없습니다.');
         }
-        this.localBusy.set(false);
         await this.service.render();
     }
 

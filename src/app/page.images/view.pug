@@ -12,6 +12,17 @@ header(class="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-bl
 main(class="space-y-5 px-5 py-5")
     div(*ngIf="loading()", class="h-32 rounded-md border border-zinc-200 bg-white p-5 text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400") 정보를 불러오는 중입니다.
     div(*ngIf="error()", class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300") {{error()}}
+    div(*ngIf="imageOperationBusy()", class="rounded-md border px-4 py-3 shadow-sm", [ngClass]="imageOperationToneClass()")
+        div(class="flex flex-wrap items-start justify-between gap-3")
+            div(class="min-w-0")
+                div(class="flex items-center gap-2 text-sm font-semibold")
+                    i(class="fa-solid", [ngClass]="imageOperationIconClass()")
+                    span {{imageOperationTitle()}}
+                p(class="mt-1 text-xs") {{imageOperationMessage()}}
+            span(class="inline-flex h-7 items-center gap-2 rounded-md border border-current/20 px-2 text-xs font-semibold")
+                i(class="fa-solid fa-spinner fa-spin")
+                span 처리 중
+        div(class="image-operation-progress mt-3 h-1.5 overflow-hidden rounded-full", [ngClass]="imageOperationProgressClass()")
 
     div(*ngIf="!loading() && !error()", class="space-y-5")
         section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
@@ -216,91 +227,102 @@ main(class="space-y-5 px-5 py-5")
                                         span {{localUploadProgressLabel()}}
                                     div(class="mt-2 h-2 overflow-hidden rounded-full bg-white/80 dark:bg-zinc-900")
                                         div(class="h-full rounded-full bg-sky-500 transition-all", [style.width.%]="localUploadProgressBarWidth()")
-                                div(*ngIf="isLocalDockerUnavailable()", class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
-                                    i(class="fa-solid fa-triangle-exclamation mr-2")
-                                    | {{localDockerMessage()}}
-                                div(*ngIf="isLocalDockerAvailable()", class="space-y-3")
-                                    div(class="grid grid-cols-1 gap-3 2xl:grid-cols-[minmax(0,1fr)_520px]")
+                                div(*ngIf="localBusy() && !localDetail()", class="rounded-md border border-sky-200 bg-sky-50 px-4 py-4 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200")
+                                    div(class="flex flex-wrap items-center justify-between gap-3")
                                         div(class="min-w-0")
-                                            h3(class="truncate text-[15px] font-semibold text-zinc-950 dark:text-zinc-50", [title]="selectedNodeName()") {{selectedNodeName()}}
-                                            p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400", [title]="selectedNodeHost()") {{selectedNodeHost()}}
-                                        div(class="grid grid-cols-2 gap-2 md:grid-cols-4")
-                                            div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                                                p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 총 용량
-                                                p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{formatBytes(selectedNodeStorage().total_bytes)}}
-                                            div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                                                p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 남은 용량
-                                                p(class="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-300") {{formatBytes(selectedNodeStorage().available_bytes)}}
-                                            div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                                                p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 사용률
-                                                p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{localStorageUsedPercent().toFixed(1)}}%
-                                            div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                                                p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 이미지 용량
-                                                p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{formatBytes(localTotalImageSize())}}
-                                    div(class="h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800")
-                                        div(class="h-full rounded-full bg-sky-500", [style.width.%]="localStorageUsedPercent()")
-                                    div(class="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400")
-                                        span(class="min-w-0 truncate", [title]="localStoragePath()") {{localStoragePath()}}
-                                        span 이미지 {{localImageCount()}}개
-                                        span 사용 중 {{localUsedCount()}}개
-                                        span 미사용 {{localUnusedCount()}}개
-                                    div(*ngIf="!localStorageAvailable()", class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{localStorageMessage()}}
-                                    section(class="min-w-0 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800")
-                                        div(class="flex flex-col gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800 2xl:flex-row 2xl:items-center 2xl:justify-between")
+                                            div(class="flex items-center gap-2 text-sm font-semibold")
+                                                i(class="fa-solid fa-spinner fa-spin")
+                                                span 서버 이미지 목록 로드 중
+                                            p(class="mt-1 truncate text-xs", [title]="selectedNodeHost()") {{selectedNodeName()}} · {{selectedNodeHost()}}
+                                        span(class="text-xs font-semibold") 목록 초기화 완료
+                                    div(class="image-operation-progress mt-3 h-1.5 overflow-hidden rounded-full bg-sky-100 text-sky-500 dark:bg-sky-950 dark:text-sky-400")
+                                div(*ngIf="!localBusy() && localLoadError()", class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-200") {{localLoadError()}}
+                                ng-container(*ngIf="localDetail()")
+                                    div(*ngIf="isLocalDockerUnavailable()", class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
+                                        i(class="fa-solid fa-triangle-exclamation mr-2")
+                                        | {{localDockerMessage()}}
+                                    div(*ngIf="isLocalDockerAvailable()", class="space-y-3")
+                                        div(class="grid grid-cols-1 gap-3 2xl:grid-cols-[minmax(0,1fr)_520px]")
                                             div(class="min-w-0")
-                                                p(class="text-[13px] font-semibold text-zinc-950 dark:text-zinc-50") 이미지
-                                                p(class="truncate text-xs text-zinc-500 dark:text-zinc-400")
-                                                    span 보이는 이미지 {{filteredLocalImages().length}}개 · 선택 {{selectedLocalImageCount()}}개
-                                                    span(*ngIf="selectedLocalEstimateLabel()", class="ml-2 font-semibold text-zinc-700 dark:text-zinc-200") {{selectedLocalEstimateLabel()}}
-                                                    span(*ngIf="localDeleteEstimateBusy()", class="ml-2 inline-flex items-center gap-1")
-                                                        i(class="fa-solid fa-spinner fa-spin")
-                                                        span 확보 용량 계산 중
-                                            div(class="flex flex-col gap-2 xl:flex-row xl:items-center")
-                                                label(class="relative block w-full xl:w-64")
-                                                    span(class="sr-only") 이미지 검색
-                                                    i(class="fa-solid fa-magnifying-glass pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400")
-                                                    input(type="text", [ngModel]="localSearch()", (ngModelChange)="localSearch.set($event)", placeholder="이미지, tag 검색", class="h-8 w-full rounded-md border border-zinc-300 bg-white pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                                                div(class="flex h-8 items-center rounded-md border border-zinc-300 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-950")
-                                                    button(type="button", (click)="setLocalUsageFilter('all')", class="inline-flex h-6 items-center rounded-md px-2.5 text-xs font-semibold", [ngClass]="localUsageFilter() === 'all' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 전체
-                                                    button(type="button", (click)="setLocalUsageFilter('used')", class="inline-flex h-6 items-center rounded-md px-2.5 text-xs font-semibold", [ngClass]="localUsageFilter() === 'used' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 사용 중
-                                                    button(type="button", (click)="setLocalUsageFilter('unused')", class="inline-flex h-6 items-center rounded-md px-2.5 text-xs font-semibold", [ngClass]="localUsageFilter() === 'unused' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 미사용
-                                                label(class="block")
-                                                    span(class="sr-only") 정렬
-                                                    select([ngModel]="localSort()", (ngModelChange)="setLocalSort($event)", class="h-8 w-full rounded-md border border-zinc-300 bg-white px-3 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                                                        option(*ngFor="let option of localSortOptions()", [value]="option.value") {{option.label}}
-                                                button(type="button", (click)="deleteSelectedLocalImages()", [disabled]="localBusy() || localDeleteEstimateBusy() || selectedLocalImageCount() === 0", class="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                                                    i(class="fa-solid fa-trash")
-                                                    span 선택 삭제 ({{selectedLocalImageCount()}})
-                                        div(class="max-h-[520px] overflow-auto")
-                                            table(class="min-w-[760px] w-full divide-y divide-zinc-100 text-[13px] dark:divide-zinc-800")
-                                                thead(class="sticky top-0 bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
-                                                    tr
-                                                        th(class="w-10 px-3 py-2 text-left font-semibold")
-                                                            input(type="checkbox", [checked]="allVisibleLocalImagesSelected()", (change)="toggleAllLocalImages($any($event.target).checked)")
-                                                        th(class="px-3 py-2 text-left font-semibold") 이미지
-                                                        th(class="w-32 px-3 py-2 text-left font-semibold") 상태
-                                                        th(class="w-40 px-3 py-2 text-left font-semibold") 최근 사용
-                                                        th(class="w-24 px-3 py-2 text-right font-semibold") 용량
-                                                        th(class="w-14 px-3 py-2 text-right font-semibold") 작업
-                                                tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                                                    tr(*ngFor="let item of filteredLocalImages()", class="hover:bg-zinc-50 dark:hover:bg-zinc-800/60")
-                                                        td(class="px-3 py-2.5")
-                                                            input(type="checkbox", [checked]="isLocalImageSelected(item)", [disabled]="!localImageSelectable(item)", (change)="toggleLocalImageSelection(item, $any($event.target).checked)", class="disabled:opacity-40")
-                                                        td(class="min-w-0 px-3 py-2.5")
-                                                            div(class="truncate font-semibold text-zinc-950 dark:text-zinc-50", [title]="displayImageField(item.repository)") {{displayImageField(item.repository)}}
-                                                            div(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400", [title]="displayImageField(item.tag)") {{displayImageField(item.tag)}}
-                                                        td(class="px-3 py-2.5")
-                                                            div(class="inline-flex whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="localUsageBadgeClass(item)") {{localUsageLabel(item)}}
-                                                            div(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400", [title]="localRunningLabel(item)") {{localRunningLabel(item)}}
-                                                        td(class="px-3 py-2.5 whitespace-nowrap text-zinc-500 dark:text-zinc-400")
-                                                            div {{formatDate(item.last_used_at)}}
-                                                            div(class="mt-0.5 text-xs") 연결 {{item.usage_count || 0}}개
-                                                        td(class="px-3 py-2.5 text-right whitespace-nowrap text-zinc-500 dark:text-zinc-400") {{item.size || '-'}}
-                                                        td(class="px-3 py-2.5 text-right")
-                                                            button(type="button", (click)="deleteLocalImage(item)", [disabled]="localBusy() || !localImageSelectable(item)", title="이미지 삭제", aria-label="이미지 삭제", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                                                                i(class="fa-solid fa-trash")
-                                                    tr(*ngIf="filteredLocalImages().length === 0")
-                                                        td(colspan="6", class="px-3 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 표시할 로컬 이미지가 없습니다.
+                                                h3(class="truncate text-[15px] font-semibold text-zinc-950 dark:text-zinc-50", [title]="selectedNodeName()") {{selectedNodeName()}}
+                                                p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400", [title]="selectedNodeHost()") {{selectedNodeHost()}}
+                                            div(class="grid grid-cols-2 gap-2 md:grid-cols-4")
+                                                div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                                    p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 총 용량
+                                                    p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{formatBytes(selectedNodeStorage().total_bytes)}}
+                                                div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                                    p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 남은 용량
+                                                    p(class="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-300") {{formatBytes(selectedNodeStorage().available_bytes)}}
+                                                div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                                    p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 사용률
+                                                    p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{localStorageUsedPercent().toFixed(1)}}%
+                                                div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                                    p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 이미지 용량
+                                                    p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{formatBytes(localTotalImageSize())}}
+                                        div(class="h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800")
+                                            div(class="h-full rounded-full bg-sky-500", [style.width.%]="localStorageUsedPercent()")
+                                        div(class="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400")
+                                            span(class="min-w-0 truncate", [title]="localStoragePath()") {{localStoragePath()}}
+                                            span 이미지 {{localImageCount()}}개
+                                            span 사용 중 {{localUsedCount()}}개
+                                            span 미사용 {{localUnusedCount()}}개
+                                        div(*ngIf="!localStorageAvailable()", class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{localStorageMessage()}}
+                                        section(class="min-w-0 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800")
+                                            div(class="flex flex-col gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800 2xl:flex-row 2xl:items-center 2xl:justify-between")
+                                                div(class="min-w-0")
+                                                    p(class="text-[13px] font-semibold text-zinc-950 dark:text-zinc-50") 이미지
+                                                    p(class="truncate text-xs text-zinc-500 dark:text-zinc-400")
+                                                        span 보이는 이미지 {{filteredLocalImages().length}}개 · 선택 {{selectedLocalImageCount()}}개
+                                                        span(*ngIf="selectedLocalEstimateLabel()", class="ml-2 font-semibold text-zinc-700 dark:text-zinc-200") {{selectedLocalEstimateLabel()}}
+                                                        span(*ngIf="localDeleteEstimateBusy()", class="ml-2 inline-flex items-center gap-1")
+                                                            i(class="fa-solid fa-spinner fa-spin")
+                                                            span 확보 용량 계산 중
+                                                div(class="flex flex-col gap-2 xl:flex-row xl:items-center")
+                                                    label(class="relative block w-full xl:w-64")
+                                                        span(class="sr-only") 이미지 검색
+                                                        i(class="fa-solid fa-magnifying-glass pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400")
+                                                        input(type="text", [ngModel]="localSearch()", (ngModelChange)="localSearch.set($event)", placeholder="이미지, tag 검색", class="h-8 w-full rounded-md border border-zinc-300 bg-white pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                                    div(class="flex h-8 items-center rounded-md border border-zinc-300 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-950")
+                                                        button(type="button", (click)="setLocalUsageFilter('all')", class="inline-flex h-6 items-center rounded-md px-2.5 text-xs font-semibold", [ngClass]="localUsageFilter() === 'all' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 전체
+                                                        button(type="button", (click)="setLocalUsageFilter('used')", class="inline-flex h-6 items-center rounded-md px-2.5 text-xs font-semibold", [ngClass]="localUsageFilter() === 'used' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 사용 중
+                                                        button(type="button", (click)="setLocalUsageFilter('unused')", class="inline-flex h-6 items-center rounded-md px-2.5 text-xs font-semibold", [ngClass]="localUsageFilter() === 'unused' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 미사용
+                                                    label(class="block")
+                                                        span(class="sr-only") 정렬
+                                                        select([ngModel]="localSort()", (ngModelChange)="setLocalSort($event)", class="h-8 w-full rounded-md border border-zinc-300 bg-white px-3 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                                            option(*ngFor="let option of localSortOptions()", [value]="option.value") {{option.label}}
+                                                    button(type="button", (click)="deleteSelectedLocalImages()", [disabled]="localBusy() || localDeleteEstimateBusy() || selectedLocalImageCount() === 0", class="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                                        i(class="fa-solid fa-trash")
+                                                        span 선택 삭제 ({{selectedLocalImageCount()}})
+                                            div(class="max-h-[520px] overflow-auto")
+                                                table(class="min-w-[760px] w-full divide-y divide-zinc-100 text-[13px] dark:divide-zinc-800")
+                                                    thead(class="sticky top-0 bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
+                                                        tr
+                                                            th(class="w-10 px-3 py-2 text-left font-semibold")
+                                                                input(type="checkbox", [checked]="allVisibleLocalImagesSelected()", (change)="toggleAllLocalImages($any($event.target).checked)")
+                                                            th(class="px-3 py-2 text-left font-semibold") 이미지
+                                                            th(class="w-32 px-3 py-2 text-left font-semibold") 상태
+                                                            th(class="w-40 px-3 py-2 text-left font-semibold") 최근 사용
+                                                            th(class="w-24 px-3 py-2 text-right font-semibold") 용량
+                                                            th(class="w-14 px-3 py-2 text-right font-semibold") 작업
+                                                    tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                                                        tr(*ngFor="let item of filteredLocalImages()", class="hover:bg-zinc-50 dark:hover:bg-zinc-800/60")
+                                                            td(class="px-3 py-2.5")
+                                                                input(type="checkbox", [checked]="isLocalImageSelected(item)", [disabled]="!localImageSelectable(item)", (change)="toggleLocalImageSelection(item, $any($event.target).checked)", class="disabled:opacity-40")
+                                                            td(class="min-w-0 px-3 py-2.5")
+                                                                div(class="truncate font-semibold text-zinc-950 dark:text-zinc-50", [title]="displayImageField(item.repository)") {{displayImageField(item.repository)}}
+                                                                div(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400", [title]="displayImageField(item.tag)") {{displayImageField(item.tag)}}
+                                                            td(class="px-3 py-2.5")
+                                                                div(class="inline-flex whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="localUsageBadgeClass(item)") {{localUsageLabel(item)}}
+                                                                div(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400", [title]="localRunningLabel(item)") {{localRunningLabel(item)}}
+                                                            td(class="px-3 py-2.5 whitespace-nowrap text-zinc-500 dark:text-zinc-400")
+                                                                div {{formatDate(item.last_used_at)}}
+                                                                div(class="mt-0.5 text-xs") 연결 {{item.usage_count || 0}}개
+                                                            td(class="px-3 py-2.5 text-right whitespace-nowrap text-zinc-500 dark:text-zinc-400") {{item.size || '-'}}
+                                                            td(class="px-3 py-2.5 text-right")
+                                                                button(type="button", (click)="deleteLocalImage(item)", [disabled]="localBusy() || !localImageSelectable(item)", title="이미지 삭제", aria-label="이미지 삭제", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                                                    i(class="fa-solid fa-trash")
+                                                        tr(*ngIf="filteredLocalImages().length === 0")
+                                                            td(colspan="6", class="px-3 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 표시할 로컬 이미지가 없습니다.
 
 div(*ngIf="showCreateProjectModal()", class="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/60 px-4")
     div(class="w-full max-w-md rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
