@@ -9,11 +9,22 @@ MIGRATION_DIR = ROOT / "src" / "model" / "db" / "migrations"
 
 
 class MigrationSchemaStaticContractTest(unittest.TestCase):
-    def test_current_schema_migration_declares_required_tables(self):
+    def test_schema_migrations_declare_required_tables(self):
         sql_files = sorted(path.name for path in MIGRATION_DIR.glob("*.sql"))
-        self.assertEqual(sql_files, ["019_current_schema.down.sql", "019_current_schema.sql"])
+        self.assertEqual(
+            sql_files,
+            [
+                "019_current_schema.down.sql",
+                "019_current_schema.sql",
+                "020_actual_schema_cleanup.down.sql",
+                "020_actual_schema_cleanup.sql",
+            ],
+        )
 
-        sql = (MIGRATION_DIR / "019_current_schema.sql").read_text(encoding="utf-8")
+        sql = "\n".join(
+            (MIGRATION_DIR / name).read_text(encoding="utf-8")
+            for name in ["019_current_schema.sql", "020_actual_schema_cleanup.sql"]
+        )
 
         for table in [
             "system_settings",
@@ -27,6 +38,7 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
             "shell_macro_files",
             "operation_logs",
             "backup_system_settings",
+            "service_image_backups",
             "operator_auth",
             "auth_sessions",
             "auth_login_attempts",
@@ -50,6 +62,21 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
         ]:
             self.assertNotIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
             self.assertIn(f"DROP TABLE IF EXISTS {table}", sql)
+
+    def test_actual_schema_cleanup_drops_unused_tables(self):
+        sql = (MIGRATION_DIR / "020_actual_schema_cleanup.sql").read_text(encoding="utf-8")
+
+        for table in [
+            "proxy_configs",
+            "certificates",
+            "electron_setting_backups",
+        ]:
+            self.assertIn(f"DROP TABLE IF EXISTS {table}", sql)
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS service_image_backups", sql)
+        self.assertIn("service_image_backups_set_updated_at", sql)
+        self.assertIn("ALTER TABLE cloudflare_dns_records", sql)
+        self.assertIn("DROP COLUMN IF EXISTS test_run_id", sql)
 
 
 class MigrationSchemaLiveFlowTest(unittest.TestCase):

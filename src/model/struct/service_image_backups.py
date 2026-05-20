@@ -92,6 +92,19 @@ class ServiceImageBackups(actions_mixin):
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS service_image_backups_digest_idx ON service_image_backups(digest) WHERE digest IS NOT NULL"
                 )
+                cursor.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF to_regprocedure('docker_infra_set_updated_at()') IS NOT NULL THEN
+                            EXECUTE 'DROP TRIGGER IF EXISTS service_image_backups_set_updated_at ON service_image_backups';
+                            EXECUTE 'CREATE TRIGGER service_image_backups_set_updated_at
+                                BEFORE UPDATE ON service_image_backups
+                                FOR EACH ROW EXECUTE FUNCTION docker_infra_set_updated_at()';
+                        END IF;
+                    END $$;
+                    """
+                )
 
     def record(self, service, compose, compose_version_id=None, source="compose", test_run_id=None, metadata=None, env=None):
         self.ensure_schema(env=env)

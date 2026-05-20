@@ -272,3 +272,5 @@
 | 2026-05-20 | 270 | Keycloak named volume 마이그레이션 실검증 | [상세](devlog/2026-05-20/270-keycloak-volume-migration-validation.md) |
 | 2026-05-20 | 271 | 서비스 상세 서버 바로가기 버튼 위치와 새로고침 버튼 정리 | [상세](devlog/2026-05-20/271-service-detail-server-shortcut-placement.md) |
 | 2026-05-20 | 272 | 대시보드 서비스 목록 카드와 실행 경고 표시 추가 | [상세](devlog/2026-05-20/272-dashboard-service-alert-card.md) |
+| 2026-05-20 | 273 | 실제 사용 DB schema 기준으로 unused table 정리 | [상세](devlog/2026-05-20/273-db-actual-schema-cleanup.md) |
+| 2026-05-20 | 274 | 실제 DB에 schema cleanup migration 적용 | [상세](devlog/2026-05-20/274-db-actual-schema-apply.md) |

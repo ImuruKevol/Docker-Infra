@@ -10,6 +10,7 @@ local_command_catalog = wiz.model("struct/local_command_catalog")
 domains_model = wiz.model("struct/domains")
 backup_system = wiz.model("struct/backup_system")
 metric_history = wiz.model("struct/nodes_metric_history")
+webserver = wiz.model("struct/webserver")
 
 
 OPERATION_LABELS = {
@@ -88,7 +89,6 @@ class InfraCatalog:
                     "images": _count(cursor, "images"),
                     "operations": _count(cursor, "operation_logs"),
                     "cloudflare_zones": _count(cursor, "cloudflare_zones"),
-                    "certificates": _count(cursor, "certificates"),
                 }
 
     def integrations(self):
@@ -930,16 +930,7 @@ class InfraCatalog:
                     LIMIT 80
                     """,
                 )
-                certificates = _rows(
-                    cursor,
-                    """
-                    SELECT c.*, sd.domain
-                    FROM certificates c
-                    LEFT JOIN service_domains sd ON sd.id = c.service_domain_id
-                    ORDER BY c.created_at DESC
-                    LIMIT 80
-                    """,
-                )
+                certificates = webserver.load().get("certificates", [])
         return {
             "zones": zones,
             "domains": domains,
@@ -959,10 +950,7 @@ class InfraCatalog:
                     "default_timeout_seconds": spec.get("default_timeout_seconds"),
                 }
             )
-        with connect() as connection:
-            with connection.cursor() as cursor:
-                backups = _rows(cursor, "SELECT * FROM electron_setting_backups ORDER BY created_at DESC LIMIT 80")
-        return {"commands": specs, "backups": backups, "health": system.health()}
+        return {"commands": specs, "backups": [], "health": system.health()}
 
 
 Model = InfraCatalog()
