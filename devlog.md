@@ -286,3 +286,4 @@
 | 2026-05-20 | 284 | 서비스 관리와 생성 화면 초기 로딩 경량화 | [상세](devlog/2026-05-20/284-service-management-fast-load.md) |
 | 2026-05-20 | 285 | 템플릿 관리 화면 목록 API 경량화와 상세 지연 로딩 적용 | [상세](devlog/2026-05-20/285-template-management-fast-load.md) |
 | 2026-05-20 | 286 | 템플릿 상세 표준 안내 카드를 Monaco 좌측 패널로 재배치 | [상세](devlog/2026-05-20/286-template-detail-guide-left-panel.md) |
+| 2026-05-20 | 287 | 템플릿 삭제 후 목록 재조회 제거와 프론트 목록 갱신 적용 | [상세](devlog/2026-05-20/287-template-delete-local-list-update.md) |

@@ -159,6 +159,27 @@ export class Component implements OnInit {
         return this.detailCache[String(templateId || '').trim()] || null;
     }
 
+    private templateItemId(item: any) {
+        return String(item?.id || item?.namespace || '').trim();
+    }
+
+    private removeDeletedTemplateFromList(templateId: string) {
+        const key = String(templateId || '').trim();
+        if (!key) return;
+        this.templates.set(this.templates().filter((item: any) => this.templateItemId(item) !== key));
+        const nextCache = { ...this.detailCache };
+        delete nextCache[key];
+        this.detailCache = nextCache;
+        this.detailLoadRequestId += 1;
+        this.detailLoading.set(false);
+        this.selectedId.set('');
+        this.newTemplateMode.set('');
+        this.newTemplateDraftReady.set(false);
+        this.cloneLoading.set(false);
+        this.cloneSourceId.set('');
+        this.resetDetailState();
+    }
+
     private normalizeTags(value: any) {
         const raw = Array.isArray(value) ? value : String(value || '').split(',');
         const tags: string[] = [];
@@ -242,7 +263,7 @@ export class Component implements OnInit {
     }
 
     public isSelected(item: any) {
-        return (item.id || item.namespace) === this.selectedId();
+        return this.templateItemId(item) === this.selectedId();
     }
 
     public async selectTemplate(templateId: string, render: boolean = true, force: boolean = false) {
@@ -795,8 +816,9 @@ export class Component implements OnInit {
         const { code, data } = await wiz.call('delete_template', { template_id: id });
         this.busy.set(false);
         if (code === 200) {
+            this.removeDeletedTemplateFromList(id);
+            await this.service.render();
             await this.alert('템플릿을 삭제했습니다.', 'success');
-            await this.load();
         } else {
             await this.alert(data?.message || '템플릿을 삭제할 수 없습니다.');
         }
