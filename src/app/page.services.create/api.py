@@ -45,23 +45,133 @@ def _stream_events(events):
     wiz.response.response(resp)
 
 
-def load():
+def _domain_match(domain, pattern):
+    domain = str(domain or "").strip().lower()
+    pattern = str(pattern or "").strip().lower()
+    if not domain or not pattern:
+        return False
+    if pattern.startswith("*."):
+        suffix = pattern[1:]
+        return domain.endswith(suffix) and domain != suffix[1:]
+    return domain == pattern
+
+
+def _certificate_summary(certificates):
+    summary = {
+        "total": len(certificates),
+        "valid": 0,
+        "expiring": 0,
+        "expired": 0,
+        "error": 0,
+        "disabled": 0,
+        "missing": 0,
+        "key_insecure": 0,
+        "key_mismatch": 0,
+    }
+    for item in certificates:
+        key = item.get("status") or "error"
+        summary[key if key in summary else "error"] += 1
+    return summary
+
+
+def _zone_certificate_summary(certificate_cache, domain, zone_id=None):
+    certificates = []
+    for item in certificate_cache or []:
+        if zone_id and str(item.get("zone_id") or "") == str(zone_id):
+            certificates.append(item)
+            continue
+        names = [item.get("domain"), *((item.get("dns_names") or []))]
+        if any(_domain_match(domain, hostname) for hostname in names):
+            certificates.append(item)
+    return _certificate_summary(certificates)
+
+
+def _domain_options_payload():
     domains_model = wiz.model("struct").domains
     webserver = wiz.model("struct/webserver")
+    zones = []
+    certificate_cache = None
+    for zone in domains_model.service_options().get("zones", []):
+        if zone.get("provider") == "ddns":
+            zones.append(zone)
+            continue
+        if certificate_cache is None:
+            certificate_cache = webserver.load().get("certificates") or []
+        zones.append({
+            **zone,
+            "certificate_summary": _zone_certificate_summary(
+                certificate_cache,
+                zone.get("domain"),
+                zone_id=zone.get("id"),
+            ),
+        })
+    return {"zones": zones}
+
+
+def load():
+    templates_model = wiz.model("struct").templates
     code = 200
     payload = {}
     try:
-        zones = []
-        for zone in domains_model.service_options().get("zones", []):
-            if zone.get("provider") == "ddns":
-                zones.append(zone)
-                continue
-            certs = webserver.certificates_for_domain(zone.get("domain"), zone_id=zone.get("id"))
-            zones.append({**zone, "certificate_summary": certs.get("summary") or {}})
-        payload = {"zones": zones}
+        templates_payload = templates_model.load_summaries()
+        payload = {"templates": templates_payload.get("enabled_templates") or []}
     except RuntimeError as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def domain_options():
+    code = 200
+    payload = {}
+    try:
+        payload = _domain_options_payload()
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def template_detail():
+    templates_model = wiz.model("struct").templates
+    body = wiz.request.query()
+    template_id = body.get("template_id") or body.get("id")
+    if not template_id:
+        wiz.response.status(400, message="template_id가 필요합니다.", error_code="TEMPLATE_ID_REQUIRED")
+        return
+    code = 200
+    payload = {}
+    try:
+        payload = templates_model.detail(template_id)
+    except templates_model.TemplateError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def prepare_template_draft():
+    templates_model = wiz.model("struct").templates
+    body = wiz.request.query()
+    code = 200
+    payload = {}
+    try:
+        payload = templates_model.prepare_service_draft(body)
+    except templates_model.TemplateError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except templates_model.ComposeValidationError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}
+    except Exception as exc:
+        code = getattr(exc, "status_code", 400)
+        payload = {
+            "message": getattr(exc, "message", str(exc)),
+            "error_code": getattr(exc, "error_code", "TEMPLATE_DRAFT_FAILED"),
+            **getattr(exc, "extra", {}),
+        }
     wiz.response.status(code, **payload)
 
 

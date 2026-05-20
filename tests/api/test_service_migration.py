@@ -24,8 +24,9 @@ class ServiceMigrationStaticContractTest(unittest.TestCase):
 
         self.assertIn('ServiceMigrationMixin = wiz.model("struct/services_migration")', services_model)
         self.assertIn("def migrate_service():", services_api)
+        self.assertIn("def support_options():", services_api)
         self.assertIn('nodes_model = wiz.model("struct").nodes', services_api)
-        self.assertIn('payload["nodes"] = nodes_model.list()', services_api)
+        self.assertIn('payload = {"nodes": nodes_model.list()}', services_api)
         self.assertIn("services_model.migrate_background", services_api)
 
         self.assertIn('"service.migrate"', migration_model)

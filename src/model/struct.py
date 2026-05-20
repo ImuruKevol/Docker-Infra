@@ -104,6 +104,10 @@ class Struct:
         return self._load("services_wizard")
 
     @property
+    def templates(self):
+        return self._load("templates")
+
+    @property
     def services_ports(self):
         return self._load("services_ports")
 

@@ -231,33 +231,36 @@ class ServiceRuntimeMixin:
         except Exception:
             return runtime
 
-    def detail_overview(self, service_id, env=None):
+    def detail_overview(self, service_id, env=None, include_certificates=True, include_operations=True):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 service = self._service_row(cursor, service_id)
                 domains = self._domains(cursor, service_id)
-                operations = self._operations(
-                    cursor,
-                    service_id,
-                    service.get("namespace"),
-                    limit=5,
-                    include_output=False,
-                    allow_legacy=False,
-                )
-        try:
-            free_certificates = self.service_certificates(domains, env=env)
-        except Exception:
-            free_certificates = []
+                operations = []
+                if include_operations:
+                    operations = self._operations(
+                        cursor,
+                        service_id,
+                        service.get("namespace"),
+                        limit=5,
+                        include_output=False,
+                        allow_legacy=False,
+                    )
         root = self._service_root(service)
-        return {
+        payload = {
             "service": service,
             "domains": domains,
-            "free_certificates": free_certificates,
             "operations": operations,
             "file_root": str(root),
             "runtime_status": self._runtime_status_payload(service, env=env),
             "backup_system": _backup_system_status(env=env),
         }
+        if include_certificates:
+            try:
+                payload["free_certificates"] = self.service_certificates(domains, env=env)
+            except Exception:
+                payload["free_certificates"] = []
+        return payload
 
     def detail_logs(self, service_id, env=None):
         with connect(env=env) as connection:

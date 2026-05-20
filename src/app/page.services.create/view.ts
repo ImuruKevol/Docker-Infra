@@ -2,21 +2,29 @@ import { OnInit, signal } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
 
 type StepId = 1 | 2 | 3 | 4;
+type CreationMode = 'template' | 'ai' | 'manual';
 
 export class Component implements OnInit {
     public loading = signal<boolean>(true);
     public busy = signal<boolean>(false);
     public preflightLoading = signal<boolean>(false);
+    public domainsLoading = signal<boolean>(false);
     public error = signal<string>('');
     public step = signal<StepId>(1);
+    public creationMode = signal<CreationMode>('template');
     public advancedSettings = signal<boolean>(false);
     public manualComposeOpen = signal<boolean>(false);
     public importLoading = signal<boolean>(false);
     public manualBusy = signal<boolean>(false);
     public aiBusy = signal<boolean>(false);
+    public templateBusy = signal<boolean>(false);
+    public templateLoading = signal<boolean>(false);
     public importSource = signal<any>(null);
     public importWarnings = signal<any[]>([]);
     public draftSource = signal<string>('');
+    public templates = signal<any[]>([]);
+    public selectedTemplateId = signal<string>('');
+    public templateDetail = signal<any>(null);
     public zones = signal<any[]>([]);
     public baseContent = '';
     public manualCompose = '';
@@ -32,6 +40,8 @@ export class Component implements OnInit {
     };
     public generatedSecretKeys: string[] = [];
     public draftMetadata: any = {};
+    public draftSourceRef: any = null;
+    public templateValues: any = {};
     public imageChecks: any = {};
     public preflight = signal<any>(null);
     public form: any = {
@@ -57,6 +67,11 @@ export class Component implements OnInit {
     public preflightOk = false;
     public createSessionId = `svc-create-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     public createdServiceId = '';
+    private templateDetailRequestSeq = 0;
+    private zonesLoaded = false;
+    private zonesRequest: Promise<boolean> | null = null;
+    private aiModelOptionsLoaded = false;
+    private aiModelOptionsRequest: Promise<boolean> | null = null;
 
     constructor(public service: Service) { }
 
@@ -64,27 +79,45 @@ export class Component implements OnInit {
         await this.service.init();
         this.syncManualComposeEditorTheme();
         await this.load();
-        await this.loadAiModelOptions();
+        this.ensureAiModelOptions(true).catch(() => null);
         if (!this.error()) await this.loadImportFromQuery();
+    }
+
+    private hasOwn(value: any, key: string) {
+        return Object.prototype.hasOwnProperty.call(value || {}, key);
     }
 
     public async load() {
         this.loading.set(true);
+        this.error.set('');
         const { code, data } = await wiz.call('load', {});
         if (code === 200) {
-            this.zones.set(data.zones || []);
+            if (this.hasOwn(data, 'zones')) {
+                this.zones.set(data.zones || []);
+                this.zonesLoaded = true;
+            }
+            const templates = data.templates || [];
+            this.templates.set(templates);
+            const templateFromQuery = this.templateIdFromQuery();
+            this.selectedTemplateId.set(templateFromQuery || templates[0]?.id || templates[0]?.namespace || '');
+            this.creationMode.set((templateFromQuery || templates.length) ? 'template' : 'ai');
             this.baseContent = '';
             this.manualCompose = '';
             this.draftSource.set('');
             this.generatedSecretKeys = [];
             this.draftMetadata = {};
+            this.draftSourceRef = null;
             this.components = [];
             this.ensureDomainTarget();
+            this.templateDetail.set(null);
         } else {
             this.error.set(data?.message || '서비스 생성 정보를 불러올 수 없습니다.');
         }
         this.loading.set(false);
         await this.service.render();
+        if (code === 200 && this.selectedTemplateId()) {
+            this.loadTemplateDetail(this.selectedTemplateId(), true).catch(() => null);
+        }
     }
 
     private applyComposeDraft(data: any, source: string) {
@@ -98,6 +131,7 @@ export class Component implements OnInit {
         this.importWarnings.set(data?.warnings || []);
         this.draftSource.set(source || data?.source || 'manual_compose');
         this.draftMetadata = this.composeDraftMetadata(data, this.draftSource());
+        this.draftSourceRef = data?.source_ref || null;
         if (!String(this.form.name || '').trim()) {
             this.form.name = data?.suggested_name || data?.draft?.form?.name || this.form.name;
         }
@@ -118,28 +152,214 @@ export class Component implements OnInit {
             warnings: data?.warnings || [],
             notes: draft?.notes || data?.notes || [],
             provider: data?.provider || null,
+            template: data?.template || null,
+            values: data?.values || null,
             intent: source === 'ai_draft' ? String(this.aiForm.intent || '').trim() : '',
             model_ref: source === 'ai_draft' ? (this.aiForm.model_ref || this.aiDefaultModelRef() || 'auto') : '',
         };
     }
 
-    public async loadAiModelOptions() {
-        const { code, data } = await wiz.call('ai_model_options', {});
-        if (code === 200) {
-            const options = data.options || [];
-            this.aiModelOptions.set(options);
-            this.aiAvailable.set(options.length > 0);
-            this.aiUnavailableMessage.set(options.length ? '' : (data.message || '시스템 설정에서 사용 중인 AI 모델이 없습니다.'));
-            this.aiDefaultModelRef.set(data.default_model_ref || '');
-            this.aiForm.model_ref = data.default_model_ref || '';
-            if (!options.length && !this.baseContent) {
-                this.manualComposeOpen.set(true);
+    private templateIdFromQuery() {
+        const params = new URLSearchParams(window.location.search || '');
+        return String(params.get('template_id') || params.get('template') || '').trim();
+    }
+
+    public templateSelectorItems() {
+        return this.templates().map((item: any) => ({
+            value: item.id || item.namespace,
+            label: item.name || item.namespace,
+            description: item.readme_excerpt || '',
+            badge: this.templateBadge(item),
+            badgeClass: 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300',
+        }));
+    }
+
+    private normalizeTemplateTags(item: any) {
+        const metadata = item?.metadata || {};
+        const raw = Array.isArray(metadata.tags) ? metadata.tags : String(metadata.tags || metadata.category || '').split(',');
+        const tags: string[] = [];
+        for (const value of raw) {
+            const tag = String(value || '').trim();
+            if (tag && !tags.includes(tag)) tags.push(tag);
+        }
+        return tags;
+    }
+
+    public templateBadge(item: any) {
+        return this.normalizeTemplateTags(item)[0] || 'compose';
+    }
+
+    public selectedTemplate() {
+        const id = this.selectedTemplateId();
+        return this.templates().find((item: any) => (item.id || item.namespace) === id) || null;
+    }
+
+    public templateFields() {
+        const fields = this.templateDetail()?.fields || [];
+        return fields.filter((field: any) => field.name !== 'namespace' && field.name !== 'service_name');
+    }
+
+    public visibleTemplateFields() {
+        return this.templateFields().filter((field: any) => !field.secret);
+    }
+
+    public secretTemplateFields() {
+        return this.templateFields().filter((field: any) => field.secret);
+    }
+
+    public selectedTemplateReadme() {
+        return String(this.templateDetail()?.files?.readme || this.templateDetail()?.readme || '').trim();
+    }
+
+    private initialTemplateValues(detail: any) {
+        const values = { ...(detail?.values || {}) };
+        for (const field of detail?.fields || []) {
+            if (values[field.name] === undefined && field.default !== undefined) values[field.name] = field.default;
+        }
+        return values;
+    }
+
+    public async selectTemplate(templateId: string) {
+        this.selectedTemplateId.set(templateId || '');
+        this.templateDetail.set(null);
+        await this.loadTemplateDetail(templateId, true);
+    }
+
+    public async loadTemplateDetail(templateId: string = this.selectedTemplateId(), rerender: boolean = true) {
+        templateId = String(templateId || '').trim();
+        if (!templateId) return;
+        const requestSeq = ++this.templateDetailRequestSeq;
+        this.templateLoading.set(true);
+        if (rerender) await this.service.render();
+        try {
+            const { code, data } = await wiz.call('template_detail', { template_id: templateId });
+            if (requestSeq !== this.templateDetailRequestSeq || this.selectedTemplateId() !== templateId) return;
+            if (code === 200) {
+                const detail = data.template || null;
+                this.templateDetail.set(detail);
+                this.templateValues = this.initialTemplateValues(detail);
+            } else {
+                await this.alert(data?.message || '템플릿 정보를 불러올 수 없습니다.');
             }
+        } catch (error: any) {
+            if (requestSeq === this.templateDetailRequestSeq && this.selectedTemplateId() === templateId) {
+                await this.alert(error?.message || '템플릿 정보를 불러올 수 없습니다.');
+            }
+        } finally {
+            if (requestSeq === this.templateDetailRequestSeq) this.templateLoading.set(false);
+        }
+        if (rerender) await this.service.render();
+    }
+
+    public templateFieldInputType(field: any) {
+        if (field?.secret) return 'password';
+        if (field?.type === 'integer' || field?.type === 'number') return 'number';
+        return 'text';
+    }
+
+    public async applyTemplateDraft() {
+        const templateId = this.selectedTemplateId();
+        if (!templateId) {
+            await this.alert('사용할 템플릿을 선택해주세요.');
+            return;
+        }
+        if (!String(this.form.name || '').trim()) {
+            await this.alert('서비스 이름을 입력해주세요.');
+            return;
+        }
+        this.templateBusy.set(true);
+        const { code, data } = await wiz.call('prepare_template_draft', {
+            template_id: templateId,
+            name: this.form.name,
+            values: this.templateValues,
+        });
+        if (code === 200) {
+            this.importSource.set(null);
+            this.applyComposeDraft(data, 'compose_template');
+            this.step.set(2);
+            await this.alert('템플릿 초안을 적용했습니다. 다음 단계에서 구성을 확인하세요.', 'success');
         } else {
+            await this.alert(this.formatComposeError(data, '템플릿 초안을 적용할 수 없습니다.'));
+        }
+        this.templateBusy.set(false);
+        await this.service.render();
+    }
+
+    public async loadAiModelOptions() {
+        try {
+            const { code, data } = await wiz.call('ai_model_options', {});
+            this.aiModelOptionsLoaded = true;
+            if (code === 200) {
+                const options = data.options || [];
+                this.aiModelOptions.set(options);
+                this.aiAvailable.set(options.length > 0);
+                this.aiUnavailableMessage.set(options.length ? '' : (data.message || '시스템 설정에서 사용 중인 AI 모델이 없습니다.'));
+                this.aiDefaultModelRef.set(data.default_model_ref || '');
+                this.aiForm.model_ref = data.default_model_ref || '';
+                this.normalizeCreationMode();
+                await this.service.render();
+                return options.length > 0;
+            }
             this.aiModelOptions.set([]);
             this.aiAvailable.set(false);
             this.aiUnavailableMessage.set(data?.message || 'AI 모델 목록을 불러올 수 없습니다.');
-            if (!this.baseContent) this.manualComposeOpen.set(true);
+            this.normalizeCreationMode();
+            await this.service.render();
+            return false;
+        } catch (error: any) {
+            this.aiModelOptionsLoaded = true;
+            this.aiModelOptions.set([]);
+            this.aiAvailable.set(false);
+            this.aiUnavailableMessage.set(error?.message || 'AI 모델 목록을 불러올 수 없습니다.');
+            this.normalizeCreationMode();
+            await this.service.render();
+            return false;
+        }
+    }
+
+    private async ensureAiModelOptions(silent: boolean = false) {
+        if (this.aiModelOptionsLoaded) return this.hasAiModels();
+        if (this.aiModelOptionsRequest) return await this.aiModelOptionsRequest;
+        this.aiModelOptionsRequest = this.loadAiModelOptions();
+        try {
+            return await this.aiModelOptionsRequest;
+        } finally {
+            this.aiModelOptionsRequest = null;
+        }
+    }
+
+    private async loadDomainOptions(silent: boolean = false) {
+        this.domainsLoading.set(true);
+        try {
+            const { code, data } = await wiz.call('domain_options', {});
+            if (code === 200) {
+                this.zones.set(data.zones || []);
+                this.zonesLoaded = true;
+                if (this.form.domain_mode === 'registered' && !this.form.zone_id && this.zones()[0]) {
+                    this.form.zone_id = this.zones()[0].id;
+                }
+                this.syncDomain();
+                return true;
+            }
+            if (!silent) await this.alert(data?.message || '도메인 목록을 불러올 수 없습니다.');
+            return false;
+        } catch (error: any) {
+            if (!silent) await this.alert(error?.message || '도메인 목록을 불러올 수 없습니다.');
+            return false;
+        } finally {
+            this.domainsLoading.set(false);
+            await this.service.render();
+        }
+    }
+
+    private async ensureDomainOptions(silent: boolean = false) {
+        if (this.zonesLoaded) return true;
+        if (this.zonesRequest) return await this.zonesRequest;
+        this.zonesRequest = this.loadDomainOptions(silent);
+        try {
+            return await this.zonesRequest;
+        } finally {
+            this.zonesRequest = null;
         }
     }
 
@@ -168,6 +388,8 @@ export class Component implements OnInit {
         if (code === 200) {
             this.importSource.set(data.source_ref || null);
             this.applyComposeDraft(data, 'server_compose_import');
+            this.creationMode.set('manual');
+            this.manualComposeOpen.set(true);
             this.form.name = data.suggested_name || query.suggested_name || this.form.name;
             this.form.description = this.form.description || '서버에 있던 Compose 파일을 가져와 생성합니다.';
         } else {
@@ -178,13 +400,75 @@ export class Component implements OnInit {
     }
 
     public steps() {
-        const draftDescription = this.hasAiModels() ? 'AI 또는 Compose' : 'Compose 직접 작성';
+        const draftDescription = this.hasAiModels() ? '템플릿, AI 또는 직접 작성' : '템플릿 또는 직접 작성';
         return [
             { id: 1, title: '서비스 초안', description: draftDescription },
             { id: 2, title: '구성 확인', description: '이미지, 연결 포트, 고급 설정' },
             { id: 3, title: '도메인', description: '접속 주소' },
             { id: 4, title: '확인', description: '저장 또는 배포' },
         ];
+    }
+
+    public creationModeCards() {
+        return [
+            {
+                id: 'template',
+                icon: 'fa-layer-group',
+                title: '템플릿 기반',
+                description: this.templates().length ? '표준 Compose 템플릿에 필요한 변수만 입력합니다.' : '등록된 템플릿이 없습니다.',
+                badge: this.templates().length ? `${this.templates().length}개` : '',
+                disabled: !this.templates().length,
+            },
+            {
+                id: 'ai',
+                icon: 'fa-wand-magic-sparkles',
+                title: 'AI 자동 구성',
+                description: this.hasAiModels() ? '요구사항을 설명하면 이미지, 포트, 도메인 초안을 만듭니다.' : (this.aiUnavailableMessage() || '사용 가능한 AI 모델이 없습니다.'),
+                badge: this.hasAiModels() ? '자동' : '',
+                disabled: !this.hasAiModels(),
+            },
+            {
+                id: 'manual',
+                icon: 'fa-code',
+                title: '직접 작성',
+                description: 'Compose YAML을 붙여넣거나 직접 작성해 초안을 만듭니다.',
+                badge: 'Compose',
+                disabled: false,
+            },
+        ];
+    }
+
+    private normalizeCreationMode() {
+        const mode = this.creationMode();
+        if (mode === 'template' && !this.templates().length) {
+            this.creationMode.set(this.hasAiModels() ? 'ai' : 'manual');
+        }
+        if (mode === 'ai' && !this.hasAiModels()) {
+            this.creationMode.set(this.templates().length ? 'template' : 'manual');
+        }
+        if (this.creationMode() === 'manual' && !this.baseContent) {
+            this.manualComposeOpen.set(true);
+            this.syncManualComposeEditorTheme();
+        }
+    }
+
+    public async selectCreationMode(mode: string) {
+        const nextMode = mode as CreationMode;
+        if (nextMode === 'template' && !this.templates().length) {
+            await this.alert('사용할 수 있는 템플릿이 없습니다.');
+            return;
+        }
+        if (nextMode === 'ai') await this.ensureAiModelOptions();
+        if (nextMode === 'ai' && !this.hasAiModels()) {
+            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
+            return;
+        }
+        this.creationMode.set(nextMode);
+        if (nextMode === 'manual') {
+            this.manualComposeOpen.set(true);
+            this.syncManualComposeEditorTheme();
+        }
+        await this.service.render();
     }
 
     public zoneSelectorItems() {
@@ -516,6 +800,7 @@ export class Component implements OnInit {
         this.importSource.set(null);
         this.importWarnings.set(data?.warnings || []);
         this.draftSource.set('ai_draft');
+        this.draftSourceRef = data?.source_ref || null;
         this.draftMetadata = this.composeDraftMetadata(data, 'ai_draft');
         this.ensureDomainTarget();
         this.syncDomain();
@@ -530,6 +815,7 @@ export class Component implements OnInit {
     }
 
     public async generateServiceWithAi() {
+        await this.ensureAiModelOptions();
         if (!this.hasAiModels()) {
             this.manualComposeOpen.set(true);
             await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
@@ -541,6 +827,7 @@ export class Component implements OnInit {
             await this.alert('만들고 싶은 서비스를 한 줄 이상 입력해주세요.');
             return;
         }
+        await this.ensureDomainOptions(true);
         this.aiBusy.set(true);
         this.resetAiStream();
         try {
@@ -586,6 +873,7 @@ export class Component implements OnInit {
                 return;
             }
         }
+        if (step === 3) await this.ensureDomainOptions(true);
         this.step.set(step);
         if (step === 4) await this.runPreflight(false);
         await this.service.render();
@@ -601,7 +889,7 @@ export class Component implements OnInit {
 
     public async validateStep(step: StepId = this.step()) {
         if (step === 1 && !this.baseContent.trim()) {
-            await this.alert(this.hasAiModels() ? 'AI로 서비스 초안을 만들거나 Compose 초안을 직접 적용해주세요.' : 'Compose 초안을 직접 작성해 적용해주세요.');
+            await this.alert(this.hasAiModels() ? '템플릿, AI 또는 직접 작성으로 서비스 초안을 만들어주세요.' : '템플릿을 적용하거나 Compose 초안을 직접 작성해 적용해주세요.');
             return false;
         }
         if (step === 1 && !String(this.form.name || '').trim()) {
@@ -621,6 +909,7 @@ export class Component implements OnInit {
             }
         }
         if (step === 3 && this.form.domain_mode === 'registered') {
+            if (!(await this.ensureDomainOptions())) return false;
             this.syncDomain();
             if (!this.hasConnectablePorts()) {
                 await this.alert('도메인에 연결할 포트를 먼저 추가해주세요.');
@@ -734,6 +1023,14 @@ export class Component implements OnInit {
             await this.service.render();
             return;
         }
+        if (mode === 'registered' && !(await this.ensureDomainOptions())) return;
+        if (mode === 'registered' && this.zones().length === 0) {
+            this.form.domain_mode = 'none';
+            this.syncDomain();
+            await this.alert('등록된 도메인이 없습니다.');
+            await this.service.render();
+            return;
+        }
         this.form.domain_mode = mode;
         if (mode === 'registered' && !this.form.zone_id && this.zones()[0]) {
             this.form.zone_id = this.zones()[0].id;
@@ -799,7 +1096,7 @@ export class Component implements OnInit {
         const draftMetadata = { ...(this.draftMetadata || {}), create_session_id: this.createSessionId };
         const sourceRef = this.importSource()
             ? { ...this.importSource(), create_session_id: this.createSessionId }
-            : { source, wizard: 'services.create', create_session_id: this.createSessionId };
+            : { ...(this.draftSourceRef || { source, wizard: 'services.create' }), source, create_session_id: this.createSessionId };
         return {
             ...this.form,
             base_content: this.baseContent,

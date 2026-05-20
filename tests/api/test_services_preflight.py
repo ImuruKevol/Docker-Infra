@@ -10,6 +10,9 @@ ROOT = Path(__file__).resolve().parents[2]
 CREATE_API = ROOT / "src" / "app" / "page.services.create" / "api.py"
 CREATE_VIEW = ROOT / "src" / "app" / "page.services.create" / "view.ts"
 CREATE_TEMPLATE = ROOT / "src" / "app" / "page.services.create" / "view.pug"
+TEMPLATES_API = ROOT / "src" / "app" / "page.templates" / "api.py"
+TEMPLATES_VIEW = ROOT / "src" / "app" / "page.templates" / "view.ts"
+TEMPLATES_TEMPLATE = ROOT / "src" / "app" / "page.templates" / "view.pug"
 SERVERS_VIEW = ROOT / "src" / "app" / "page.servers" / "view.ts"
 SERVERS_TEMPLATE = ROOT / "src" / "app" / "page.servers" / "view.pug"
 SERVICES_API = ROOT / "src" / "app" / "page.services" / "api.py"
@@ -25,6 +28,8 @@ SNAPSHOT_RUNNER_MODEL = ROOT / "src" / "model" / "struct" / "service_image_snaps
 STATUS_MODEL = ROOT / "src" / "model" / "struct" / "services_status.py"
 FLOW_MODEL = ROOT / "src" / "model" / "struct" / "services_flow.py"
 WIZARD_MODEL = ROOT / "src" / "model" / "struct" / "services_wizard.py"
+TEMPLATES_MODEL = ROOT / "src" / "model" / "struct" / "templates.py"
+TEMPLATES_SEED_MODEL = ROOT / "src" / "model" / "struct" / "templates_seed.py"
 AI_ASSISTANT_MODEL = ROOT / "src" / "model" / "struct" / "ai_assistant.py"
 CODEX_RUNTIME_MODEL = ROOT / "src" / "model" / "struct" / "codex_runtime.py"
 DOCKER_INFRA_MCP = ROOT / "tools" / "docker_infra_mcp.py"
@@ -172,10 +177,15 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("import_node_id", servers_view)
         self.assertIn("생성 화면으로 이동", servers_template)
 
-    def test_service_create_uses_draft_sources_without_templates(self):
+    def test_service_create_supports_templates_and_draft_sources(self):
         api = CREATE_API.read_text(encoding="utf-8")
         view = CREATE_VIEW.read_text(encoding="utf-8")
         template = CREATE_TEMPLATE.read_text(encoding="utf-8")
+        templates_api = TEMPLATES_API.read_text(encoding="utf-8")
+        templates_view = TEMPLATES_VIEW.read_text(encoding="utf-8")
+        templates_template = TEMPLATES_TEMPLATE.read_text(encoding="utf-8")
+        templates_model = TEMPLATES_MODEL.read_text(encoding="utf-8")
+        templates_seed = TEMPLATES_SEED_MODEL.read_text(encoding="utf-8")
         wizard = WIZARD_MODEL.read_text(encoding="utf-8")
         assistant = AI_ASSISTANT_MODEL.read_text(encoding="utf-8")
         codex_runtime = CODEX_RUNTIME_MODEL.read_text(encoding="utf-8")
@@ -184,21 +194,94 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         local_commands = LOCAL_COMMAND_MODEL.read_text(encoding="utf-8")
 
         self.assertIn("def prepare_compose_draft():", api)
+        self.assertIn("def template_detail():", api)
+        self.assertIn("def prepare_template_draft():", api)
         self.assertIn("prepare_manual", api)
         self.assertIn("public async applyManualCompose", view)
+        self.assertIn("public async applyTemplateDraft", view)
         self.assertIn("applyComposeDraft", view)
         self.assertIn("draft_metadata", view)
+        self.assertIn("draftSourceRef", view)
+        self.assertIn("compose_template", view)
         self.assertIn("manual_compose", view)
         self.assertIn("manualComposeEditorOptions", view)
+        self.assertIn("templateSelectorItems", view)
+        self.assertIn("selectedTemplateId", view)
+        self.assertIn("selectedTemplateReadme", view)
+        self.assertIn("creationModeCards", view)
+        self.assertIn("selectCreationMode", view)
+        self.assertIn("템플릿 기반", view)
+        self.assertIn("readme_excerpt", view)
         self.assertIn("const detailRows = Array.isArray(data?.details) ? data.details : []", view)
         self.assertIn("[data?.reason, ...detailRows]", view)
         self.assertIn("manualComposeOpen.set(true)", view)
         self.assertIn("hasAiModels()", view)
         self.assertIn("server_compose_import", view)
+        self.assertIn("Compose 템플릿", template)
+        self.assertIn("템플릿 적용", template)
+        self.assertIn("selectedTemplateReadme()", template)
         self.assertIn("Compose 직접 작성", template)
         self.assertIn("nu-monaco-editor", template)
-        self.assertIn('*ngIf="hasAiModels()"', template)
-        self.assertIn('*ngIf="!hasAiModels()"', template)
+        self.assertIn("AI 자동 구성", template)
+        self.assertIn("직접 작성", template)
+        self.assertIn("creationMode() === 'ai' && hasAiModels()", template)
+        self.assertIn("creationMode() === 'manual'", template)
+        self.assertIn("class Templates", templates_model)
+        self.assertIn("prepare_service_draft", templates_model)
+        self.assertIn("values.schema.json", templates_model)
+        self.assertIn("readme_excerpt", templates_model)
+        self.assertIn("TEMPLATE_README_REQUIRED", templates_model)
+        self.assertIn("WIZ Framework 개발환경", templates_seed)
+        self.assertIn('"tags": tags', templates_seed)
+        self.assertIn("def save_template():", templates_api)
+        self.assertIn("def preview_template():", templates_api)
+        self.assertIn("def ai_model_options():", templates_api)
+        self.assertIn("def ai_contract():", templates_api)
+        self.assertIn("def stream_template_ai():", templates_api)
+        self.assertIn("public useTemplate", templates_view)
+        self.assertIn("activeEditorOptions", templates_view)
+        self.assertIn("setActiveTab", templates_view)
+        self.assertIn("detailCache", templates_view)
+        self.assertIn("handleTagKeydown", templates_view)
+        self.assertIn("loadAiContract", templates_view)
+        self.assertIn("templateAiModalOpen", templates_view)
+        self.assertIn("newTemplateMode", templates_view)
+        self.assertIn("cloneSourceId", templates_view)
+        self.assertIn("cloneTemplateOptions", templates_view)
+        self.assertIn("chooseNewTemplateMode", templates_view)
+        self.assertIn("showTemplateEditor", templates_view)
+        self.assertIn("templateStandardGuide", templates_view)
+        self.assertIn("templateAiTargetRows", templates_view)
+        self.assertIn("Compose 탭 표준", templates_view)
+        self.assertIn("기본값 탭 표준", templates_view)
+        self.assertIn("Schema 탭 표준", templates_view)
+        self.assertIn("generateTemplateWithAi", templates_view)
+        self.assertIn("streamTemplateAi", templates_view)
+        self.assertIn("Compose 템플릿", templates_template)
+        self.assertIn("작성 방식을 선택하세요.", templates_template)
+        self.assertIn("AI로 초안 작성", templates_template)
+        self.assertIn("직접 작성", templates_template)
+        self.assertIn("기반 템플릿", templates_template)
+        self.assertIn("AI 템플릿 초안", templates_template)
+        self.assertIn('*ngIf="newTemplateMode() === \'ai\' && !newTemplateDraftReady()"', templates_template)
+        self.assertIn('*ngIf="showTemplateEditor()"', templates_template)
+        self.assertIn("AI 수정/점검", templates_template)
+        self.assertNotIn("AI 허용 범위", templates_template)
+        self.assertIn("AI로 초안 만들기", templates_template)
+        self.assertIn("입력 후 Enter", templates_template)
+        self.assertNotIn("대표 이미지", templates_template)
+        self.assertNotIn("[(ngModel)]=\"form.description\"", templates_template)
+        self.assertIn('[options]="activeEditorOptions"', templates_template)
+        self.assertIn("template_contract", assistant)
+        self.assertIn("template_ai_policy", assistant)
+        self.assertIn('"compose_template"', assistant)
+        self.assertIn('"can_save_template": False', assistant)
+        self.assertIn('"forbidden_tool_families"', assistant)
+        self.assertIn('"placeholder_format": "{{ variable_name }}"', assistant)
+        self.assertIn("stream_template", assistant)
+        self.assertIn("AI_TEMPLATE_README_REQUIRED", assistant)
+        self.assertIn("COMPOSE_TEMPLATE_MCP_TOOLS", codex_runtime)
+        self.assertIn('"compose_template": COMPOSE_TEMPLATE_MCP_TOOLS', codex_runtime)
         self.assertIn("SERVICE_DRAFT_REQUIRED", wizard)
         self.assertIn("def prepare_manual", wizard)
         self.assertIn("draft_metadata", wizard)
@@ -290,9 +373,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("브라우저 점검", services_view)
         self.assertIn("백그라운드 작업 진행 중", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         self.assertIn("추가 코멘트", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
-        for token in ["template_detail", "selectedTemplateId", "templateLoading", "templateSelectorItems", "template_id"]:
-            self.assertNotIn(token, api)
-            self.assertNotIn(token, view)
+        self.assertIn("compose_template: 'Compose 템플릿'", SERVICES_VIEW.read_text(encoding="utf-8"))
 
     def test_service_management_hides_ambiguous_lifecycle_status(self):
         view = SERVICES_VIEW.read_text(encoding="utf-8")

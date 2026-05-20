@@ -1,5 +1,6 @@
 # 템플릿 기능 제거 TODO
 
+- 상태: 2026-05-20 Compose 템플릿 기능이 파일 기반 표준으로 재도입되어 이 문서는 과거 제거 작업 기록으로만 유지한다. 신규 기준은 `docs/compose-template-standard.md`를 따른다.
 - 작성일: 2026-05-11
 - 최근 갱신: 2026-05-11
 - 대상 화면: `/services`, `/services/create`, 기존 `/templates`

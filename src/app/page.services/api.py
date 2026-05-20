@@ -35,6 +35,69 @@ def _truthy(value):
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _domain_match(domain, pattern):
+    domain = str(domain or "").strip().lower()
+    pattern = str(pattern or "").strip().lower()
+    if not domain or not pattern:
+        return False
+    if pattern.startswith("*."):
+        suffix = pattern[1:]
+        return domain.endswith(suffix) and domain != suffix[1:]
+    return domain == pattern
+
+
+def _certificate_summary(certificates):
+    summary = {
+        "total": len(certificates),
+        "valid": 0,
+        "expiring": 0,
+        "expired": 0,
+        "error": 0,
+        "disabled": 0,
+        "missing": 0,
+        "key_insecure": 0,
+        "key_mismatch": 0,
+    }
+    for item in certificates:
+        key = item.get("status") or "error"
+        summary[key if key in summary else "error"] += 1
+    return summary
+
+
+def _zone_certificate_summary(certificate_cache, domain, zone_id=None):
+    certificates = []
+    for item in certificate_cache or []:
+        if zone_id and str(item.get("zone_id") or "") == str(zone_id):
+            certificates.append(item)
+            continue
+        names = [item.get("domain"), *((item.get("dns_names") or []))]
+        if any(_domain_match(domain, hostname) for hostname in names):
+            certificates.append(item)
+    return _certificate_summary(certificates)
+
+
+def _service_zone_options():
+    domains_model = wiz.model("struct").domains
+    webserver = wiz.model("struct/webserver")
+    zones = []
+    certificate_cache = None
+    for zone in domains_model.service_options().get("zones", []):
+        if zone.get("provider") == "ddns":
+            zones.append(zone)
+            continue
+        if certificate_cache is None:
+            certificate_cache = webserver.load().get("certificates") or []
+        zones.append({
+            **zone,
+            "certificate_summary": _zone_certificate_summary(
+                certificate_cache,
+                zone.get("domain"),
+                zone_id=zone.get("id"),
+            ),
+        })
+    return {"zones": zones}
+
+
 def _stream_events(events):
     flask = wiz.response._flask
 
@@ -120,9 +183,13 @@ def _service_detail_payload(service_id):
     return payload
 
 
-def _service_overview_payload(service_id):
+def _service_overview_payload(service_id, lightweight=False):
     services_model = wiz.model("struct").services
-    payload = services_model.detail_overview(service_id)
+    payload = services_model.detail_overview(
+        service_id,
+        include_certificates=not lightweight,
+        include_operations=False,
+    )
     payload["detail_sections"] = {"overview": True, "logs": False, "source": False, "files": True, "versions": False}
     return payload
 
@@ -136,13 +203,25 @@ def _service_advanced_payload(service_id):
 
 def load():
     catalog = wiz.model("struct/infra_catalog_registry")
-    nodes_model = wiz.model("struct").nodes
     code = 200
     payload = {}
 
     try:
         payload = catalog.services()
-        payload["nodes"] = nodes_model.list()
+    except DATABASE_ERRORS as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def support_options():
+    nodes_model = wiz.model("struct").nodes
+    code = 200
+    payload = {}
+
+    try:
+        payload = {"nodes": nodes_model.list()}
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
@@ -151,20 +230,11 @@ def load():
 
 
 def edit_options():
-    domains_model = wiz.model("struct").domains
-    webserver = wiz.model("struct/webserver")
     code = 200
     payload = {}
 
     try:
-        zones = []
-        for zone in domains_model.service_options().get("zones", []):
-            if zone.get("provider") == "ddns":
-                zones.append(zone)
-                continue
-            certs = webserver.certificates_for_domain(zone.get("domain"), zone_id=zone.get("id"))
-            zones.append({**zone, "certificate_summary": certs.get("summary") or {}})
-        payload = {"zones": zones}
+        payload = _service_zone_options()
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
@@ -510,7 +580,7 @@ def detail_service():
     code = 200
     payload = {}
     try:
-        payload = _service_overview_payload(service_id)
+        payload = _service_overview_payload(service_id, lightweight=_truthy(body.get("lightweight") or body.get("basic")))
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

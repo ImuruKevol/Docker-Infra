@@ -9,6 +9,7 @@ export class Component implements OnInit, OnDestroy {
     public busy = signal<boolean>(false);
     public detailLoading = signal<boolean>(false);
     public detailTabLoading = signal<boolean>(false);
+    public supportOptionsLoading = signal<boolean>(false);
     public error = signal<string>('');
     public services = signal<any[]>([]);
     public nodes = signal<any[]>([]);
@@ -97,6 +98,8 @@ export class Component implements OnInit, OnDestroy {
     private detailRequestSeq = 0;
     private editOptionsLoaded = false;
     private aiModelOptionsLoaded = false;
+    private supportOptionsLoaded = false;
+    private supportOptionsRequest: Promise<boolean> | null = null;
     private themeObserver: MutationObserver | null = null;
 
     constructor(public service: Service) { }
@@ -106,9 +109,9 @@ export class Component implements OnInit, OnDestroy {
         this.syncAdvancedEditorTheme();
         this.startThemeObserver();
         this.refreshCompose(true);
-        await this.loadAiModelOptions();
         const params = new URLSearchParams(window.location.search || '');
         await this.load(params.get('service_id') || params.get('selected_service_id') || '');
+        this.loadAiModelOptions().catch(() => null);
     }
 
     public ngOnDestroy() {
@@ -312,6 +315,50 @@ export class Component implements OnInit, OnDestroy {
         });
     }
 
+    private async loadSupportOptions(silent: boolean = false) {
+        this.supportOptionsLoading.set(true);
+        try {
+            const { code, data } = await wiz.call('support_options', {});
+            if (code === 200) {
+                this.nodes.set(data.nodes || []);
+                this.supportOptionsLoaded = true;
+                return true;
+            }
+            if (!silent) await this.alert(data?.message || '서버 목록을 불러올 수 없습니다.');
+            return false;
+        } catch (error: any) {
+            if (!silent) await this.alert(error?.message || '서버 목록을 불러올 수 없습니다.');
+            return false;
+        } finally {
+            this.supportOptionsLoading.set(false);
+            await this.service.render();
+        }
+    }
+
+    private async ensureSupportOptions(silent: boolean = false) {
+        if (this.supportOptionsLoaded) return true;
+        if (this.supportOptionsRequest) return await this.supportOptionsRequest;
+        this.supportOptionsRequest = this.loadSupportOptions(silent);
+        try {
+            return await this.supportOptionsRequest;
+        } finally {
+            this.supportOptionsRequest = null;
+        }
+    }
+
+    private async refreshOverviewExtras(serviceId: string, requestSeq: number) {
+        try {
+            const { code, data } = await wiz.call('detail_service', { service_id: serviceId });
+            if (requestSeq !== this.detailRequestSeq || this.selected()?.id !== serviceId) return;
+            if (code === 200) {
+                this.applyDetail(data);
+                await this.service.render();
+            }
+        } catch (_) {
+            return;
+        }
+    }
+
     private snapshotBackupErrorMessage(data: any, fallback: string) {
         const failures = Array.isArray(data?.failures) ? data.failures : [];
         if (!failures.length) return data?.message || fallback;
@@ -330,8 +377,8 @@ export class Component implements OnInit, OnDestroy {
         if (code === 200) {
             const services = data.services || [];
             this.services.set(services);
-            this.nodes.set(data.nodes || []);
-            this.zones.set(data.zones || []);
+            if (this.hasOwn(data, 'nodes')) this.nodes.set(data.nodes || []);
+            if (this.hasOwn(data, 'zones')) this.zones.set(data.zones || []);
             const next = services.find((item: any) => item.id === selectedId) || services[0] || null;
             if (next?.id) {
                 this.detailRequestSeq += 1;
@@ -396,7 +443,7 @@ export class Component implements OnInit, OnDestroy {
         this.advancedNginxEditOpen.set(false);
         this.detailLoading.set(true);
         await this.service.render();
-        const { code, data } = await wiz.call('detail_service', { service_id: service.id });
+        const { code, data } = await wiz.call('detail_service', { service_id: service.id, lightweight: true });
         if (requestSeq !== this.detailRequestSeq) {
             if (this.detail()?.service?.id === this.selected()?.id) this.detailLoading.set(false);
             return;
@@ -412,6 +459,7 @@ export class Component implements OnInit, OnDestroy {
         }
         this.detailLoading.set(false);
         await this.service.render();
+        if (code === 200) this.refreshOverviewExtras(service.id, requestSeq);
     }
 
     private async loadEditOptions() {
@@ -427,6 +475,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public openCreateModal(mode: 'basic_web' | 'direct_compose' = 'basic_web') {
+        this.ensureSupportOptions(true);
         this.serviceMode.set(mode);
         this.serviceModalOpen.set(true);
         this.createStep.set(1);
@@ -944,11 +993,17 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public openMigrationModal() {
-        if (!this.selected()?.id || this.migrationBusy()) return;
+        this.openMigrationModalAsync();
+    }
+
+    private async openMigrationModalAsync() {
+        if (!this.selected()?.id || this.migrationBusy() || this.supportOptionsLoading()) return;
+        if (!(await this.ensureSupportOptions())) return;
         const first = this.migrationNodeOptions().find((item: any) => !item.disabled);
         this.migrationTargetNodeId.set(first?.value || '');
         this.migrationPause.set(true);
         this.migrationModalOpen.set(true);
+        await this.service.render();
     }
 
     public closeMigrationModal() {
@@ -3311,6 +3366,7 @@ export class Component implements OnInit, OnDestroy {
         const labels: any = {
             ui_wizard: '화면에서 생성',
             ai_draft: 'AI 초안에서 생성',
+            compose_template: 'Compose 템플릿',
             manual_compose: 'Compose 직접 작성',
             server_compose_import: '서버 Compose 가져오기',
             server_compose_import_wizard: '서버 Compose 가져오기',

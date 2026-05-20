@@ -21,6 +21,7 @@ export class Component implements OnInit {
             items: [
                 { link: '/servers', label: 'nav.servers', icon: 'fa-server' },
                 { link: '/images', label: 'nav.images', icon: 'fa-cubes' },
+                { link: '/templates', label: 'nav.templates', icon: 'fa-layer-group' },
                 { link: '/macros', label: 'nav.macros', icon: 'fa-bolt' },
                 { link: '/operations', label: 'nav.operations', icon: 'fa-clock-rotate-left' },
                 { link: '/system', label: 'nav.system', icon: 'fa-gear' },

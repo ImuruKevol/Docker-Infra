@@ -76,8 +76,8 @@ main(class="space-y-5 px-5 py-5")
                                     span(class="max-w-[180px] truncate") {{runtimeServerSummaryText()}}
                                     i(class="fa-solid fa-arrow-up-right-from-square text-[11px]")
                         div(class="flex flex-wrap items-center gap-2")
-                            button(type="button", (click)="openMigrationModal()", [disabled]="busy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-emerald-300 px-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-900/70 dark:text-emerald-300 dark:hover:bg-emerald-950/30")
-                                i(class="fa-solid fa-arrow-right-arrow-left")
+                            button(type="button", (click)="openMigrationModal()", [disabled]="busy() || supportOptionsLoading()", class="inline-flex h-9 items-center gap-2 rounded-md border border-emerald-300 px-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-900/70 dark:text-emerald-300 dark:hover:bg-emerald-950/30")
+                                i(class="fa-solid", [ngClass]="supportOptionsLoading() ? 'fa-spinner fa-spin' : 'fa-arrow-right-arrow-left'")
                                 span 마이그레이션
                             button(type="button", (click)="openEditModal()", [disabled]="busy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                 i(class="fa-solid fa-pen")

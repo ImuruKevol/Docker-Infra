@@ -10,6 +10,7 @@
         "domains": "도메인 관리",
         "servers": "서버 관리",
         "images": "이미지 관리",
+        "templates": "Compose 템플릿",
         "macros": "매크로",
         "operations": "작업 로그",
         "system": "시스템 설정"

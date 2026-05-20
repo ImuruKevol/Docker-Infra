@@ -137,6 +137,11 @@ SERVICE_DRAFT_MCP_TOOLS = [
     "server_collect",
     "ssh_command",
 ]
+COMPOSE_TEMPLATE_MCP_TOOLS = [
+    "infra_context",
+    "docker_search",
+    "docker_image_check",
+]
 RUNTIME_INSPECTION_MCP_TOOLS = [
     "infra_context",
     "server_list",
@@ -153,6 +158,7 @@ RUNTIME_INSPECTION_MCP_TOOLS = [
 RUNTIME_REPAIR_MCP_TOOLS = [*RUNTIME_INSPECTION_MCP_TOOLS, "container_action"]
 MCP_TOOL_SCOPES = {
     "service_draft": SERVICE_DRAFT_MCP_TOOLS,
+    "compose_template": COMPOSE_TEMPLATE_MCP_TOOLS,
     "service_preflight_repair": SERVICE_DRAFT_MCP_TOOLS,
     "post_deploy_verification": RUNTIME_INSPECTION_MCP_TOOLS,
     "runtime_inspection": RUNTIME_INSPECTION_MCP_TOOLS,

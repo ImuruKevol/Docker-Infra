@@ -274,3 +274,13 @@
 | 2026-05-20 | 272 | 대시보드 서비스 목록 카드와 실행 경고 표시 추가 | [상세](devlog/2026-05-20/272-dashboard-service-alert-card.md) |
 | 2026-05-20 | 273 | 실제 사용 DB schema 기준으로 unused table 정리 | [상세](devlog/2026-05-20/273-db-actual-schema-cleanup.md) |
 | 2026-05-20 | 274 | 실제 DB에 schema cleanup migration 적용 | [상세](devlog/2026-05-20/274-db-actual-schema-apply.md) |
+| 2026-05-20 | 275 | 파일 기반 Compose 템플릿 관리와 서비스 생성 템플릿 적용 흐름 추가 | [상세](devlog/2026-05-20/275-compose-template-feature.md) |
+| 2026-05-20 | 276 | Compose 템플릿 seed 파일 직렬화 오류 수정과 브라우저 검증 | [상세](devlog/2026-05-20/276-compose-template-seed-serialization-fix.md) |
+| 2026-05-20 | 277 | Compose 템플릿 Monaco editor 재렌더링 방지 | [상세](devlog/2026-05-20/277-template-monaco-stable-options.md) |
+| 2026-05-20 | 278 | 템플릿 관리 상세 로딩 캐시와 README 중심 입력 흐름 적용 | [상세](devlog/2026-05-20/278-template-management-readme-tags-cache.md) |
+| 2026-05-20 | 279 | 템플릿 관리 AI 초안 생성 흐름 추가 | [상세](devlog/2026-05-20/279-template-management-ai-draft.md) |
+| 2026-05-20 | 280 | 템플릿 AI MCP/표준/허용 범위 명시 | [상세](devlog/2026-05-20/280-template-ai-policy-scope.md) |
+| 2026-05-20 | 281 | 템플릿 편집 AI 버튼과 탭별 표준 안내 UX 개선 | [상세](devlog/2026-05-20/281-template-ai-edit-tab-guidance.md) |
+| 2026-05-20 | 282 | 새 템플릿 작성 방식 선택과 clone 기반 생성 UX 추가 | [상세](devlog/2026-05-20/282-template-create-mode-clone-flow.md) |
+| 2026-05-20 | 283 | 서비스 생성 방식 선택 UX와 중복 입력 노출 정리 | [상세](devlog/2026-05-20/283-service-create-mode-selector.md) |
+| 2026-05-20 | 284 | 서비스 관리와 생성 화면 초기 로딩 경량화 | [상세](devlog/2026-05-20/284-service-management-fast-load.md) |

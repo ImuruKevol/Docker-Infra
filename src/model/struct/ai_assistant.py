@@ -60,6 +60,7 @@ class AIAssistant:
     def contracts(self):
         return {
             "service": self.service_contract(),
+            "template": self.template_contract(),
             "compose_validation": self.compose_validation_contract(),
         }
 
@@ -327,7 +328,146 @@ class AIAssistant:
             },
         }
 
+    def template_contract(self):
+        return {
+            "input": [
+                {"key": "intent", "required": True, "description": "만들거나 보정할 Compose 템플릿 요구사항"},
+                {"key": "mode", "required": True, "values": ["template_create", "template_update"]},
+                {"key": "current_template", "required": False, "description": "현재 템플릿 이름, 태그, README, Compose, values schema"},
+            ],
+            "output": [
+                "name",
+                "namespace",
+                "tags[]",
+                "files.docker-compose.yaml",
+                "files.values.default.yaml",
+                "files.values.schema.json",
+                "files.README.md",
+                "summary",
+                "warnings[]",
+            ],
+            "output_format": self.output_format_contract("template"),
+            "policy": self.template_ai_policy(),
+        }
+
+    def template_ai_policy(self):
+        enabled_tools = self._mcp_tools("compose_template", allow_container_actions=False, allow_ssh_command=False)
+        forbidden_tool_families = [
+            "ssh_command",
+            "server_collect",
+            "server_list",
+            "server_port_check",
+            "service_stack_status",
+            "container_logs",
+            "container_action",
+            "dns_lookup",
+            "tcp_connect_check",
+            "http_probe",
+            "browser_probe",
+        ]
+        required_files = ["docker-compose.yaml", "values.default.yaml", "values.schema.json", "README.md"]
+        return {
+            "scope": "compose_template",
+            "purpose": "Reusable Compose template draft only; service deployment and runtime repair are outside this scope.",
+            "mcp": {
+                "server": "docker_infra",
+                "enabled_tools": enabled_tools,
+                "allowed_use": [
+                    "infra_context: Docker Infra compose/network/template constraints",
+                    "docker_search: candidate image discovery when the requested product image is ambiguous",
+                    "docker_image_check: exact image tag verification before returning image references",
+                ],
+                "forbidden_tool_families": forbidden_tool_families,
+                "tool_unavailable_policy": "Do not mention unavailable MCP tools in user-facing text; use the provided contract and context.",
+            },
+            "standard": {
+                "required_files": required_files,
+                "placeholder_format": "{{ variable_name }}",
+                "namespace_pattern": "^[a-z0-9_]+$",
+                "readme_required": True,
+                "readme_visibility": "service_create_required",
+                "classification": "metadata.tags string array; category is not used",
+                "description_field": "removed; use README.md instead",
+                "schema_rules": [
+                    "values.schema.json must be a JSON Schema object for the same placeholders as docker-compose.yaml",
+                    "every placeholder must have a default in values.default.yaml and a property in values.schema.json",
+                    "secret-like properties must include secret=true and a safe change_me-style default",
+                    "service_name/namespace should be the only mandatory identity input unless the image truly requires more",
+                ],
+                "compose_rules": self.compose_validation_contract(),
+                "forbidden_fields": [
+                    "description",
+                    "primary_image",
+                    "category",
+                    "deploy_target",
+                    "node_id",
+                    "domain",
+                    "runtime_actions",
+                ],
+            },
+            "permissions": {
+                "can_edit_project_files": False,
+                "can_save_template": False,
+                "can_deploy": False,
+                "can_change_runtime": False,
+                "can_read_runtime_logs": False,
+                "can_run_container_actions": False,
+                "can_run_ssh_command": False,
+                "can_run_safe_ssh_diagnostics": False,
+                "can_probe_network": False,
+                "can_select_deploy_target": False,
+                "result_application": "draft_only_user_review_required",
+            },
+        }
+
     def output_format_contract(self, target):
+        if target == "template":
+            return {
+                "root": {
+                    "type": "object",
+                    "required": ["name", "namespace", "tags", "files", "summary", "warnings"],
+                    "namespace_pattern": "^[a-z0-9_]+$",
+                    "forbidden": [
+                        "markdown fences",
+                        "partial patches",
+                        "free-form text outside JSON",
+                        "description",
+                        "primary_image",
+                        "category",
+                        "deploy_target",
+                        "node_id",
+                        "domain",
+                        "runtime_actions",
+                    ],
+                },
+                "files": {
+                    "type": "object",
+                    "required": ["docker-compose.yaml", "values.default.yaml", "values.schema.json", "README.md"],
+                    "rules": [
+                        "docker-compose.yaml is a complete Compose template using {{ variable_name }} placeholders only where users should provide values",
+                        "values.default.yaml contains defaults for every placeholder",
+                        "values.schema.json is a JSON Schema object for the same placeholders",
+                        "README.md is Korean user-facing usage notes shown in the service creation screen",
+                        "the placeholder set must match across docker-compose.yaml, values.default.yaml, and values.schema.json",
+                        "do not include a deployment target, concrete domain, concrete registered server, host-specific path, container_name, or hostname",
+                    ],
+                },
+                "schema": {
+                    "type": "object",
+                    "required": ["$schema", "title", "type", "properties", "required"],
+                    "rules": [
+                        "$schema should be https://json-schema.org/draft/2020-12/schema",
+                        "properties keys must match placeholders",
+                        "secret-like properties include secret=true",
+                    ],
+                },
+                "metadata": {
+                    "type": "object",
+                    "required": ["tags"],
+                    "optional": ["components", "public_endpoint", "component_labels", "generated_secrets"],
+                    "forbidden": ["category", "primary_image", "description", "deploy_target", "node_id", "domain"],
+                },
+            }
         return {
             "root": {
                 "type": "object",
@@ -511,6 +651,53 @@ class AIAssistant:
                 stream_context["initial_draft"] = plan_data or {}
                 stream_context["docker_infra_inspection"] = inspection
                 system = self._repair_system_prompt("service")
+
+    def stream_template(self, payload, env=None):
+        payload = payload or {}
+        intent = self._clean_text(payload.get("intent"))
+        if not intent:
+            yield {"type": "error", "message": "AI 요청 내용을 입력하세요.", "error_code": "MISSING_INTENT"}
+            return
+        context = self._template_context(payload)
+        try:
+            provider = self._select_provider(env=env, selection=payload)
+        except Exception as exc:
+            yield self._error_event(exc)
+            return
+        yield {"type": "provider", "provider": self._provider_public(provider)}
+        yield {"type": "status", "message": "요구사항과 현재 템플릿을 AI 실행 컨텍스트로 정리합니다."}
+        system = self._template_system_prompt()
+        data = None
+        for attempt in range(MAX_AI_REPAIR_ATTEMPTS + 1):
+            if attempt > 0:
+                yield {"type": "status", "message": "검증 실패 내용을 반영해 템플릿 output을 보정합니다. (%s/%s)" % (attempt, MAX_AI_REPAIR_ATTEMPTS)}
+            try:
+                data = yield from self._stream_codex_json(system, context, provider, env=env, emit_delta=True)
+                if data is None:
+                    raise AIAssistantError(502, "AI 응답 JSON 객체가 비어 있습니다.", "AI_EMPTY_RESPONSE")
+                template = self._normalize_template_draft(data, context)
+                validation = self._validate_template_draft(template)
+                yield {
+                    "type": "done",
+                    "data": {
+                        "provider": self._provider_public(provider),
+                        "contract": self.template_contract(),
+                        "template": template,
+                        "validation": validation,
+                        "summary": self._clean_text(data.get("summary")) or "AI 템플릿 초안을 적용했습니다.",
+                        "warnings": self._string_list(data.get("warnings")),
+                    },
+                }
+                return
+            except Exception as exc:
+                if not self._is_output_repairable_error(exc):
+                    yield self._error_event(exc)
+                    return
+                if attempt >= MAX_AI_REPAIR_ATTEMPTS:
+                    yield self._error_event(self._as_output_validation_error(exc, "template"))
+                    return
+                context = self._repair_context("template", context, data, exc, attempt + 1)
+                system = self._repair_system_prompt("template")
 
     def repair_runtime(self, payload, env=None):
         payload = payload or {}
@@ -2706,9 +2893,236 @@ class AIAssistant:
         if resolutions:
             draft["image_resolution"] = resolutions
 
+    def _template_context(self, payload):
+        payload = payload or {}
+        current = payload.get("current_template") if isinstance(payload.get("current_template"), dict) else {}
+        policy = self.template_ai_policy()
+        return {
+            "contract": self.template_contract(),
+            "output_format": self.output_format_contract("template"),
+            "compose_validation": self.compose_validation_contract(),
+            "mode": payload.get("mode") or "template_create",
+            "intent": self._clean_text(payload.get("intent")),
+            "current_template": current,
+            "template_ai_policy": policy,
+            "template_standard": policy.get("standard") or {},
+            "ai_permission_scope": policy.get("permissions") or {},
+            "mcp_guidance": policy.get("mcp") or {},
+        }
+
+    def _template_system_prompt(self):
+        return "\n".join(
+            [
+                self._system_prompt("template"),
+                "You are creating a reusable Docker Compose template, not a concrete one-off service.",
+                "Return a complete JSON object only for the template contract.",
+                "This is not service create, service update, runtime verification, or runtime repair.",
+                "The AI returns a draft only. It must not save templates, deploy services, change runtime state, or claim a runtime action was performed.",
+                "Use MCP only inside the compose_template scope: infra_context, docker_search, and docker_image_check.",
+                "Do not inspect registered servers, collect logs, run SSH, run container actions, probe TCP/HTTP/DNS/browser targets, or select deployment nodes/ports/domains.",
+                "Use {{ variable_name }} placeholders for values users should provide at service creation time.",
+                "Every placeholder in docker-compose.yaml must exist in values.default.yaml and values.schema.json.",
+                "Keep required user input minimal. Prefer service_name/namespace plus only truly necessary image, port, credential, and product settings.",
+                "For secret-like placeholders, set a safe change_me-style default and mark the schema property with secret=true.",
+                "README.md is mandatory and must explain what this template creates and which values matter, in Korean.",
+                "Do not include template description or primary_image. Use tags[] for classification.",
+                "Do not include concrete registered domain names, registered server IDs, host-specific paths, container_name, hostname, or runtime_actions.",
+            ]
+        )
+
+    def _template_namespace(self, value):
+        clean = re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]+", "_", self._clean_text(value).lower())).strip("_")
+        return clean[:60] or "ai_template"
+
+    def _template_tags(self, *values):
+        tags = []
+        for value in values:
+            raw = value if isinstance(value, list) else str(value or "").split(",")
+            for item in raw:
+                tag = self._clean_text(item)
+                if tag and tag not in tags:
+                    tags.append(tag)
+        return tags
+
+    def _json_file_text(self, value):
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            value = {}
+        if value is None:
+            value = {}
+        return json.dumps(value, ensure_ascii=False, indent=2)
+
+    def _safe_json_object(self, value):
+        if isinstance(value, dict):
+            return dict(value)
+        try:
+            parsed = json.loads(value or "{}")
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    def _safe_yaml_object(self, value):
+        if isinstance(value, dict):
+            return dict(value)
+        try:
+            parsed = yaml.safe_load(value or "{}")
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    def _schema_from_values(self, title, values):
+        properties = {}
+        for key, value in (values or {}).items():
+            value_type = "integer" if isinstance(value, int) and not isinstance(value, bool) else ("boolean" if isinstance(value, bool) else "string")
+            properties[key] = {"title": key, "type": value_type, "default": value}
+            if self._is_secret_name(key):
+                properties[key]["secret"] = True
+        return {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": title,
+            "type": "object",
+            "properties": properties,
+            "required": list(properties.keys()),
+        }
+
+    def _is_secret_name(self, value):
+        key = self._clean_text(value).lower()
+        return any(token in key for token in ["password", "passwd", "secret", "token", "api_key", "private_key"])
+
+    def _render_template_placeholders(self, content, values):
+        def replace(match):
+            key = match.group(1).strip()
+            value = (values or {}).get(key, "")
+            if value is None:
+                return ""
+            if isinstance(value, bool):
+                return "true" if value else "false"
+            return str(value)
+
+        return re.sub(r"{{\s*([a-zA-Z0-9_.-]+)\s*}}", replace, content or "")
+
+    def _normalize_template_draft(self, data, context):
+        data = data if isinstance(data, dict) else {}
+        source = data.get("template") if isinstance(data.get("template"), dict) else data
+        files = source.get("files") if isinstance(source.get("files"), dict) else (data.get("files") if isinstance(data.get("files"), dict) else {})
+        metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else (data.get("metadata") if isinstance(data.get("metadata"), dict) else {})
+        current = context.get("current_template") if isinstance(context.get("current_template"), dict) else {}
+        current_files = current.get("files") if isinstance(current.get("files"), dict) else {}
+
+        name = self._clean_text(source.get("name") or data.get("name") or current.get("name") or "AI Compose 템플릿")
+        namespace = self._template_namespace(source.get("namespace") or data.get("namespace") or current.get("namespace") or name)
+        compose = self._to_yaml_file_text(
+            files.get("docker-compose.yaml")
+            or files.get("compose")
+            or source.get("compose")
+            or current_files.get("compose")
+        )
+        values_default = self._to_yaml_file_text(
+            files.get("values.default.yaml")
+            or files.get("values_default")
+            or source.get("values_default")
+            or source.get("values")
+            or current_files.get("values_default")
+        )
+        values = self._safe_yaml_object(values_default)
+        schema = self._safe_json_object(
+            files.get("values.schema.json")
+            or files.get("values_schema")
+            or source.get("values_schema")
+            or current_files.get("values_schema")
+        )
+        if not schema:
+            schema = self._schema_from_values(name, values)
+        schema.setdefault("$schema", "https://json-schema.org/draft/2020-12/schema")
+        schema["title"] = schema.get("title") or name
+        schema["type"] = "object"
+        properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        schema["properties"] = properties
+
+        placeholders = sorted(set(re.findall(r"{{\s*([a-zA-Z0-9_.-]+)\s*}}", compose or "")))
+        for key in placeholders:
+            prop = properties.get(key) if isinstance(properties.get(key), dict) else {}
+            if key not in values:
+                values[key] = prop.get("default")
+                if values[key] is None:
+                    values[key] = "change_me" if self._is_secret_name(key) else ""
+            if key not in properties:
+                value = values.get(key)
+                value_type = "integer" if isinstance(value, int) and not isinstance(value, bool) else ("boolean" if isinstance(value, bool) else "string")
+                properties[key] = {"title": key, "type": value_type, "default": value}
+            if self._is_secret_name(key):
+                properties[key]["secret"] = True
+        required = schema.get("required") if isinstance(schema.get("required"), list) else []
+        schema["required"] = list(dict.fromkeys(required + placeholders))
+
+        readme = self._clean_text(
+            files.get("README.md")
+            or files.get("readme")
+            or source.get("readme")
+            or current_files.get("readme")
+        )
+        current_metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
+        tags = self._template_tags(source.get("tags"), metadata.get("tags"), metadata.get("category"), current_metadata.get("tags"))
+        if not tags:
+            tags = ["ai", "compose"]
+        cleaned_metadata = {key: val for key, val in metadata.items() if key not in {"category", "primary_image"}}
+        cleaned_metadata["tags"] = tags
+        return {
+            "name": name,
+            "namespace": namespace,
+            "enabled": source.get("enabled", True) is not False,
+            "metadata": cleaned_metadata,
+            "tags": tags,
+            "files": {
+                "compose": compose,
+                "values_default": yaml.safe_dump(values, sort_keys=False, allow_unicode=False),
+                "values_schema": self._json_file_text(schema),
+                "readme": readme,
+            },
+            "values": values,
+            "summary": self._clean_text(data.get("summary")),
+            "warnings": self._string_list(data.get("warnings")),
+        }
+
+    def _validate_template_draft(self, template):
+        files = template.get("files") or {}
+        compose = self._clean_text(files.get("compose"))
+        readme = self._clean_text(files.get("readme"))
+        if not compose:
+            raise AIAssistantError(422, "AI 응답에 docker-compose.yaml 템플릿이 없습니다.", "AI_TEMPLATE_COMPOSE_REQUIRED")
+        if not readme:
+            raise AIAssistantError(422, "AI 응답에 README.md가 없습니다.", "AI_TEMPLATE_README_REQUIRED")
+        values = self._safe_yaml_object(files.get("values_default"))
+        schema = self._safe_json_object(files.get("values_schema"))
+        if not schema.get("properties"):
+            raise AIAssistantError(422, "values.schema.json에 properties가 없습니다.", "AI_TEMPLATE_SCHEMA_INVALID")
+        placeholders = sorted(set(re.findall(r"{{\s*([a-zA-Z0-9_.-]+)\s*}}", compose)))
+        missing = [key for key in placeholders if key not in values or key not in (schema.get("properties") or {})]
+        if missing:
+            raise AIAssistantError(422, "템플릿 placeholder 기본값 또는 schema가 누락되었습니다.", "AI_TEMPLATE_PLACEHOLDER_MISSING", {"missing": missing})
+        rendered = self._render_template_placeholders(compose, values)
+        validation = compose_validator.validate(
+            {
+                "namespace": template.get("namespace") or "ai_template",
+                "filename": "docker-compose.yaml",
+                "content": rendered,
+                "allow_warnings": True,
+                "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],
+            }
+        )
+        components = services_wizard.components_from_content(rendered, metadata=template.get("metadata") or {})
+        template["metadata"] = {
+            **(template.get("metadata") or {}),
+            "components": [item.get("key") for item in components if item.get("key")],
+            "component_labels": {item.get("key"): item.get("label") for item in components if item.get("key") and item.get("label")},
+        }
+        return {"compose": validation, "components": components}
+
     def _repair_context(self, target, context, data, exc, attempt):
         return {
-            "contract": self.service_contract(),
+            "contract": self.template_contract() if target == "template" else self.service_contract(),
             "output_format": self.output_format_contract(target),
             "compose_validation": self.compose_validation_contract(),
             "mode": context.get("mode"),
@@ -2745,6 +3159,10 @@ class AIAssistant:
             "note": "Line-numbered excerpts are for repairing the next AI output. They are not patches.",
         }
         if not isinstance(data, dict):
+            return diagnostics
+        if target == "template":
+            diagnostics["template_files"] = (data.get("files") or {}) if isinstance(data.get("files"), dict) else {}
+            diagnostics["template_metadata"] = data.get("metadata") or {}
             return diagnostics
         diagnostics["service_components"] = data.get("components") or []
         diagnostics["service_form"] = data.get("form") or {}
@@ -2817,9 +3235,10 @@ class AIAssistant:
         if isinstance(exc, AIAssistantError) and exc.code == "AI_OUTPUT_VALIDATION_FAILED":
             return exc
         details = self._exception_payload(exc)
+        label = "템플릿" if target == "template" else "서비스"
         return AIAssistantError(
             422,
-            "AI가 생성한 서비스 output을 검증할 수 없습니다.",
+            "AI가 생성한 %s output을 검증할 수 없습니다." % label,
             "AI_OUTPUT_VALIDATION_FAILED",
             details,
         )
@@ -2845,6 +3264,19 @@ class AIAssistant:
             "Write user-facing text in Korean: summary, warnings, thinking_summary, form.description, and notes.",
             "Keep code, YAML, JSON keys, image names, environment variable names, service keys, namespaces, and identifiers in ASCII or their official spelling.",
         ]
+        if target == "template":
+            common.extend(
+                [
+                    "The output must contain name, namespace, tags, files, summary, and warnings keys.",
+                    "The files object must include docker-compose.yaml, values.default.yaml, values.schema.json, and README.md.",
+                    "docker-compose.yaml must be a reusable Compose template, not a one-off service draft.",
+                    "Use placeholders only in {{ variable_name }} form and define every placeholder in both values.default.yaml and values.schema.json.",
+                    "README.md is required and is shown to users in service creation.",
+                    "Do not use description or primary_image fields for templates.",
+                    "Use tags[] for classification.",
+                ]
+            )
+            return "\n".join(common)
         common.extend(
             [
                 "The output must contain form, base_content, and components keys.",
