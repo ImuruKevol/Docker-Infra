@@ -72,7 +72,7 @@ def _template_response(callable_fn, *args, **kwargs):
 
 def load():
     templates_model = wiz.model("struct").templates
-    _template_response(templates_model.load)
+    _template_response(templates_model.load_summaries)
 
 
 def detail():

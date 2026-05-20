@@ -63,8 +63,15 @@ export class Component implements OnInit {
         await this.service.init();
         this.syncEditorTheme();
         await this.load();
-        await this.loadAiContract();
-        await this.loadAiModelOptions();
+        this.loadAuxiliaryData().catch(() => null);
+    }
+
+    private async loadAuxiliaryData() {
+        await Promise.all([
+            this.loadAiContract().catch(() => null),
+            this.loadAiModelOptions().catch(() => null),
+        ]);
+        await this.service.render();
     }
 
     private syncEditorTheme() {
@@ -207,13 +214,23 @@ export class Component implements OnInit {
             const first = this.templates()[0];
             this.loading.set(false);
             await this.service.render();
-            if (selectFirst && first) await this.selectTemplate(first.id || first.namespace, true, true);
+            if (selectFirst && first) this.selectInitialTemplate(first.id || first.namespace);
             return;
         } else {
             this.error.set(data?.message || '템플릿 목록을 불러올 수 없습니다.');
         }
         this.loading.set(false);
         await this.service.render();
+    }
+
+    private async selectInitialTemplate(templateId: string) {
+        try {
+            await this.selectTemplate(templateId, true, true);
+        } catch (error: any) {
+            this.detailLoading.set(false);
+            this.detailLoadError.set(error?.message || '템플릿 정보를 불러올 수 없습니다.');
+            await this.service.render();
+        }
     }
 
     public templateTags(item: any) {
