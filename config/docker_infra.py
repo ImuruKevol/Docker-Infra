@@ -1,7 +1,9 @@
+import ipaddress
 import os
 import socket
 from pathlib import Path
 from urllib.parse import quote
+from urllib import request as urlrequest
 
 
 DEFAULT_DB_PORT = "5432"
@@ -111,6 +113,40 @@ def _bool_value(value, default=False):
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configured_value(values, keys):
+    for key in keys:
+        value = str(values.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _strip_host(value):
+    host = str(value or "").strip()
+    if "://" in host:
+        host = host.split("://", 1)[1].split("/", 1)[0]
+    if "/" in host:
+        host = host.split("/", 1)[0]
+    if host.count(":") == 1:
+        host = host.rsplit(":", 1)[0]
+    return host.strip("[]")
+
+
+def _parse_public_ip(value, record_type="A"):
+    for token in str(value or "").replace(",", " ").split():
+        try:
+            address = ipaddress.ip_address(token.strip())
+        except Exception:
+            continue
+        if record_type == "A" and address.version != 4:
+            continue
+        if record_type == "AAAA" and address.version != 6:
+            continue
+        if address.is_global:
+            return str(address)
+    return ""
 
 
 def database(env=None):
@@ -228,6 +264,49 @@ def ddns_public_ip_urls(env=None):
     return urls or list(DEFAULT_DDNS_PUBLIC_IP_URLS)
 
 
+def public_ip_urls(env=None):
+    values = runtime_env(env)
+    raw = values.get("DOCKER_INFRA_PUBLIC_IP_URLS") or values.get("DOCKER_INFRA_DDNS_PUBLIC_IP_URLS") or ""
+    urls = [item.strip() for item in raw.split(",") if item.strip()]
+    return urls or list(DEFAULT_DDNS_PUBLIC_IP_URLS)
+
+
+def public_ip(record_type="A", env=None, lookup=True):
+    record_type = str(record_type or "A").upper()
+    if record_type not in {"A", "AAAA"}:
+        record_type = "A"
+    values = runtime_env(env)
+    keys = (
+        ["DOCKER_INFRA_PUBLIC_IPV6", "DOCKER_INFRA_DDNS_PUBLIC_IPV6"]
+        if record_type == "AAAA"
+        else [
+            "DOCKER_INFRA_PUBLIC_IPV4",
+            "DOCKER_INFRA_PUBLIC_IP",
+            "DOCKER_INFRA_DDNS_PUBLIC_IPV4",
+            "DOCKER_INFRA_DDNS_PUBLIC_IP",
+        ]
+    )
+    configured = _parse_public_ip(_configured_value(values, keys), record_type=record_type)
+    if configured:
+        return configured
+    if lookup is False:
+        return ""
+    for url in public_ip_urls(env):
+        try:
+            req = urlrequest.Request(url, headers={"User-Agent": "docker-infra/1.0"})
+            with urlrequest.urlopen(req, timeout=5) as response:
+                value = _parse_public_ip(response.read().decode("utf-8", errors="replace"), record_type=record_type)
+                if value:
+                    return value
+        except Exception:
+            continue
+    return ""
+
+
+def public_dns_address(env=None, record_type="A"):
+    return public_ip(record_type=record_type, env=env)
+
+
 def ddns_state_file(env=None):
     return runtime_env(env).get("DOCKER_INFRA_DDNS_STATE_FILE") or DEFAULT_DDNS_STATE_FILE
 
@@ -249,6 +328,21 @@ def reporter_base_url(env=None):
     return (values.get("DOCKER_INFRA_REPORTER_BASE_URL") or values.get("DOCKER_INFRA_BASE_URL") or "").rstrip("/")
 
 
+def reporter_internal_base_url(env=None):
+    values = runtime_env(env)
+    explicit = values.get("DOCKER_INFRA_REPORTER_INTERNAL_BASE_URL") or values.get("DOCKER_INFRA_INTERNAL_BASE_URL")
+    if explicit:
+        return str(explicit).rstrip("/")
+    host = advertise_address(env)
+    if host and host not in {"127.0.0.1", "0.0.0.0", "::1", "localhost"}:
+        scheme = values.get("DOCKER_INFRA_REPORTER_SCHEME") or "http"
+        port = values.get("DOCKER_INFRA_REPORTER_PORT") or "3001"
+        if ":" in host and not host.startswith("[") and host.count(":") >= 2:
+            host = f"[{host}]"
+        return f"{scheme}://{host}:{port}".rstrip("/")
+    return reporter_base_url(env)
+
+
 def backup_harbor_installer_url(env=None):
     version = backup_harbor_version(env)
     return runtime_env(env).get("DOCKER_INFRA_BACKUP_HARBOR_INSTALLER_URL") or (
@@ -261,9 +355,18 @@ def system_assets_dir(env=None):
 
 
 def advertise_address(env=None):
-    configured = runtime_env(env).get("DOCKER_INFRA_ADVERTISE_ADDRESS")
+    values = runtime_env(env)
+    configured = _configured_value(
+        values,
+        [
+            "DOCKER_INFRA_MASTER_PRIVATE_IP",
+            "DOCKER_INFRA_PRIVATE_IP",
+            "DOCKER_INFRA_INTERNAL_ADDRESS",
+            "DOCKER_INFRA_ADVERTISE_ADDRESS",
+        ],
+    )
     if configured:
-        return configured
+        return _strip_host(configured)
     try:
         return socket.gethostbyname(socket.gethostname())
     except Exception:

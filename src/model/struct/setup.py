@@ -47,11 +47,15 @@ def _setting_value(row):
 def _node_to_dict(row):
     if row is None:
         return None
+    metadata = row["metadata"] or {}
+    private_host = metadata.get("node_access_host") or metadata.get("private_host") or metadata.get("internal_host") or row["host"]
     return {
         "id": str(row["id"]),
         "name": row["name"],
         "role": row["role"],
         "host": row["host"],
+        "private_host": private_host,
+        "public_ip": metadata.get("public_ip") or metadata.get("public_host") or "",
         "ssh_port": row["ssh_port"],
         "auth_type": row["auth_type"],
         "status": row["status"],
@@ -159,6 +163,8 @@ class SetupService:
             "source": "setup_wizard",
             "docker": checks["docker"],
             "proxy": checks["proxy"],
+            "node_access_host": advertise_address,
+            "private_host": advertise_address,
         }
         swarm = checks["docker"].get("swarm") or {}
         cursor.execute(
@@ -229,7 +235,7 @@ class SetupService:
             raise SetupError(409, "이미 설치가 완료되었습니다.", "SETUP_ALREADY_COMPLETED")
 
         checks = detect_local_environment(env=env)
-        advertise_address = payload.get("advertise_address") or checks["advertise_address"]
+        advertise_address = payload.get("private_address") or payload.get("node_access_host") or payload.get("advertise_address") or checks["advertise_address"]
         service_root = payload.get("service_root") or ".runtime/dev/services"
         proxy_type = self._choose_proxy(payload.get("proxy_type"), checks)
         test_run_id = payload.get("test_run_id")

@@ -72,6 +72,23 @@ class ServiceImageSnapshotRunner:
     def _registry_for_node(self, node, config, env=None):
         return nodes.backup_registry_reference_for_node(node, backup_config=config, env=env)
 
+    def _ensure_registry_for_snapshot_node(self, node, operation_id, env=None):
+        try:
+            result = nodes.configure_backup_registry_for_node(node["id"], operation_id=operation_id, env=env)
+        except Exception as exc:
+            raise ServiceError(
+                409,
+                "스냅샷 이미지를 push할 수 있도록 노드 레지스트리 설정을 적용할 수 없습니다.",
+                "SERVICE_IMAGE_SNAPSHOT_REGISTRY_CONFIG_FAILED",
+                node_id=node.get("id"),
+                message=getattr(exc, "message", str(exc)),
+                registry_error_code=getattr(exc, "error_code", "BACKUP_REGISTRY_NODE_CONFIG_FAILED"),
+            )
+        return {
+            "status": result.get("status"),
+            "registries": result.get("registries") or [],
+        }
+
     def backup_ref(self, service, backup, node, env=None):
         config = self._config(env=env)
         registry = self._registry_for_node(node, config, env=env)
@@ -83,7 +100,6 @@ class ServiceImageSnapshotRunner:
         node = target["node"]
         container = target["container"]
         config = self._config(env=env)
-        backup_ref = self.backup_ref(service, backup, node, env=env)
         operation = operations.create(
             "service.image.snapshot",
             target_type="service",
@@ -94,6 +110,11 @@ class ServiceImageSnapshotRunner:
         )
         secrets = [config.get("password")]
         try:
+            registry_setup = self._ensure_registry_for_snapshot_node(node, operation["id"], env=env)
+            target = self._target_container(service, backup, env=env)
+            node = target["node"]
+            container = target["container"]
+            backup_ref = self.backup_ref(service, backup, node, env=env)
             project_names = {item.get("name") for item in harbor.list_projects(env=env)}
             if service["namespace"] not in project_names:
                 harbor.create_project(service["namespace"], public=False, env=env)
@@ -104,7 +125,12 @@ class ServiceImageSnapshotRunner:
             operation = operations.transition(
                 operation["id"],
                 "succeeded",
-                result_payload={"backup_ref": backup_ref, "container_id": container["id"], "local_cleanup": {"ref": backup_ref, "removed": cleanup.get("status") == "ok"}},
+                result_payload={
+                    "backup_ref": backup_ref,
+                    "container_id": container["id"],
+                    "registry_setup": registry_setup,
+                    "local_cleanup": {"ref": backup_ref, "removed": cleanup.get("status") == "ok"},
+                },
                 env=env,
             )
             return {"backup_ref": backup_ref, "operation": operation, "node": node, "container": container}

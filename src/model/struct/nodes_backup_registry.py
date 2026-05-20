@@ -12,6 +12,7 @@ shared = wiz.model("struct/nodes_shared")
 connect = wiz.model("db/postgres").connect
 
 NodeError = shared.NodeError
+_node_access_host = shared.node_access_host
 
 LOOPBACK_HOSTS = {"", "127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
@@ -57,7 +58,7 @@ class NodeBackupRegistryMixin:
         masters = [node for node in self.list(env=env) if node.get("is_local_master")]
         if not masters:
             return ""
-        return _clean_host(masters[0].get("host"))
+        return _clean_host(_node_access_host(masters[0]))
 
     def backup_registry_config(self, backup_config=None, env=None):
         status = dict(backup_config or {})
@@ -96,10 +97,15 @@ class NodeBackupRegistryMixin:
         if not self._backup_registry_required(config):
             return []
         if node.get("is_local_master"):
+            registries = []
             parsed = _parse_registry_url(config["local_registry"])
-            if parsed and parsed["host"] in LOOPBACK_HOSTS:
-                return []
-            return _unique([config["local_registry"]])
+            if parsed and parsed["host"] not in LOOPBACK_HOSTS:
+                registries.append(config["local_registry"])
+            remote = config.get("remote_registry")
+            remote_parsed = _parse_registry_url(remote)
+            if remote and remote != config["local_registry"] and remote_parsed and remote_parsed["host"] not in LOOPBACK_HOSTS:
+                registries.append(remote)
+            return _unique(registries)
         return _unique([config["remote_registry"] or config["local_registry"]])
 
     def _backup_registry_command(self, registries):

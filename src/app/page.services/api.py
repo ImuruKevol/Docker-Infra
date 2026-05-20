@@ -136,11 +136,13 @@ def _service_advanced_payload(service_id):
 
 def load():
     catalog = wiz.model("struct/infra_catalog_registry")
+    nodes_model = wiz.model("struct").nodes
     code = 200
     payload = {}
 
     try:
         payload = catalog.services()
+        payload["nodes"] = nodes_model.list()
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
@@ -352,6 +354,29 @@ def deploy_service_background():
     try:
         result = services_model.deploy_background(wiz.request.query())
         payload = {"result": result, "operation": result.get("operation"), "service": result.get("service")}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except DATABASE_ERRORS as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def migrate_service():
+    services_model = wiz.model("struct").services
+    code = 202
+    payload = {}
+
+    try:
+        result = services_model.migrate_background(wiz.request.query())
+        payload = {
+            "result": result,
+            "operation": result.get("operation"),
+            "service": result.get("service"),
+            "target_node": result.get("target_node"),
+        }
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

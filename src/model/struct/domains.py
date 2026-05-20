@@ -18,6 +18,14 @@ SERVICE_DNS_COMMENT = "Managed by Docker Infra"
 SERVICE_DNS_RECORD_TYPES = {"A", "AAAA"}
 
 
+def _service_public_dns_content(env=None):
+    for record_type in ["A", "AAAA"]:
+        value = str(config.public_dns_address(env=env, record_type=record_type) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 class Domains(cloudflare):
     DomainError = DomainError
 
@@ -151,9 +159,9 @@ class Domains(cloudflare):
 
     def ensure_service_dns_record(self, domain, zone_config_id=None, content=None, proxied=False, env=None):
         domain = str(domain or "").strip().lower()
-        content = str(content or config.advertise_address(env) or "").strip()
+        content = str(_service_public_dns_content(env=env) if content is None else content).strip()
         if not domain or not content:
-            return {"status": "skipped", "reason": "domain_or_content_missing"}
+            return {"status": "skipped", "reason": "domain_or_public_ip_missing"}
         record_type = "AAAA" if ":" in content else "A"
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -213,7 +221,7 @@ class Domains(cloudflare):
 
     def delete_service_dns_records(self, service_domains, env=None):
         rows = service_domains if isinstance(service_domains, list) else [service_domains]
-        expected_content = str(config.advertise_address(env) or "").strip()
+        expected_content = str(_service_public_dns_content(env=env) or "").strip()
         deleted = []
         skipped = []
         failures = []

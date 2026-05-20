@@ -1757,6 +1757,33 @@ export class Component implements OnInit, OnDestroy {
         return node.is_local_master || node.role === 'local_master' ? '이 서비스가 실행 중인 서버' : '저장된 SSH key로 관리하는 서버';
     }
 
+    private isLikelyPrivateHost(value: string) {
+        const host = String(value || '').trim();
+        if (!host) return false;
+        if (['localhost', '127.0.0.1', '::1'].includes(host)) return true;
+        const match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+        if (!match) return false;
+        const first = Number(match[1]);
+        const second = Number(match[2]);
+        return first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) || (first === 169 && second === 254);
+    }
+
+    public nodeHostLabel(node: any) {
+        if (!node) return '-';
+        const localMaster = node.is_local_master || node.role === 'local_master';
+        const accessHost = String(node.private_host || node.metadata?.private_host || node.metadata?.node_access_host || '').trim();
+        const host = accessHost || String(node.host || '').trim();
+        if (!localMaster) return host || '-';
+        const publicIp = String(node.public_ip || node.metadata?.public_ip || '').trim();
+        const privateHost = host && this.isLikelyPrivateHost(host);
+        if (privateHost && publicIp && host !== publicIp) {
+            return `사설 ${host} · 공인 ${publicIp}`;
+        }
+        if (privateHost) return `사설 ${host}`;
+        if (publicIp) return `공인 ${publicIp}`;
+        return host || '-';
+    }
+
     public statusClass(status: string) {
         if (['running'].includes(status)) {
             return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';

@@ -262,3 +262,11 @@
 | 2026-05-19 | 260 | 서버 등록 해제 전 실행 중 서비스 차단 추가 | [상세](devlog/2026-05-19/260-server-unregister-running-service-guard.md) |
 | 2026-05-19 | 261 | custom Codex 실행 경로 제거와 provider 직접 API 호출 전환 | [상세](devlog/2026-05-19/261-custom-codex-removal-direct-api.md) |
 | 2026-05-19 | 262 | 시스템 설정에 공식 Codex CLI npm 업데이트 기능 추가 | [상세](devlog/2026-05-19/262-codex-cli-npm-update.md) |
+| 2026-05-19 | 263 | 마스터 공인 IP와 노드 접근용 사설 IP 분리 | [상세](devlog/2026-05-19/263-master-public-private-ip-split.md) |
+| 2026-05-19 | 264 | 서버 관리 중심 서버 IP 표시와 상단 버튼 정리 | [상세](devlog/2026-05-19/264-server-management-header-ip-label.md) |
+| 2026-05-19 | 265 | 중심 서버 기본 사설 IP 적용과 표시 보정 | [상세](devlog/2026-05-19/265-local-master-default-private-ip.md) |
+| 2026-05-19 | 266 | 서비스 스냅샷 기반 서버 마이그레이션 추가 | [상세](devlog/2026-05-19/266-service-migration-snapshot-redeploy.md) |
+| 2026-05-19 | 267 | 서비스 마이그레이션 대상 서버 목록 로딩 수정 | [상세](devlog/2026-05-19/267-service-migration-node-list.md) |
+| 2026-05-19 | 268 | Keycloak 실마이그레이션 검증과 백업 레지스트리 보정 | [상세](devlog/2026-05-19/268-keycloak-migration-browser-validation.md) |
+| 2026-05-20 | 269 | named volume 별도 이관 로직과 서비스 마이그레이션 연동 | [상세](devlog/2026-05-20/269-service-volume-migration.md) |
+| 2026-05-20 | 270 | Keycloak named volume 마이그레이션 실검증 | [상세](devlog/2026-05-20/270-keycloak-volume-migration-validation.md) |

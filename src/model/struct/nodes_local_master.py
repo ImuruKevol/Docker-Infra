@@ -1,5 +1,6 @@
 from psycopg.types.json import Jsonb
 
+config = wiz.config("docker_infra")
 connect = wiz.model("db/postgres").connect
 setup = wiz.model("struct/setup")
 shared = wiz.model("struct/nodes_shared")
@@ -104,12 +105,15 @@ class NodeLocalMasterMixin:
         metric["containers"] = {"summary": _container_summary(items), "items": items}
         return metric, {"system": metric_result, "containers": containers_result}
 
-    def _write_local_master(self, cursor, advertise_address, test_run_id, docker_info, swarm, network):
+    def _write_local_master(self, cursor, advertise_address, test_run_id, docker_info, swarm, network, public_ip=""):
         metadata = {
             "source": "local_master_ensure",
             "docker": docker_info,
             "swarm": swarm,
             "overlay_network": network,
+            "node_access_host": advertise_address,
+            "private_host": advertise_address,
+            "public_ip": public_ip,
         }
         status = "active" if swarm.get("ControlAvailable") else _node_status_from_swarm(swarm)
         cursor.execute(
@@ -185,6 +189,7 @@ class NodeLocalMasterMixin:
                     docker_info,
                     swarm,
                     {"name": DEFAULT_OVERLAY_NETWORK, "status": "unknown", "created": False},
+                    public_ip=config.public_ip(env=env, lookup=False),
                 )
                 self._write_node_metric(
                     cursor,
@@ -205,7 +210,7 @@ class NodeLocalMasterMixin:
 
     def ensure_local_master(self, payload=None, env=None):
         payload = payload or {}
-        advertise_address = payload.get("advertise_address") or setup.detect_advertise_address()
+        advertise_address = payload.get("private_address") or payload.get("node_access_host") or payload.get("advertise_address") or setup.detect_advertise_address()
         network_name = payload.get("network_name") or DEFAULT_OVERLAY_NETWORK
         test_run_id = payload.get("test_run_id")
         actions = []
@@ -260,7 +265,15 @@ class NodeLocalMasterMixin:
 
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
-                local_master = self._write_local_master(cursor, advertise_address, test_run_id, docker_info, swarm, network)
+                local_master = self._write_local_master(
+                    cursor,
+                    advertise_address,
+                    test_run_id,
+                    docker_info,
+                    swarm,
+                    network,
+                    public_ip=config.public_ip(env=env, lookup=False),
+                )
                 metric, metric_checks = self._local_metric_payload(env=env)
                 self._write_node_metric(
                     cursor,

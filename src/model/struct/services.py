@@ -18,6 +18,7 @@ placement_selector = wiz.model("struct/services_placement")
 ddns_model = wiz.model("struct/domains_ddns")
 ServiceRuntimeMixin = wiz.model("struct/services_runtime")
 ServiceDeployMixin = wiz.model("struct/services_deploy")
+ServiceMigrationMixin = wiz.model("struct/services_migration")
 ServiceDeleteMixin = wiz.model("struct/services_delete")
 ServiceUpdateMixin = wiz.model("struct/services_update")
 ServiceRollbackMixin = wiz.model("struct/services_rollback")
@@ -47,7 +48,7 @@ def _normalize_namespace(value):
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower())).strip("_")
 
 
-class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixin, ServiceDeleteMixin, ServiceStatusMixin, ServiceRuntimeMixin, ServiceCertbotMixin):
+class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixin, ServiceMigrationMixin, ServiceDeleteMixin, ServiceStatusMixin, ServiceRuntimeMixin, ServiceCertbotMixin):
     ServiceError = ServiceError
     ComposeValidationError = validator.ComposeValidationError
     IMPORT_WARNING_CODES = {"FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"}

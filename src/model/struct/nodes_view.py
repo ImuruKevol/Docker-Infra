@@ -55,6 +55,8 @@ class NodeView:
             "name": node.get("name"),
             "role": node.get("role"),
             "host": node.get("host"),
+            "private_host": node.get("private_host") or metadata.get("private_host") or metadata.get("node_access_host") or node.get("host"),
+            "public_ip": node.get("public_ip") or metadata.get("public_ip") or "",
             "ssh_port": node.get("ssh_port"),
             "status": node.get("status"),
             "swarm_node_id": node.get("swarm_node_id"),

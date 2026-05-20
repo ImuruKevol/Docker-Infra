@@ -61,6 +61,10 @@ export class Component implements OnInit, OnDestroy {
     public releaseBusy = signal<boolean>(false);
     public releaseIncludeSnapshots = signal<boolean>(false);
     public releaseComment = signal<string>('');
+    public migrationModalOpen = signal<boolean>(false);
+    public migrationBusy = signal<boolean>(false);
+    public migrationTargetNodeId = signal<string>('');
+    public migrationPause = signal<boolean>(true);
     public operationModalOpen = signal<boolean>(false);
     public operationBusy = signal<boolean>(false);
     public operationDetail = signal<any>(null);
@@ -881,6 +885,108 @@ export class Component implements OnInit, OnDestroy {
         if (this.serviceForm.placement_mode !== 'manual') return '자동 배치';
         const node = this.selectedPlacementNode();
         return node ? `${node.name || node.host} (${node.host})` : '서버 선택 필요';
+    }
+
+    private servicePlacementNodeId() {
+        const service = this.detail()?.service || this.selected() || {};
+        const policy = service?.target_node_policy || {};
+        const placement = service?.metadata?.placement || {};
+        return String(policy.node_id || placement.node_id || '').trim();
+    }
+
+    public currentMigrationSourceNodeId() {
+        return this.runtimeServerDetailNodeId() || this.servicePlacementNodeId();
+    }
+
+    public currentMigrationSourceNodeLabel() {
+        const nodeId = this.currentMigrationSourceNodeId();
+        const node = this.nodes().find((item: any) => item.id === nodeId);
+        if (node) return `${node.name || node.host} (${node.host || 'host 없음'})`;
+        return this.runtimeServerSummaryText();
+    }
+
+    public migrationNodeOptions() {
+        const currentNodeId = this.currentMigrationSourceNodeId();
+        return this.nodes()
+            .filter((node: any) => node.id && node.id !== currentNodeId)
+            .map((node: any) => ({
+                value: node.id,
+                label: node.name || node.host,
+                description: `${node.host || '-'} · ${node.is_local_master ? '마스터' : '일반'} · ${this.statusLabel(node.status)}`,
+                badge: node.is_local_master ? 'master' : 'node',
+                badgeClass: node.is_local_master
+                    ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300'
+                    : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300',
+                disabled: ['failed', 'canceled'].includes(this.statusKey(node.status)),
+            }));
+    }
+
+    public selectedMigrationNode() {
+        return this.nodes().find((node: any) => node.id === this.migrationTargetNodeId()) || null;
+    }
+
+    public migrationDisabledReason() {
+        if (!this.selected()?.id) return '서비스를 선택해주세요.';
+        if (!this.backupSystemCanBackup()) return '백업 시스템이 실행 중이어야 마이그레이션할 수 있습니다.';
+        if (!this.migrationNodeOptions().length) return '이동할 다른 서버가 없습니다.';
+        if (!this.migrationTargetNodeId()) return '대상 서버를 선택해주세요.';
+        return '';
+    }
+
+    public canSubmitMigration() {
+        return !this.migrationBusy() && !this.busy() && !this.migrationDisabledReason();
+    }
+
+    public migrationTargetSummary() {
+        const node = this.selectedMigrationNode();
+        if (!node) return '대상 서버 선택 필요';
+        return `${node.name || node.host} (${node.host || 'host 없음'})`;
+    }
+
+    public openMigrationModal() {
+        if (!this.selected()?.id || this.migrationBusy()) return;
+        const first = this.migrationNodeOptions().find((item: any) => !item.disabled);
+        this.migrationTargetNodeId.set(first?.value || '');
+        this.migrationPause.set(true);
+        this.migrationModalOpen.set(true);
+    }
+
+    public closeMigrationModal() {
+        if (this.migrationBusy()) return;
+        this.migrationModalOpen.set(false);
+        this.migrationTargetNodeId.set('');
+    }
+
+    public async submitServiceMigration() {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || this.migrationBusy()) return;
+        const disabledReason = this.migrationDisabledReason();
+        if (disabledReason) {
+            await this.alert(disabledReason);
+            return;
+        }
+        const ok = await this.confirm(
+            `${this.selected()?.name || '서비스'}를 ${this.migrationTargetSummary()} 서버로 마이그레이션합니다.\n\n현재 컨테이너 스냅샷을 만든 뒤 스냅샷 이미지로 새 서버에 다시 배포합니다.`,
+            '마이그레이션',
+            'warning',
+        );
+        if (!ok) return;
+        this.migrationBusy.set(true);
+        const { code, data } = await wiz.call('migrate_service', {
+            service_id: serviceId,
+            target_node_id: this.migrationTargetNodeId(),
+            pause: this.migrationPause(),
+        });
+        this.migrationBusy.set(false);
+        if ([200, 202].includes(code)) {
+            this.migrationModalOpen.set(false);
+            if (data?.service) this.selected.set({ ...this.selected(), ...data.service });
+            if (data?.operation) await this.openOperationModal(data.operation, false);
+            await this.load(serviceId);
+        } else {
+            await this.alert(data?.message || '서비스 마이그레이션을 시작할 수 없습니다.');
+        }
+        await this.service.render();
     }
 
     public async deploySelectedService() {
@@ -3138,13 +3244,14 @@ export class Component implements OnInit, OnDestroy {
     public activeBackgroundOperation() {
         return (this.detail()?.operations || []).find((operation: any) => (
             this.isActiveOperation(operation)
-            && ['service.deploy', 'service.ai.verify', 'service.image.snapshot'].includes(String(operation?.type || ''))
+            && ['service.deploy', 'service.migrate', 'service.ai.verify', 'service.image.snapshot'].includes(String(operation?.type || ''))
         )) || null;
     }
 
     public operationLabel(type: string) {
         const labels: any = {
             'service.deploy': '설정 적용',
+            'service.migrate': '서비스 마이그레이션',
             'service.ai.verify': 'AI 백그라운드 검증',
             'service.certbot.renew': '무료 인증서 갱신',
             'service.certbot.renewal.ensure': '무료 인증서 자동 갱신 설정',
@@ -3210,6 +3317,7 @@ export class Component implements OnInit, OnDestroy {
             compose_rollback: '되돌리기',
             manual_release: '수동 릴리즈',
             manual_release_snapshot: '릴리즈 스냅샷',
+            service_migration_snapshot: '마이그레이션 스냅샷',
         };
         return labels[source] || source || '-';
     }

@@ -20,11 +20,15 @@ class NodeError(Exception):
 def node_to_dict(row):
     if row is None:
         return None
+    metadata = row["metadata"] or {}
+    private_host = metadata.get("node_access_host") or metadata.get("private_host") or metadata.get("internal_host") or row["host"]
     return {
         "id": str(row["id"]),
         "name": row["name"],
         "role": row["role"],
         "host": row["host"],
+        "private_host": private_host,
+        "public_ip": metadata.get("public_ip") or metadata.get("public_host") or "",
         "ssh_port": row["ssh_port"],
         "auth_type": row["auth_type"],
         "status": row["status"],
@@ -36,6 +40,19 @@ def node_to_dict(row):
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+
+
+def node_access_host(node):
+    node = node or {}
+    metadata = node.get("metadata") or {}
+    return (
+        metadata.get("node_access_host")
+        or metadata.get("private_host")
+        or metadata.get("internal_host")
+        or node.get("private_host")
+        or node.get("host")
+        or ""
+    )
 
 
 def credential_to_public(row):
@@ -357,6 +374,7 @@ class NodesShared:
     REPORTER_TOKEN_TYPE = REPORTER_TOKEN_TYPE
     NodeError = NodeError
     node_to_dict = staticmethod(node_to_dict)
+    node_access_host = staticmethod(node_access_host)
     credential_to_public = staticmethod(credential_to_public)
     reporter_to_public = staticmethod(reporter_to_public)
     metric_to_dict = staticmethod(metric_to_dict)

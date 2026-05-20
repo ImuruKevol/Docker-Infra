@@ -2308,6 +2308,8 @@
                     "name",
                     "role",
                     "host",
+                    "private_host",
+                    "public_ip",
                     "ssh_port",
                     "auth_type",
                     "status",
@@ -2335,6 +2337,15 @@
                     },
                     "host": {
                         "type": "string"
+                    },
+                    "private_host": {
+                        "type": "string",
+                        "description": "Address other Docker Infra nodes should use to reach the local master."
+                    },
+                    "public_ip": {
+                        "type": "string",
+                        "description": "Public IP used for service DNS records when configured.",
+                        "nullable": true
                     },
                     "ssh_port": {
                         "type": "integer",
@@ -2750,6 +2761,8 @@
                     "name",
                     "role",
                     "host",
+                    "private_host",
+                    "public_ip",
                     "ssh_port",
                     "auth_type",
                     "status",
@@ -2778,6 +2791,15 @@
                     },
                     "host": {
                         "type": "string"
+                    },
+                    "private_host": {
+                        "type": "string",
+                        "description": "Address other Docker Infra nodes should use to reach this node."
+                    },
+                    "public_ip": {
+                        "type": "string",
+                        "description": "Public IP used for service DNS records when configured.",
+                        "nullable": true
                     },
                     "ssh_port": {
                         "type": "integer",
@@ -2880,6 +2902,14 @@
                     },
                     "advertise_address": {
                         "type": "string"
+                    },
+                    "private_address": {
+                        "type": "string",
+                        "description": "Private/internal address other nodes should use to join the Swarm manager."
+                    },
+                    "node_access_host": {
+                        "type": "string",
+                        "description": "Alias for private_address."
                     }
                 }
             },
@@ -3127,6 +3157,14 @@
                 "properties": {
                     "advertise_address": {
                         "type": "string"
+                    },
+                    "private_address": {
+                        "type": "string",
+                        "description": "Private/internal address other nodes should use to reach the local master."
+                    },
+                    "node_access_host": {
+                        "type": "string",
+                        "description": "Alias for private_address."
                     },
                     "network_name": {
                         "type": "string",

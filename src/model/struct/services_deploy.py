@@ -240,6 +240,35 @@ class ServiceDeployMixin:
             )
         return result
 
+    def _ensure_manager_backup_registry_for_deploy(self, operation_id, env=None):
+        manager = next((node for node in nodes.list(env=env) if node.get("is_local_master")), None)
+        if not manager:
+            return None
+        try:
+            result = nodes.configure_backup_registry_for_node(manager["id"], operation_id=operation_id, env=env)
+        except Exception as exc:
+            return self._deploy_failure(
+                operation_id,
+                "백업 저장소 이미지를 로그인할 수 있도록 매니저 노드 레지스트리 설정을 적용할 수 없습니다.",
+                {
+                    "status": "error",
+                    "message": getattr(exc, "message", str(exc)),
+                    "error_code": getattr(exc, "error_code", "BACKUP_REGISTRY_MANAGER_CONFIG_FAILED"),
+                },
+                env=env,
+            )
+        node = result.get("node") or manager
+        return {
+            "node": {
+                "id": node.get("id"),
+                "name": node.get("name"),
+                "host": node.get("host"),
+                "is_local_master": node.get("is_local_master"),
+            },
+            "registries": result.get("registries") or [],
+            "status": result.get("status"),
+        }
+
     def _compose_image_registries(self, compose_path):
         compose = yaml.safe_load(compose_path.read_text(encoding="utf-8")) or {}
         result = []
@@ -360,6 +389,8 @@ class ServiceDeployMixin:
 
     def _login_backup_registry_for_deploy(self, compose_path, operation_id, env=None):
         self._ensure_backup_system_running_for_deploy(operation_id, env=env)
+        manager_setup = self._ensure_manager_backup_registry_for_deploy(operation_id, env=env)
+        self._ensure_backup_system_running_for_deploy(operation_id, env=env)
         connection = backup_system.connection_config(env=env)
         if not connection.get("configured"):
             return self._deploy_failure(
@@ -392,7 +423,7 @@ class ServiceDeployMixin:
             results.append({"registry": registry, "status": result.get("status"), "exit_code": result.get("exit_code")})
             if result.get("status") != "ok":
                 return self._deploy_failure(operation_id, "백업 저장소 Docker login에 실패했습니다.", result, env=env)
-        return {"registries": registries, "results": results}
+        return {"manager_setup": manager_setup, "registries": registries, "results": results}
 
     def _stack_remove_missing(self, result):
         text = _command_text(result).lower()

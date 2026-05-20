@@ -190,6 +190,7 @@ class ServiceNginx:
 
     def _ensure_dns_records(self, domains, commands, env=None):
         ensured = []
+        public_dns_content = None
         for row in domains:
             domain = str(row.get("domain") or "").strip().lower()
             metadata = dict(row.get("metadata") or {})
@@ -198,10 +199,12 @@ class ServiceNginx:
             if self._uses_ddns_provider(row):
                 result = {"status": "skipped", "domain": domain, "reason": "ddns_managed"}
             else:
+                if public_dns_content is None:
+                    public_dns_content = config.public_dns_address(env=env) or config.public_dns_address(env=env, record_type="AAAA")
                 result = domains_model.ensure_service_dns_record(
                     domain,
                     zone_config_id=metadata.get("zone_id"),
-                    content=config.advertise_address(env),
+                    content=public_dns_content,
                     proxied=metadata.get("dns_proxied") is True,
                     env=env,
                 )

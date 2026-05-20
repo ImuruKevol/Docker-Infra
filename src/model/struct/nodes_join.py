@@ -101,7 +101,7 @@ class NodeJoinMixin:
             local_info = _load_json(local_info_result["stdout"])
             manager_addr = payload.get("manager_addr") or self._manager_addr(
                 local_info,
-                payload.get("advertise_address") or setup.detect_advertise_address(),
+                payload.get("private_address") or payload.get("node_access_host") or payload.get("advertise_address") or setup.detect_advertise_address(),
             )
             join_command = ["docker", "swarm", "join", "--token", token, manager_addr]
 

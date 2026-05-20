@@ -113,9 +113,9 @@ class NodesMonitoring:
         )
 
     def _reporter_base_url(self, payload=None, env=None):
-        configured = config.reporter_base_url(env)
+        configured = config.reporter_internal_base_url(env)
         requested = (payload or {}).get("reporter_base_url") or (payload or {}).get("base_url")
-        return str(requested or configured or "").rstrip("/")
+        return str(configured or requested or "").rstrip("/")
 
     def _collector_params(self, node_id, reporter_token, payload=None, env=None):
         interval = config.node_metric_collection_interval_seconds(env)
