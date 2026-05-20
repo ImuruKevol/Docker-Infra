@@ -270,3 +270,5 @@
 | 2026-05-19 | 268 | Keycloak 실마이그레이션 검증과 백업 레지스트리 보정 | [상세](devlog/2026-05-19/268-keycloak-migration-browser-validation.md) |
 | 2026-05-20 | 269 | named volume 별도 이관 로직과 서비스 마이그레이션 연동 | [상세](devlog/2026-05-20/269-service-volume-migration.md) |
 | 2026-05-20 | 270 | Keycloak named volume 마이그레이션 실검증 | [상세](devlog/2026-05-20/270-keycloak-volume-migration-validation.md) |
+| 2026-05-20 | 271 | 서비스 상세 서버 바로가기 버튼 위치와 새로고침 버튼 정리 | [상세](devlog/2026-05-20/271-service-detail-server-shortcut-placement.md) |
+| 2026-05-20 | 272 | 대시보드 서비스 목록 카드와 실행 경고 표시 추가 | [상세](devlog/2026-05-20/272-dashboard-service-alert-card.md) |

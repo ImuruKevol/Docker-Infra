@@ -21,7 +21,7 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
     private resourceChartRenderTimer: ReturnType<typeof setTimeout> | null = null;
     private loadToken = 0;
     private resourceLoadToken = 0;
-    private dashboardCards = ['summary', 'resources', 'servers', 'domains', 'operations'];
+    private dashboardCards = ['summary', 'resources', 'servers', 'services', 'domains', 'operations'];
 
     constructor(public service: Service) { }
 
@@ -114,6 +114,11 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
         return fallback;
     }
 
+    private toNumber(value: any) {
+        const numeric = Number(value || 0);
+        return Number.isNaN(numeric) ? 0 : numeric;
+    }
+
     private async loadCard(card: string, apiName: string, fallback: string, token: number) {
         this.setCardLoading(card, true);
         this.setCardError(card, '');
@@ -178,6 +183,7 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
             this.loadCard('summary', 'summary', 'Dashboard 상태를 불러올 수 없습니다.', token),
             this.loadResources(resourceToken),
             this.loadCard('servers', 'servers', '서버 목록을 불러올 수 없습니다.', token),
+            this.loadCard('services', 'services', '서비스 목록을 불러올 수 없습니다.', token),
             this.loadCard('domains', 'domains', '도메인 정보를 불러올 수 없습니다.', token),
             this.loadCard('operations', 'operations', '최근 작업을 불러올 수 없습니다.', token),
         ]);
@@ -238,6 +244,97 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
 
     public nodes() {
         return this.data()?.nodes || [];
+    }
+
+    public serviceUsage() {
+        return this.data()?.service_usage || { services: [], summary: {} };
+    }
+
+    public serviceRows() {
+        return this.serviceUsage()?.services || [];
+    }
+
+    public serviceSummary() {
+        return this.serviceUsage()?.summary || {};
+    }
+
+    public servicePrimaryDomain(item: any) {
+        const domains = Array.isArray(item?.domains) ? item.domains.filter((domain: any) => Boolean(domain)) : [];
+        return item?.primary_domain || domains[0] || '도메인 없음';
+    }
+
+    public serviceRuntimeStatus(item: any) {
+        return item?.runtime_status || item?.metadata?.runtime_status || {};
+    }
+
+    public serviceContainerSummary(item: any) {
+        const summary = this.serviceRuntimeStatus(item)?.containers?.summary || {};
+        const total = this.toNumber(summary.total);
+        const running = this.toNumber(summary.running);
+        const stopped = summary.stopped === undefined ? Math.max(0, total - running) : this.toNumber(summary.stopped);
+        return { total, running, stopped };
+    }
+
+    public serviceStackSummary(item: any) {
+        return this.serviceRuntimeStatus(item)?.stack?.summary || {};
+    }
+
+    public serviceHealthSummary(item: any) {
+        return this.serviceRuntimeStatus(item)?.containers?.health || {};
+    }
+
+    public serviceRuntimeText(item: any) {
+        const containers = this.serviceContainerSummary(item);
+        const stack = this.serviceStackSummary(item);
+        if (containers.total > 0) return `컨테이너 ${containers.running}/${containers.total}`;
+        const desired = this.toNumber(stack.desired);
+        const running = this.toNumber(stack.running);
+        if (desired > 0) return `작업 ${running}/${desired}`;
+        return '상태 확인 전';
+    }
+
+    public attentionBadgeClass(level: string = 'warning') {
+        if (level === 'error') {
+            return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300';
+        }
+        return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300';
+    }
+
+    public nodeWarning(node: any) {
+        const status = String(node?.status || '').toLowerCase();
+        if (['failed', 'error', 'down', 'unreachable'].includes(status)) {
+            return { level: 'error', message: '서버 상태 확인 필요' };
+        }
+        const summary = this.nodeContainerSummary(node);
+        const total = this.toNumber(summary.total);
+        const running = this.toNumber(summary.running);
+        const stopped = summary.stopped === undefined ? Math.max(0, total - running) : this.toNumber(summary.stopped);
+        if (total > 0 && running < total) {
+            return { level: 'warning', message: `컨테이너 ${running}/${total} 실행 중 · 중지 ${stopped}개` };
+        }
+        return null;
+    }
+
+    public serviceWarning(item: any) {
+        const health = this.serviceHealthSummary(item);
+        const stack = this.serviceStackSummary(item);
+        const containers = this.serviceContainerSummary(item);
+        const status = String(item?.status || '').toLowerCase();
+        const unhealthy = this.toNumber(health.unhealthy);
+        const taskErrors = this.toNumber(stack.task_errors);
+        const desired = this.toNumber(stack.desired);
+        const stackRunning = this.toNumber(stack.running);
+        if (unhealthy > 0) return { level: 'error', message: `상태 점검 실패 ${unhealthy}개` };
+        if (taskErrors > 0) return { level: 'error', message: `Docker 작업 오류 ${taskErrors}개` };
+        if (desired > 0 && stackRunning < desired) {
+            return { level: 'warning', message: `Docker 작업 ${stackRunning}/${desired} 실행 중` };
+        }
+        if (containers.total > 0 && containers.running < containers.total) {
+            return { level: 'warning', message: `컨테이너 ${containers.running}/${containers.total} 실행 중 · 중지 ${containers.stopped}개` };
+        }
+        if (['failed', 'canceled', 'error'].includes(status)) return { level: 'error', message: '최근 처리 확인 필요' };
+        if (item?.needs_attention) return { level: 'warning', message: '실행 상태 확인 필요' };
+        return null;
     }
 
     public operations() {
@@ -404,7 +501,12 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
     public nodeContainerSummary(node: any) {
         const containers = this.nodeMetric(node)?.containers || {};
         const summary = containers.summary || {};
-        if (summary.total !== undefined) return summary;
+        if (summary.total !== undefined) {
+            const total = this.toNumber(summary.total);
+            const running = this.toNumber(summary.running);
+            const stopped = summary.stopped === undefined ? Math.max(0, total - running) : this.toNumber(summary.stopped);
+            return { total, running, stopped };
+        }
         const items = Array.isArray(containers.items) ? containers.items : [];
         const running = items.filter((item: any) => String(item?.state || '').toLowerCase() === 'running').length;
         return { total: items.length, running, stopped: Math.max(0, items.length - running) };
@@ -417,6 +519,7 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
             active: 'Active',
             pending: 'Pending',
             running: 'Running',
+            deployed: '운영 중',
             succeeded: 'Succeeded',
             failed: 'Failed',
             canceled: 'Canceled',
@@ -426,7 +529,7 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
     }
 
     public statusClass(status: string) {
-        if (['ok', 'active', 'succeeded'].includes(status)) {
+        if (['ok', 'active', 'succeeded', 'deployed'].includes(status)) {
             return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
         }
         if (['running', 'pending', 'degraded'].includes(status)) {

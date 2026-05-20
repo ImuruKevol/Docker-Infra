@@ -70,6 +70,13 @@ def _dict(value):
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _int(value, fallback=0):
+    try:
+        return int(value)
+    except Exception:
+        return fallback
+
+
 class InfraCatalog:
     def counts(self):
         with connect() as connection:
@@ -573,6 +580,110 @@ class InfraCatalog:
                         "reported_at": node.pop("latest_reported_at", None),
                     }
         return {"nodes": nodes, "node_metric_history": metric_history.dashboard_summary()}
+
+    def _dashboard_service_warning(self, service):
+        runtime = _dict(service.get("runtime_status"))
+        containers = _dict(_dict(runtime.get("containers")).get("summary"))
+        health = _dict(_dict(runtime.get("containers")).get("health"))
+        stack = _dict(_dict(runtime.get("stack")).get("summary"))
+        status = str(service.get("status") or "").lower()
+
+        container_total = _int(containers.get("total"))
+        container_running = _int(containers.get("running"))
+        stack_desired = _int(stack.get("desired"))
+        stack_running = _int(stack.get("running"))
+
+        if _int(health.get("unhealthy")) > 0:
+            return True
+        if _int(stack.get("task_errors")) > 0:
+            return True
+        if stack_desired > 0 and stack_running < stack_desired:
+            return True
+        if container_total > 0 and container_running < container_total:
+            return True
+        return status in {"failed", "canceled", "error"}
+
+    def dashboard_services(self):
+        with connect() as connection:
+            with connection.cursor() as cursor:
+                services = _rows(
+                    cursor,
+                    """
+                    SELECT
+                        s.id::text AS id,
+                        s.namespace,
+                        s.name,
+                        s.status,
+                        s.stack_name,
+                        s.metadata->'runtime_status' AS runtime_status,
+                        s.created_at,
+                        s.updated_at,
+                        COALESCE(d.domain_count, 0) AS domain_count,
+                        d.primary_domain,
+                        COALESCE(d.domains, ARRAY[]::text[]) AS domains,
+                        COALESCE(v.version_count, 0) AS compose_version_count
+                    FROM services s
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            count(*) AS domain_count,
+                            min(domain) AS primary_domain,
+                            array_remove(array_agg(domain ORDER BY domain), NULL) AS domains
+                        FROM service_domains
+                        WHERE service_id = s.id
+                    ) d ON true
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS version_count
+                        FROM compose_versions
+                        WHERE service_id = s.id
+                    ) v ON true
+                    ORDER BY
+                        CASE WHEN s.status IN ('failed', 'canceled', 'error') THEN 0 ELSE 1 END,
+                        s.updated_at DESC,
+                        s.created_at DESC
+                    LIMIT 6
+                    """,
+                )
+                cursor.execute(
+                    """
+                    SELECT status, count(*) AS count
+                    FROM services
+                    GROUP BY status
+                    ORDER BY status
+                    """
+                )
+                status_counts = {row["status"]: int(row["count"]) for row in cursor.fetchall()}
+                warning_rows = _rows(
+                    cursor,
+                    """
+                    SELECT
+                        status,
+                        metadata->'runtime_status' AS runtime_status
+                    FROM services
+                    """,
+                )
+
+        for service in services:
+            service["runtime_status"] = service.get("runtime_status") or {}
+            service["domain_count"] = _int(service.get("domain_count"))
+            service["compose_version_count"] = _int(service.get("compose_version_count"))
+            service["domains"] = [domain for domain in (service.get("domains") or []) if domain]
+            service["needs_attention"] = self._dashboard_service_warning(service)
+        warning_count = len([
+            row
+            for row in warning_rows
+            if self._dashboard_service_warning({"status": row.get("status"), "runtime_status": row.get("runtime_status") or {}})
+        ])
+
+        return {
+            "service_usage": {
+                "services": services,
+                "summary": {
+                    "service_count": sum(status_counts.values()),
+                    "warning_count": warning_count,
+                    "status_counts": status_counts,
+                },
+            }
+        }
 
     def dashboard_operations(self):
         with connect() as connection:

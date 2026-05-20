@@ -84,6 +84,11 @@ def servers():
     _dashboard_response(lambda: catalog.dashboard_nodes(), "DASHBOARD_SERVERS_LOAD_FAILED")
 
 
+def services():
+    catalog = wiz.model("struct/infra_catalog_registry")
+    _dashboard_response(lambda: catalog.dashboard_services(), "DASHBOARD_SERVICES_LOAD_FAILED")
+
+
 def domains():
     catalog = wiz.model("struct/infra_catalog_registry")
     _dashboard_response(lambda: catalog.dashboard_domains(), "DASHBOARD_DOMAINS_LOAD_FAILED")

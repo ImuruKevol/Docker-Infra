@@ -71,20 +71,17 @@ main(class="space-y-5 px-5 py-5")
                                 span(*ngIf="!primaryDomain()", class="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300")
                                     i(class="fa-solid fa-triangle-exclamation")
                                     span {{primaryDomainText()}}
+                                a(*ngIf="runtimeServerDetailNodeId()", [routerLink]="['/servers']", [queryParams]="runtimeServerDetailQueryParams()", class="inline-flex max-w-full items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950", [title]="runtimeServerDetailLinkTitle()", aria-label="서버 상세로 이동")
+                                    i(class="fa-solid fa-server")
+                                    span(class="max-w-[180px] truncate") {{runtimeServerSummaryText()}}
+                                    i(class="fa-solid fa-arrow-up-right-from-square text-[11px]")
                         div(class="flex flex-wrap items-center gap-2")
-                            a(*ngIf="runtimeServerDetailNodeId()", [routerLink]="['/servers']", [queryParams]="runtimeServerDetailQueryParams()", class="inline-flex h-9 max-w-full items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-950", [title]="runtimeServerDetailLinkTitle()", aria-label="서버 상세로 이동")
-                                i(class="fa-solid fa-server")
-                                span(class="max-w-[180px] truncate") {{runtimeServerSummaryText()}}
-                                i(class="fa-solid fa-arrow-up-right-from-square text-[11px]")
                             button(type="button", (click)="openMigrationModal()", [disabled]="busy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-emerald-300 px-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-900/70 dark:text-emerald-300 dark:hover:bg-emerald-950/30")
                                 i(class="fa-solid fa-arrow-right-arrow-left")
                                 span 마이그레이션
                             button(type="button", (click)="openEditModal()", [disabled]="busy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                 i(class="fa-solid fa-pen")
                                 span 수정
-                            button(type="button", (click)="load(selected()?.id || '')", [disabled]="busy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                i(class="fa-solid fa-rotate-right")
-                                span 새로고침
                             button(type="button", (click)="deleteSelectedService()", [disabled]="busy()", class="inline-flex h-9 items-center gap-2 rounded-md border border-rose-300 px-3 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                                 i(class="fa-solid fa-trash")
                                 span 서비스 삭제
