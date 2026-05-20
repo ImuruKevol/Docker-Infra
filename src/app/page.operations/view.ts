@@ -42,6 +42,7 @@ export class Component implements OnInit, OnDestroy {
         this.error.set('');
         const requestedPage = Math.max(1, Number(page || 1));
         const requestedLimit = Math.max(1, Number(this.limit() || 80));
+        if (showLoading) await this.service.render();
         const { code, data } = await wiz.call('load', {
             query: this.query(),
             status: this.statusFilter(),

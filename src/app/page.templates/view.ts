@@ -229,6 +229,7 @@ export class Component implements OnInit {
         this.resetDetailState();
         this.detailCache = {};
         this.detailLoadRequestId += 1;
+        await this.service.render();
         const { code, data } = await wiz.call('load', {});
         if (code === 200) {
             this.templates.set(data.templates || []);

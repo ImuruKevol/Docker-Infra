@@ -376,6 +376,7 @@ export class Component implements OnInit, OnDestroy {
         this.detailLoading.set(false);
         this.panelRefreshing.set(false);
         this.stopAutoRefresh();
+        await this.service.render();
         const { code, data } = await wiz.call("load", { selected_id: selectedId });
         if (code === 200) {
             this.applyOverview(data);

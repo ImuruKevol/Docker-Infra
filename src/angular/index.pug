@@ -41,5 +41,80 @@ html(lang="en")
             };
         script(async, src="https://review.season.co.kr/assets/reviewops-sdk.js")
 
+        style.
+            body {
+                margin: 0;
+                background: #f4f4f5;
+                color: #18181b;
+                font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            }
+
+            #app-boot-loading {
+                position: fixed;
+                inset: 0;
+                z-index: 2147483647;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: #f4f4f5;
+            }
+
+            app-root:not(:empty) + #app-boot-loading {
+                display: none;
+            }
+
+            .app-boot-panel {
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+                border: 1px solid #e4e4e7;
+                border-radius: 8px;
+                background: #ffffff;
+                padding: 14px 16px;
+                color: #52525b;
+                font-size: 14px;
+                font-weight: 600;
+                box-shadow: 0 10px 30px rgba(24, 24, 27, 0.08);
+            }
+
+            .app-boot-spinner {
+                width: 18px;
+                height: 18px;
+                border: 2px solid #d4d4d8;
+                border-top-color: #2563eb;
+                border-radius: 999px;
+                animation: app-boot-spin 0.8s linear infinite;
+            }
+
+            @keyframes app-boot-spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            @media (prefers-color-scheme: dark) {
+                body,
+                #app-boot-loading {
+                    background: #09090b;
+                    color: #f4f4f5;
+                }
+
+                .app-boot-panel {
+                    border-color: #27272a;
+                    background: #18181b;
+                    color: #d4d4d8;
+                    box-shadow: none;
+                }
+
+                .app-boot-spinner {
+                    border-color: #3f3f46;
+                    border-top-color: #60a5fa;
+                }
+            }
+
     body
         app-root
+        div(id="app-boot-loading", role="status", aria-live="polite")
+            div(class="app-boot-panel")
+                span(class="app-boot-spinner", aria-hidden="true")
+                span Loading Docker Infra

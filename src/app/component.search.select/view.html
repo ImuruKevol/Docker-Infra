@@ -23,7 +23,7 @@
         </div>
     </button>
 
-    <div *ngIf="open" class="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+    <div *ngIf="open" class="fixed z-[80] overflow-hidden rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950" [ngStyle]="dropdownPanelStyle">
         <div class="border-b border-zinc-200 p-3 dark:border-zinc-800">
             <input
                 data-search-select-input
@@ -35,7 +35,7 @@
                 class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
             />
         </div>
-        <div class="max-h-72 overflow-auto">
+        <div class="overflow-auto" [style.max-height.px]="dropdownListMaxHeight">
             <button
                 *ngFor="let item of filteredItems()"
                 type="button"

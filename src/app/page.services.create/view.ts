@@ -90,6 +90,7 @@ export class Component implements OnInit {
     public async load() {
         this.loading.set(true);
         this.error.set('');
+        await this.service.render();
         const { code, data } = await wiz.call('load', {});
         if (code === 200) {
             if (this.hasOwn(data, 'zones')) {
@@ -438,6 +439,55 @@ export class Component implements OnInit {
         ];
     }
 
+    public creationModeCardClass(mode: any) {
+        const active = this.creationMode() === mode.id;
+        if (!active) {
+            return 'border-zinc-200 bg-white text-zinc-800 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-800';
+        }
+        if (mode.id === 'template') {
+            return 'border-indigo-200 bg-indigo-50 text-indigo-950 dark:border-indigo-900/70 dark:bg-indigo-950/30 dark:text-indigo-100';
+        }
+        if (mode.id === 'ai') {
+            return 'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-100';
+        }
+        return 'border-zinc-300 bg-zinc-100 text-zinc-950 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100';
+    }
+
+    public creationModeIconClass(mode: any) {
+        const active = this.creationMode() === mode.id;
+        if (!active) {
+            return 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300';
+        }
+        if (mode.id === 'template') {
+            return 'bg-indigo-600 text-white dark:bg-indigo-400 dark:text-indigo-950';
+        }
+        if (mode.id === 'ai') {
+            return 'bg-sky-600 text-white dark:bg-sky-400 dark:text-sky-950';
+        }
+        return 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950';
+    }
+
+    public creationModeBadgeClass(mode: any) {
+        const active = this.creationMode() === mode.id;
+        if (!active) {
+            return 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300';
+        }
+        if (mode.id === 'template') {
+            return 'border-indigo-200 bg-white text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-200';
+        }
+        if (mode.id === 'ai') {
+            return 'border-sky-200 bg-white text-sky-700 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200';
+        }
+        return 'border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200';
+    }
+
+    public serviceNamePlaceholder() {
+        const mode = this.creationMode();
+        if (mode === 'ai') return 'AI가 자동으로 채울 수 있습니다.';
+        if (mode === 'manual') return 'Compose에서 추출하거나 직접 입력';
+        return '예: wiz-dev';
+    }
+
     private normalizeCreationMode() {
         const mode = this.creationMode();
         if (mode === 'template' && !this.templates().length) {
@@ -518,6 +568,14 @@ export class Component implements OnInit {
         ];
     }
 
+    private aiAutomationRows() {
+        return [
+            { icon: 'fa-layer-group', title: '서비스 구성', description: '이미지, 포트, 환경변수, 데이터 보관' },
+            { icon: 'fa-globe', title: '도메인 연결', description: '등록 도메인, 공개 포트, SSL 방식' },
+            { icon: 'fa-rotate-right', title: '자동 보정', description: '검증 실패 시 AI 재호출 후 다시 검사' },
+        ];
+    }
+
     public aiExamples() {
         return [
             {
@@ -532,14 +590,6 @@ export class Component implements OnInit {
                 title: '정적 사이트',
                 prompt: '회사 소개용 정적 웹사이트를 nginx로 배포하고 싶습니다. 도메인 연결이 필요하고, 나중에 파일만 교체해서 운영할 수 있으면 좋겠습니다.',
             },
-        ];
-    }
-
-    public aiAutomationRows() {
-        return [
-            { icon: 'fa-layer-group', title: '서비스 구성', description: '이미지, 포트, 환경변수, 데이터 보관' },
-            { icon: 'fa-globe', title: '도메인 연결', description: '등록 도메인, 공개 포트, SSL 방식' },
-            { icon: 'fa-rotate-right', title: '자동 보정', description: '검증 실패 시 AI 재호출 후 다시 검사' },
         ];
     }
 

@@ -19,6 +19,67 @@ TEMPLATE_FILES = {
     "readme": "README.md",
 }
 
+_SEED_TEMPLATE_CACHE = None
+_SUMMARY_CACHE = {}
+_DETAIL_CACHE = {}
+
+
+def _seed_templates():
+    global _SEED_TEMPLATE_CACHE
+    if _SEED_TEMPLATE_CACHE is None:
+        _SEED_TEMPLATE_CACHE = seed.default_templates()
+    return _SEED_TEMPLATE_CACHE
+
+
+def _mtime_ns(path):
+    try:
+        return path.stat().st_mtime_ns
+    except Exception:
+        return 0
+
+
+def _template_dirs(root):
+    return [
+        directory
+        for directory in sorted(root.iterdir(), key=lambda item: item.name)
+        if directory.is_dir() and (directory / TEMPLATE_FILES["compose"]).exists()
+    ]
+
+
+def _summary_signature(root):
+    return tuple(
+        (
+            directory.name,
+            _mtime_ns(directory / "template.json"),
+            _mtime_ns(directory / TEMPLATE_FILES["readme"]),
+            _mtime_ns(directory / TEMPLATE_FILES["compose"]),
+        )
+        for directory in _template_dirs(root)
+    )
+
+
+def _detail_signature(directory):
+    return (
+        _mtime_ns(directory / "template.json"),
+        *(_mtime_ns(directory / filename) for filename in TEMPLATE_FILES.values()),
+    )
+
+
+def _invalidate_cache(namespace=None, env=None):
+    root = str(_template_root(env))
+    for key in list(_SUMMARY_CACHE.keys()):
+        if key[0] == root:
+            _SUMMARY_CACHE.pop(key, None)
+    if namespace is None:
+        for key in list(_DETAIL_CACHE.keys()):
+            if key[0] == root:
+                _DETAIL_CACHE.pop(key, None)
+        return
+    namespace = _namespace(namespace)
+    for key in list(_DETAIL_CACHE.keys()):
+        if key[0] == root and key[1] == namespace:
+            _DETAIL_CACHE.pop(key, None)
+
 
 class TemplateError(Exception):
     def __init__(self, status_code, message, error_code, **extra):
@@ -166,7 +227,7 @@ class Templates:
 
     def ensure_defaults(self, env=None):
         root = self.root(env=env)
-        for item in seed.default_templates():
+        for item in _seed_templates():
             namespace = _namespace(item.get("namespace"))
             directory = root / namespace
             record_path = directory / "template.json"
@@ -249,24 +310,39 @@ class Templates:
     def load(self, env=None):
         self.ensure_defaults(env=env)
         rows = []
-        for directory in sorted(self.root(env=env).iterdir(), key=lambda item: item.name):
-            if directory.is_dir() and (directory / TEMPLATE_FILES["compose"]).exists():
-                rows.append(self._read(directory.name, env=env))
+        for directory in _template_dirs(self.root(env=env)):
+            rows.append(self._read(directory.name, env=env))
         enabled = [item for item in rows if item.get("enabled") is not False]
         return {"templates": rows, "enabled_templates": enabled, "template_root": str(self.root(env=env))}
 
     def load_summaries(self, env=None):
         self.ensure_defaults(env=env)
-        rows = []
-        for directory in sorted(self.root(env=env).iterdir(), key=lambda item: item.name):
-            if directory.is_dir() and (directory / TEMPLATE_FILES["compose"]).exists():
-                rows.append(self._read_summary(directory.name, env=env))
+        root = self.root(env=env)
+        signature = _summary_signature(root)
+        cache_key = (str(root), signature)
+        cached = _SUMMARY_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        rows = [self._read_summary(directory.name, env=env) for directory in _template_dirs(root)]
         enabled = [item for item in rows if item.get("enabled") is not False]
-        return {"templates": rows, "enabled_templates": enabled, "template_root": str(self.root(env=env))}
+        payload = {"templates": rows, "enabled_templates": enabled, "template_root": str(root)}
+        _SUMMARY_CACHE.clear()
+        _SUMMARY_CACHE[cache_key] = payload
+        return payload
 
     def detail(self, template_id, env=None):
         self.ensure_defaults(env=env)
-        return {"template": self._read(template_id, include_files=True, env=env)}
+        namespace = _namespace(template_id)
+        directory = self._dir(namespace, env=env)
+        signature = _detail_signature(directory)
+        cache_key = (str(self.root(env=env)), namespace, signature)
+        cached = _DETAIL_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        payload = {"template": self._read(namespace, include_files=True, env=env)}
+        _DETAIL_CACHE.clear()
+        _DETAIL_CACHE[cache_key] = payload
+        return payload
 
     def save(self, payload, env=None):
         body = payload or {}
@@ -294,6 +370,7 @@ class Templates:
         if is_new:
             record["created_at"] = _now()
         (directory / "template.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        _invalidate_cache(namespace, env=env)
         return {"template": self._read(namespace, include_files=True, env=env)}
 
     def delete(self, template_id, env=None):
@@ -303,6 +380,7 @@ class Templates:
         for path in sorted(directory.rglob("*"), reverse=True):
             path.unlink() if path.is_file() else path.rmdir()
         directory.rmdir()
+        _invalidate_cache(template_id, env=env)
         return {"deleted": True}
 
     def render(self, payload, env=None):

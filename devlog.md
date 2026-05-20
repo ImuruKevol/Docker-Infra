@@ -287,3 +287,6 @@
 | 2026-05-20 | 285 | 템플릿 관리 화면 목록 API 경량화와 상세 지연 로딩 적용 | [상세](devlog/2026-05-20/285-template-management-fast-load.md) |
 | 2026-05-20 | 286 | 템플릿 상세 표준 안내 카드를 Monaco 좌측 패널로 재배치 | [상세](devlog/2026-05-20/286-template-detail-guide-left-panel.md) |
 | 2026-05-20 | 287 | 템플릿 삭제 후 목록 재조회 제거와 프론트 목록 갱신 적용 | [상세](devlog/2026-05-20/287-template-delete-local-list-update.md) |
+| 2026-05-20 | 288 | 서비스 생성 화면 서비스명 입력 위치와 AI 안내 카드 정리 | [상세](devlog/2026-05-20/288-service-create-name-ai-card-layout.md) |
+| 2026-05-20 | 289 | 검색 select 드롭다운 overflow clipping 방지 | [상세](devlog/2026-05-20/289-search-select-dropdown-fixed-position.md) |
+| 2026-05-20 | 290 | 각 화면 초기 표시 로딩 보강과 템플릿 API 캐시 추가 | [상세](devlog/2026-05-20/290-screen-api-ui-loading-performance.md) |

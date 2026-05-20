@@ -141,6 +141,7 @@ export class Component implements OnInit {
         this.localLoadError.set('');
         this.localDetailCache = {};
         this.localLoadRequestId += 1;
+        await this.service.render();
         const { code, data } = await wiz.call('load', {});
         if (code !== 200) {
             this.error.set(data?.message || '이미지 정보를 불러올 수 없습니다.');

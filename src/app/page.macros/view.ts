@@ -165,6 +165,7 @@ export class Component implements OnInit, OnDestroy {
     public async load() {
         this.loading.set(true);
         this.error.set('');
+        await this.service.render();
         const { code, data } = await wiz.call("load", {});
         if (code === 200) {
             const macros = data.macros || [];
