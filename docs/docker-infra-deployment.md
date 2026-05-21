@@ -1,7 +1,7 @@
 # Docker Infra 배포 설치 기준
 
 - 문서 상태: 배포 준비용 installer 초안
-- 기준일: 2026-05-15
+- 기준일: 2026-05-20
 
 ## 설치 방식
 
@@ -84,6 +84,14 @@ sudo /opt/docker-infra/installer/cleanup.sh --scope all
 제품의 `/access` 화면은 더 이상 설정 마법사를 제공하지 않는다. `operator_auth`가 비어 있거나 local master/system setting이 완성되지 않은 경우 `/access`는 installer URL만 안내한다.
 
 설치 이후 관리자 password 변경은 시스템 설정의 General 탭에서 처리한다.
+
+## 민감정보 처리 기준
+
+- `/root/docker-infra/config.env`와 `/root/docker-infra/domain.txt`는 로컬 통합 secret 파일이므로 저장소, 문서, devlog, 테스트 출력에 값을 남기지 않는다.
+- installer는 운영 DB password와 secret key를 `/etc/docker-infra/docker-infra.env`에 `0640` 권한으로 저장하고, 이 파일을 GitHub 업로드 대상으로 보지 않는다.
+- PostgreSQL role password 설정은 password 원문이 shell debug log나 process argument에 남지 않도록 표준 입력으로 SQL을 전달한다.
+- installer HTML의 관리자 password payload는 `initial-setup.json`에 `0600` 권한으로 임시 저장하고 `setup` 성공 후 삭제한다.
+- SSH private key, API token, DDNS key, Cloudflare token, AI provider token 원문은 API 응답, operation log, audit log, installer log, devlog에 기록하지 않는다.
 
 ## DDNS 공인 IP 갱신
 

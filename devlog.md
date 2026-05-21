@@ -290,3 +290,4 @@
 | 2026-05-20 | 288 | 서비스 생성 화면 서비스명 입력 위치와 AI 안내 카드 정리 | [상세](devlog/2026-05-20/288-service-create-name-ai-card-layout.md) |
 | 2026-05-20 | 289 | 검색 select 드롭다운 overflow clipping 방지 | [상세](devlog/2026-05-20/289-search-select-dropdown-fixed-position.md) |
 | 2026-05-20 | 290 | 각 화면 초기 표시 로딩 보강과 템플릿 API 캐시 추가 | [상세](devlog/2026-05-20/290-screen-api-ui-loading-performance.md) |
+| 2026-05-20 | 291 | README/라이선스/installer 공개 준비 | [상세](devlog/2026-05-20/291-readme-license-installer-public-prep.md) |

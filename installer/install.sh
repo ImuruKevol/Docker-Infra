@@ -177,6 +177,10 @@ escape_sql_literal() {
     printf "%s" "${1//\'/\'\'}"
 }
 
+sql_quote_literal() {
+    printf "'%s'" "$(escape_sql_literal "$1")"
+}
+
 as_postgres() {
     if command -v runuser >/dev/null 2>&1; then
         runuser -u postgres -- "$@"
@@ -266,9 +270,10 @@ install_postgresql_database() {
         as_postgres createuser "$DOCKER_INFRA_DB_USER"
     fi
 
-    local password_sql
-    password_sql="$(escape_sql_literal "$DOCKER_INFRA_DB_PASSWORD")"
-    as_postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE \"$DOCKER_INFRA_DB_USER\" WITH LOGIN PASSWORD '$password_sql';"
+    local password_literal
+    password_literal="$(sql_quote_literal "$DOCKER_INFRA_DB_PASSWORD")"
+    printf 'ALTER ROLE "%s" WITH LOGIN PASSWORD %s;\n' "$DOCKER_INFRA_DB_USER" "$password_literal" \
+        | as_postgres psql -v ON_ERROR_STOP=1
 
     local database_exists
     database_exists="$(as_postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$DOCKER_INFRA_DB_NAME'" | tr -d '[:space:]')"

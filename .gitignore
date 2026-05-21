@@ -10,6 +10,15 @@ package-lock.json
 # Docker Infra local compose/runtime files
 docker/compose/*.env
 
+# Docker Infra local secrets and private keys
+config.env
+domain.txt
+*.pem
+*.p12
+*.key
+id_rsa*
+id_ed25519*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

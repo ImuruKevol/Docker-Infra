@@ -1,135 +1,327 @@
 # Docker Infra
 
-Docker Infra는 미니 PC나 데스크탑 형태의 단일 운영 장비에 패키징해 판매하는 것을 전제로 한 Docker 서비스 운영 도구입니다. 대상 사용자는 개발자가 아니라 전산 담당자 또는 일반 관리자입니다. 사용자는 IP, port, domain, image tag 정도만 알아도 서버 등록, 서비스 배포, 도메인 연결, 인증서 적용, 이미지 정리를 처리할 수 있어야 합니다.
+[한국어](#한국어) | [English](#english)
 
-## 제품 방향
+## 한국어
 
-- Docker Infra가 실행되는 서버를 자동으로 마스터 노드로 등록합니다.
-- nginx는 Ubuntu 24.04 기본 nginx로 고정합니다.
-- nginx 설정 원문은 고급 모드에만 두고, 일반 사용자는 서비스-도메인 연결 마법사로 설정합니다.
-- 소스 저장소 연동, Docker build, registry push 흐름은 제공하지 않습니다.
-- 서비스 배포는 이미 존재하는 이미지를 선택해 Docker Compose 기반으로 실행합니다.
-- Harbor는 외부 연동 화면이 아니라 선택형 내장 서비스 이미지 백업/버전 관리 시스템으로 사용합니다.
-- 긴 작업 결과는 lightweight operation log, audit log, streaming output으로 보여줍니다.
+### 개요
 
-## 핵심 흐름
+Docker Infra는 Ubuntu 24.04 기반 단일 운영 장비에서 Docker 서비스를 운영하기 위한 WIZ 웹 서비스입니다. 대상 사용자는 개발자가 아니라 전산 담당자 또는 일반 관리자입니다. IP, port, domain, image tag 정도만 알고 있어도 서버 등록, 서비스 배포, 도메인 연결, 인증서 적용, 이미지 정리를 처리할 수 있도록 하는 것이 목표입니다.
 
-### 최초 구성
+현재 기준의 제품 방향은 다음과 같습니다.
 
-처음 접속한 관리자는 다음만 선택합니다.
+- Docker Infra가 실행되는 서버를 자동으로 local master로 등록합니다.
+- nginx는 Ubuntu 24.04 기본 nginx와 sites 디렉터리를 기준으로 사용합니다.
+- Compose YAML과 nginx 원문은 고급 모드에 두고, 기본 흐름은 마법사와 폼으로 제공합니다.
+- 소스 저장소 연동, Docker build, registry push 파이프라인은 제공하지 않습니다.
+- 서비스는 이미 존재하는 Docker image를 선택해 Docker Compose/Swarm 기반으로 배포합니다.
+- Harbor는 외부 registry 관리 화면이 아니라 선택형 내장 이미지 백업/버전 관리 시스템으로 사용합니다.
+- 긴 작업 결과는 operation log, audit log, polling/stream output으로 확인합니다.
 
-1. 관리자 비밀번호
-2. 서비스 백업 시스템 구성 여부
+### 핵심 기능
 
-백업 시스템은 기본 비활성화입니다. 활성화하면 마스터 노드에 로컬 Harbor를 설치/실행하고, Docker Infra가 백업 저장소 용량과 상태를 관리합니다.
+| 영역 | 현재 기능 |
+|---|---|
+| 최초 구성 | installer HTML에서 관리자 비밀번호, local master, 서비스 루트, 백업 시스템 선택을 설정 |
+| 인증 | ID 없는 단일 관리자 password-only 로그인, session cookie 기반 인증 |
+| 서버 관리 | local master 자동 등록, 원격 서버 SSH password 최초 확인, 관리용 SSH key 설치, fingerprint 저장, Docker/Swarm 상태 확인 |
+| 서비스 관리 | AI 초안, Compose 직접 작성, 서버 Compose 가져오기, 파일 기반 Compose 템플릿 기반 생성/수정 |
+| 배포 | 이미지/포트/볼륨/도메인 사전 점검, 자동 배치, stack deploy, 배포 상태 polling, rollback, 서버 마이그레이션 |
+| 도메인/SSL | Cloudflare DNS record, DDNS endpoint, 업로드 인증서, certbot 무료 인증서, nginx server block 자동 생성/검증/rollback |
+| 이미지/백업 | 서버별 로컬 이미지 목록/정리, 내장 Harbor 백업, 서비스 이미지 백업/복원, 컨테이너 snapshot 기반 이관 |
+| 시스템 설정 | 브라우저 title, favicon/logo, AI provider 설정, 공식 Codex CLI 상태/업데이트, 백업 정책, 이미지 정리 정책 |
+| AI 보조 | OpenAI/Gemini/Ollama 직접 API 호출, 서비스 생성/수정/검증/복구 보조, Compose 템플릿 초안 생성 |
 
-### 서버 관리
+### 범위와 비범위
 
-서버 추가 시 사용자는 서버 이름, IP/host, SSH port, SSH 계정, 최초 비밀번호만 입력합니다. Docker Infra는 password 접속 확인 후 관리용 SSH key와 fingerprint를 준비하고, DB에는 key file 경로와 fingerprint만 저장합니다.
+Docker Infra는 운영자가 이미 준비된 이미지를 안정적으로 배포하고 관리하는 데 집중합니다. Kubernetes, 멀티 마스터 Swarm, 사용자/RBAC, 소스 빌드 파이프라인, 일반 사용자가 직접 관리하는 외부 registry 프로젝트, 다른 웹서버 선택 기능은 현재 범위에 포함하지 않습니다.
 
-### 서비스 관리
-
-서비스 생성은 마법사 중심입니다.
-
-- AI 초안, Compose 직접 작성, 서버 Compose 가져오기 중 하나로 서비스 초안을 준비
-- Compose 초안에서 서비스 이름, 설명, 구성요소, 이미지, 포트, 환경변수, 볼륨을 추출
-- 공개 도메인과 연결 포트 선택
-- SSL 방식은 업로드 인증서 또는 certbot 자동 발급 기준으로 처리
-- 저장 전 이미지, 포트, 볼륨, 도메인, nginx 설정을 자동 사전 점검
-- 실행 서버는 자동 배치를 기본값으로 사용
-
-Compose YAML과 nginx config 원문은 고급 모드에서만 편집합니다.
-
-### 도메인과 인증서
-
-도메인 화면은 Cloudflare DNS record, 중간 DDNS 관리 서버, 업로드 인증서를 관리합니다. DDNS 도메인은 서비스 배포 시 공인 IP를 조회해 `X-DDNS-Key` 기반 update API로 등록하고, Ubuntu 24.04 NetworkManager dispatcher로 IP 변경 시 필요한 경우에만 다시 갱신합니다. 서비스 화면은 선택한 도메인, 내부 port, SSL 방식으로 nginx 연결을 자동 생성합니다. 인증서가 없으면 서비스 화면에서 certbot 무료 인증서 발급을 실행할 수 있습니다.
-
-### 이미지와 백업
-
-이미지 화면은 서버별 로컬 이미지와 서비스별 백업 이미지를 다룹니다. 로컬 이미지는 사용/미사용, 크기, 생성일, 마지막 사용일 기준으로 정리할 수 있습니다. 백업 시스템을 활성화한 경우 서비스 이미지 digest를 기준으로 중복 없이 내부 Harbor에 보관하고 복원할 수 있습니다.
-
-## WIZ 프로젝트 구조
-
-주요 경로는 다음과 같습니다.
+### 프로젝트 구조
 
 ```text
 project/main/
-  config/
+  config/                 # Docker Infra runtime config
   src/
-    app/
-    controller/
-    model/
-    route/
-  docs/
+    app/                  # WIZ Angular pages, layouts, components
+    controller/           # 인증/권한 controller
+    model/                # DB, struct, runtime business logic
+    route/                # REST route handlers
+    portal/season/        # WIZ portal package
+  docs/                   # 설계, 런타임, 배포 문서
+  installer/              # 운영 설치 파일과 payload
+  tests/                  # API/E2E/static contract tests
   devlog.md
   devlog/
 ```
 
-WIZ source app과 route는 `src/app`, `src/route` 아래에 두고, 화면 API는 각 app의 `api.py`에서 WIZ 응답 규칙을 지켜 작성합니다. 도메인 로직은 `src/model/struct.py` 진입점을 통해 호출합니다.
+Source app과 route는 `src/app`, `src/route` 아래에 둡니다. 화면 전용 API는 각 app의 `api.py`에서 WIZ 응답 규칙을 지켜 작성하고, 도메인 로직은 `src/model/struct.py` 진입점을 통해 호출합니다.
 
-## Runtime Data
+### 런타임 데이터
 
-운영 데이터는 WIZ workspace의 `data/` 아래에 둡니다.
+운영 데이터는 저장소 소스와 분리합니다.
 
-| 용도 | 경로 |
-|---|---|
-| 시스템 favicon/logo | `/root/docker-infra/data/system-assets/` |
-| 도메인 인증서 | `/root/docker-infra/data/domain-certificates/` |
-| 내장 백업 Harbor | `/root/docker-infra/data/backup-harbor/` 또는 운영 volume |
-| 서비스 Compose 파일 | `.runtime/dev/services` |
+| 용도 | 개발/기본 경로 | 운영 installer 경로 |
+|---|---|---|
+| 시스템 favicon/logo | `/root/docker-infra/data/system-assets/` | `/var/lib/docker-infra/data/system-assets/` |
+| 도메인 인증서 | `/root/docker-infra/data/domain-certificates/` | `/var/lib/docker-infra/data/domain-certificates/` |
+| 관리용 SSH key | `/root/docker-infra/data/ssh/` 또는 config 값 | `/var/lib/docker-infra/ssh/` |
+| 내장 Harbor data | `/root/docker-infra/data/backup-harbor/` | `/var/lib/docker-infra/backup-harbor/` |
+| 서비스 Compose 파일 | `.runtime/dev/services` | installer setup의 service root |
+| Codex home | config 값 | `/var/lib/docker-infra/codex-home/` |
 
-## 개발 명령
+### 운영 설치
 
-개발 DB:
-
-```bash
-docker compose -f docker/compose/development.yaml up -d postgres
-```
-
-API 테스트:
-
-```bash
-docker compose -f docker/compose/test.yaml --profile api run --rm api-tests
-```
-
-nginx sandbox:
-
-```bash
-docker compose -f docker/compose/test.yaml --profile proxy run --rm proxy-sandbox
-```
-
-WIZ 빌드:
-
-```bash
-wiz_project_build
-```
-
-운영 설치:
+대상 OS는 Ubuntu 24.04입니다. installer는 `preinstall`과 `install` 두 단계로 나뉩니다.
 
 ```bash
 sudo project/main/installer/preinstall.sh
+```
+
+위 명령은 nginx, installer HTML, local installer API를 준비합니다. 기본 설치 화면은 다음 주소에서 열립니다.
+
+```text
+http://<host>:8088
+```
+
+설치 화면에서 관리자 비밀번호와 초기 설정을 입력한 뒤 전체 설치를 실행하거나, CLI로 같은 단계를 실행할 수 있습니다.
+
+```bash
 sudo /opt/docker-infra/installer/install.sh --step all
 ```
 
-`project/main/installer/`는 WIZ bundle과 Python requirements를 포함하는 단독 설치 디렉터리입니다. 설치 과정에서 Node.js LTS/npm과 공식 `@openai/codex`도 함께 설치합니다. 초기 관리자 비밀번호와 local master 설정은 제품 `/access` 화면이 아니라 installer HTML에서 완료하며, `verify` 성공 후 installer HTML의 정리 단계로 설치 관리자 daemon과 HTML을 제거합니다. 중간 설치 실패 시 `installer/cleanup.sh --scope preinstall|install|all`로 file artifact만 정리할 수 있습니다.
+주요 단계는 `apt`, `env`, `postgres`, `python`, `node`, `bundle`, `migrate`, `service`, `setup`, `nginx`, `verify`, `cleanup`입니다. `verify`가 성공한 뒤 installer 화면의 정리 단계 또는 다음 명령으로 설치 관리자 파일을 제거합니다.
 
-소스 변경 후 installer의 `payload/wiz-bundle.tar.zst`만 최신 코드로 갱신할 때는 WIZ root의 `./update-wiz-bundle.sh`를 실행합니다.
+```bash
+sudo /opt/docker-infra/installer/install.sh --step cleanup
+```
 
-이미 설치된 원격 서버는 갱신된 `wiz-bundle.tar.zst`만 복사한 뒤 WIZ root의 `sudo ./update-wiz-service.sh /tmp/wiz-bundle.tar.zst`로 WIZ service만 교체할 수 있습니다.
+중간 실패나 재설치 파일 정리는 다음 스크립트를 사용합니다. 이 스크립트는 apt, pip, npm, PostgreSQL, Node.js package를 제거하지 않습니다.
 
-## 보안 원칙
+```bash
+sudo /opt/docker-infra/installer/cleanup.sh --scope preinstall
+sudo /opt/docker-infra/installer/cleanup.sh --scope install
+sudo /opt/docker-infra/installer/cleanup.sh --scope all
+```
 
-- 관리자 password는 hash로 저장합니다.
-- SSH 최초 비밀번호는 연결과 key 설치에만 사용하고 저장하지 않습니다.
-- Cloudflare token과 backup system secret은 암호화 저장합니다.
-- API 응답, devlog, operation log에는 password/token 원문을 남기지 않습니다.
-- 위험 작업은 audit log에 요청 대상과 결과를 남깁니다.
+소스 변경 후 installer payload의 WIZ bundle만 갱신할 때는 WIZ workspace root에서 실행합니다.
 
-## 문서
+```bash
+./update-wiz-bundle.sh
+```
+
+이미 설치된 서버는 갱신된 archive만 복사한 뒤 WIZ service 파일과 process만 교체할 수 있습니다.
+
+```bash
+scp project/main/installer/payload/wiz-bundle.tar.zst user@host:/tmp/
+ssh user@host 'cd /root/docker-infra && sudo ./update-wiz-service.sh /tmp/wiz-bundle.tar.zst'
+```
+
+### 개발과 검증
+
+이 프로젝트의 Python/WIZ 자동화는 Docker Infra conda 환경의 실행 파일을 우선 사용합니다.
+
+```bash
+/opt/conda/envs/docker-infra/bin/python -m unittest discover tests/api
+/opt/conda/envs/docker-infra/bin/wiz project build --project main
+```
+
+개발 DB와 테스트 compose는 다음 명령으로 실행합니다.
+
+```bash
+docker compose -f docker/compose/development.yaml up -d postgres
+docker compose -f docker/compose/test.yaml --profile api run --rm api-tests
+docker compose -f docker/compose/test.yaml --profile proxy run --rm proxy-sandbox
+```
+
+installer 계약만 빠르게 확인할 때는 다음을 사용합니다.
+
+```bash
+/opt/conda/envs/docker-infra/bin/python -m unittest tests/api/test_installer_contract.py
+bash -n installer/preinstall.sh installer/install.sh installer/cleanup.sh
+(cd installer/payload && sha256sum -c checksums.sha256)
+```
+
+### 보안 원칙
+
+- 관리자 password는 hash로 저장하고 원문을 DB/API/devlog/log에 남기지 않습니다.
+- 원격 서버 최초 SSH password는 key 설치와 연결 확인에만 사용하고 저장하지 않습니다.
+- 관리용 SSH private key 파일은 runtime data directory에 두며 GitHub 업로드 대상에 포함하지 않습니다.
+- Cloudflare token, DDNS key, AI provider token, backup system secret은 암호화 저장하고 API 응답에서는 마스킹합니다.
+- operation log, audit log, installer log에는 password/token/key 원문을 남기지 않는 것을 기준으로 합니다.
+- `/root/docker-infra/config.env`와 `/root/docker-infra/domain.txt`는 로컬 통합 secret 파일이므로 저장소, 문서, devlog, 최종 응답에 값을 출력하지 않습니다.
+
+### 문서
 
 - 전체 설계: `docs/docker-infra-design.md`
 - 런타임 기준: `docs/docker-infra-runtime.md`
 - 배포 설치 기준: `docs/docker-infra-deployment.md`
+- Compose 템플릿 표준: `docs/compose-template-standard.md`
 - 서비스 AI/Codex Agent 설계: `docs/service-ai-codex-agent-design.md`
 - 전체 TODO: `docs/docker-infra-development-todo.md`
 - 남은 TODO: `docs/docker-infra-remaining-todo.md`
+
+### 라이선스
+
+MIT License. 자세한 내용은 `LICENSE`를 확인하세요.
+
+## English
+
+### Overview
+
+Docker Infra is a WIZ web service for operating Docker services on a single Ubuntu 24.04 host. It is designed for IT operators and general administrators rather than application developers. The goal is to let an operator register servers, deploy services, connect domains, apply certificates, and clean images with only practical knowledge of IP addresses, ports, domains, and image tags.
+
+The current product direction is:
+
+- The host running Docker Infra is automatically registered as the local master.
+- nginx is fixed to the default Ubuntu 24.04 nginx layout and service name.
+- Compose YAML and raw nginx config stay in advanced mode. The default workflow uses forms and wizards.
+- Source repository integration, Docker build, and registry push pipelines are out of scope.
+- Services are deployed from existing Docker images with Docker Compose/Swarm.
+- Harbor is used as an optional built-in image backup and version store, not as a generic external registry console.
+- Long-running work is surfaced through operation logs, audit logs, polling, and stream output.
+
+### Main Features
+
+| Area | Current support |
+|---|---|
+| Initial setup | Installer HTML sets the admin password, local master, service root, and backup system option |
+| Authentication | Single password-only admin login with session cookies |
+| Servers | Automatic local master registration, first SSH password check, managed SSH key installation, fingerprint storage, Docker/Swarm checks |
+| Services | AI draft, direct Compose authoring, server Compose import, file-based Compose templates |
+| Deployment | Image/port/volume/domain preflight, automatic placement, stack deploy, deployment polling, rollback, server migration |
+| Domains/SSL | Cloudflare DNS records, DDNS endpoints, uploaded certificates, certbot certificates, automatic nginx server block generation and rollback |
+| Images/backup | Local image inventory and cleanup, built-in Harbor backup, service image backup/restore, container snapshot migration |
+| System settings | Browser title, favicon/logo, AI provider settings, official Codex CLI status/update, backup and image cleanup policies |
+| AI assistant | Direct OpenAI/Gemini/Ollama API calls, service creation/editing/verification/repair support, Compose template drafting |
+
+### Scope
+
+Docker Infra focuses on deploying and operating already-built images. Kubernetes, multi-master Swarm, user/RBAC management, source build pipelines, generic external registry administration, and alternative web server selection are not part of the current scope.
+
+### Project Layout
+
+```text
+project/main/
+  config/                 # Docker Infra runtime config
+  src/
+    app/                  # WIZ Angular pages, layouts, components
+    controller/           # auth/permission controllers
+    model/                # DB, struct, runtime business logic
+    route/                # REST route handlers
+    portal/season/        # WIZ portal package
+  docs/                   # design, runtime, deployment docs
+  installer/              # production installer files and payload
+  tests/                  # API/E2E/static contract tests
+  devlog.md
+  devlog/
+```
+
+Source apps and routes live under `src/app` and `src/route`. Page-local APIs follow WIZ response conventions in each app's `api.py`, while domain logic is reached through `src/model/struct.py`.
+
+### Runtime Data
+
+Runtime data is kept outside source files.
+
+| Purpose | Dev/default path | Installer path |
+|---|---|---|
+| System favicon/logo | `/root/docker-infra/data/system-assets/` | `/var/lib/docker-infra/data/system-assets/` |
+| Domain certificates | `/root/docker-infra/data/domain-certificates/` | `/var/lib/docker-infra/data/domain-certificates/` |
+| Managed SSH keys | `/root/docker-infra/data/ssh/` or config value | `/var/lib/docker-infra/ssh/` |
+| Built-in Harbor data | `/root/docker-infra/data/backup-harbor/` | `/var/lib/docker-infra/backup-harbor/` |
+| Service Compose files | `.runtime/dev/services` | Service root selected during installer setup |
+| Codex home | config value | `/var/lib/docker-infra/codex-home/` |
+
+### Production Install
+
+The target OS is Ubuntu 24.04. The installer has a `preinstall` phase and an `install` phase.
+
+```bash
+sudo project/main/installer/preinstall.sh
+```
+
+This starts nginx, the installer HTML, and the local installer API. The default installer page is:
+
+```text
+http://<host>:8088
+```
+
+Enter the admin password and initial settings in the installer page, then run the full install from the page or with the CLI:
+
+```bash
+sudo /opt/docker-infra/installer/install.sh --step all
+```
+
+The deployment steps are `apt`, `env`, `postgres`, `python`, `node`, `bundle`, `migrate`, `service`, `setup`, `nginx`, `verify`, and `cleanup`. After `verify` succeeds, remove the installer through the page or with:
+
+```bash
+sudo /opt/docker-infra/installer/install.sh --step cleanup
+```
+
+For failed installs or file-artifact rollback, use:
+
+```bash
+sudo /opt/docker-infra/installer/cleanup.sh --scope preinstall
+sudo /opt/docker-infra/installer/cleanup.sh --scope install
+sudo /opt/docker-infra/installer/cleanup.sh --scope all
+```
+
+To refresh only the installer WIZ bundle payload after source changes, run this from the WIZ workspace root:
+
+```bash
+./update-wiz-bundle.sh
+```
+
+For an already installed server, copy only the refreshed archive and replace the WIZ service files/process:
+
+```bash
+scp project/main/installer/payload/wiz-bundle.tar.zst user@host:/tmp/
+ssh user@host 'cd /root/docker-infra && sudo ./update-wiz-service.sh /tmp/wiz-bundle.tar.zst'
+```
+
+### Development and Verification
+
+Use the Docker Infra conda environment explicitly for Python and WIZ automation.
+
+```bash
+/opt/conda/envs/docker-infra/bin/python -m unittest discover tests/api
+/opt/conda/envs/docker-infra/bin/wiz project build --project main
+```
+
+Development and test compose commands:
+
+```bash
+docker compose -f docker/compose/development.yaml up -d postgres
+docker compose -f docker/compose/test.yaml --profile api run --rm api-tests
+docker compose -f docker/compose/test.yaml --profile proxy run --rm proxy-sandbox
+```
+
+Fast installer contract checks:
+
+```bash
+/opt/conda/envs/docker-infra/bin/python -m unittest tests/api/test_installer_contract.py
+bash -n installer/preinstall.sh installer/install.sh installer/cleanup.sh
+(cd installer/payload && sha256sum -c checksums.sha256)
+```
+
+### Security Notes
+
+- The admin password is stored as a hash and must not be written as plaintext to DB/API/devlog/log output.
+- The first SSH password for remote nodes is used only for key setup and connection verification. It is not stored.
+- Managed SSH private key files belong in the runtime data directory and must not be uploaded to GitHub.
+- Cloudflare tokens, DDNS keys, AI provider tokens, and backup system secrets are encrypted at rest and masked in API responses.
+- Operation logs, audit logs, and installer logs should not contain plaintext passwords, tokens, or keys.
+- `/root/docker-infra/config.env` and `/root/docker-infra/domain.txt` are local integration secret files. Their values must not be copied into the repository, docs, devlogs, tests, or final responses.
+
+### Documentation
+
+- Design: `docs/docker-infra-design.md`
+- Runtime notes: `docs/docker-infra-runtime.md`
+- Deployment installer: `docs/docker-infra-deployment.md`
+- Compose template standard: `docs/compose-template-standard.md`
+- Service AI/Codex Agent design: `docs/service-ai-codex-agent-design.md`
+- Full TODO: `docs/docker-infra-development-todo.md`
+- Remaining TODO: `docs/docker-infra-remaining-todo.md`
+
+### License
+
+MIT License. See `LICENSE`.
