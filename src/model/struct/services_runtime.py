@@ -7,6 +7,8 @@ from psycopg.types.json import Jsonb
 connect = wiz.model("db/postgres").connect
 local_executor = wiz.model("struct/local_executor")
 webserver = wiz.model("struct/webserver")
+service_nginx = wiz.model("struct/service_nginx")
+deploy_targets = wiz.model("struct/services_deploy_targets")
 shared = wiz.model("struct/services_shared")
 image_backups = wiz.model("struct/service_image_backups")
 backup_system = wiz.model("struct/backup_system")
@@ -86,12 +88,33 @@ class ServiceRuntimeMixin:
     def _nginx_configs(self, service_id, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
-                self._service_row(cursor, service_id)
+                service = self._service_row(cursor, service_id)
                 cursor.execute("SELECT * FROM service_domains WHERE service_id = %s ORDER BY domain ASC", (service_id,))
                 rows = [_row(row) for row in cursor.fetchall()]
+        compose_ports = {}
+        try:
+            if service.get("compose_path"):
+                compose_ports = deploy_targets.compose_ports(service["compose_path"])
+        except Exception:
+            compose_ports = {}
         configs = []
         for row in rows:
             metadata = dict(row.get("metadata") or {})
+            compose_service = str(metadata.get("compose_service") or "").strip()
+            target_port = int(metadata.get("target_port") or row.get("port") or 0)
+            published_port = compose_ports.get((compose_service, target_port))
+            if published_port is None and target_port:
+                for (service_name, compose_target), compose_published in compose_ports.items():
+                    if int(compose_target or 0) == target_port:
+                        compose_service = compose_service or service_name
+                        published_port = compose_published
+                        break
+            if published_port is not None:
+                metadata.update({
+                    "compose_service": compose_service,
+                    "target_port": target_port,
+                    "published_port": published_port,
+                })
             config_path = metadata.get("nginx_config_path")
             target = self._managed_nginx_path(config_path)
             content = ""
@@ -99,6 +122,12 @@ class ServiceRuntimeMixin:
             if target and target.is_file():
                 content = target.read_text(encoding="utf-8")
                 readable = True
+            if not content:
+                try:
+                    preview = service_nginx.render_preview({**row, "metadata": metadata}, env=env)
+                    content = preview.get("content") or ""
+                except Exception:
+                    pass
             configs.append({
                 "domain_id": row["id"],
                 "domain": row["domain"],
@@ -108,6 +137,7 @@ class ServiceRuntimeMixin:
                 "readable": readable,
                 "editable": bool(target),
                 "managed": True,
+                "preview": not readable,
             })
         return configs
 
@@ -231,7 +261,7 @@ class ServiceRuntimeMixin:
         except Exception:
             return runtime
 
-    def detail_overview(self, service_id, env=None, include_certificates=True, include_operations=True):
+    def detail_overview(self, service_id, env=None, include_certificates=True, include_operations=True, include_backup_system=True):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 service = self._service_row(cursor, service_id)
@@ -253,13 +283,29 @@ class ServiceRuntimeMixin:
             "operations": operations,
             "file_root": str(root),
             "runtime_status": self._runtime_status_payload(service, env=env),
-            "backup_system": _backup_system_status(env=env),
         }
+        if include_backup_system:
+            payload["backup_system"] = _backup_system_status(env=env)
         if include_certificates:
             try:
                 payload["free_certificates"] = self.service_certificates(domains, env=env)
             except Exception:
                 payload["free_certificates"] = []
+        return payload
+
+    def detail_extras(self, service_id, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                self._service_row(cursor, service_id)
+                domains = self._domains(cursor, service_id)
+        payload = {
+            "domains": domains,
+            "backup_system": _backup_system_status(env=env),
+        }
+        try:
+            payload["free_certificates"] = self.service_certificates(domains, env=env)
+        except Exception:
+            payload["free_certificates"] = []
         return payload
 
     def detail_logs(self, service_id, env=None):

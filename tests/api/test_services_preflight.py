@@ -1,7 +1,9 @@
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -30,6 +32,7 @@ FLOW_MODEL = ROOT / "src" / "model" / "struct" / "services_flow.py"
 WIZARD_MODEL = ROOT / "src" / "model" / "struct" / "services_wizard.py"
 TEMPLATES_MODEL = ROOT / "src" / "model" / "struct" / "templates.py"
 TEMPLATES_SEED_MODEL = ROOT / "src" / "model" / "struct" / "templates_seed.py"
+TEMPLATE_AI_MODEL = ROOT / "src" / "model" / "struct" / "template_ai.py"
 AI_ASSISTANT_MODEL = ROOT / "src" / "model" / "struct" / "ai_assistant.py"
 CODEX_RUNTIME_MODEL = ROOT / "src" / "model" / "struct" / "codex_runtime.py"
 DOCKER_INFRA_MCP = ROOT / "tools" / "docker_infra_mcp.py"
@@ -111,6 +114,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         deploy_targets = DEPLOY_TARGETS_MODEL.read_text(encoding="utf-8")
         placement = PLACEMENT_MODEL.read_text(encoding="utf-8")
         nginx = NGINX_MODEL.read_text(encoding="utf-8")
+        ddns = (ROOT / "src" / "model" / "struct" / "domains_ddns.py").read_text(encoding="utf-8")
         config = RUNTIME_CONFIG.read_text(encoding="utf-8")
 
         self.assertIn("def preflight():", api)
@@ -135,6 +139,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("placement_selector.recommend", deploy)
         for token in ["least_loaded_resource_score", "cpu_percent", "memory_used_percent", "storage_used_percent", "containers"]:
             self.assertIn(token, placement)
+        for token in ["swarm.nodes", "swarm_ready", "swarm_hostname_mismatch", "swarm_availability", "selectable"]:
+            self.assertIn(token, placement)
         self.assertIn("sync_domain_proxy_targets", deploy)
         self.assertIn("registered_by_swarm_id", deploy_targets)
         self.assertIn("node_id[:12]", deploy_targets)
@@ -144,6 +150,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("swarm_addr or", deploy_targets)
         self.assertIn("proxy_host", deploy_targets)
         self.assertIn("service_nginx.apply", deploy)
+        self.assertIn("domain.ddns.endpoint", preflight)
+        self.assertIn("DDNS_SERVICE_ENDPOINT_NOT_MATCHED", ddns)
         self.assertIn("deploy_background", deploy)
         self.assertIn("_deploy_background_worker", deploy)
         self.assertIn("threading.Thread", deploy)
@@ -186,6 +194,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         templates_template = TEMPLATES_TEMPLATE.read_text(encoding="utf-8")
         templates_model = TEMPLATES_MODEL.read_text(encoding="utf-8")
         templates_seed = TEMPLATES_SEED_MODEL.read_text(encoding="utf-8")
+        template_ai = TEMPLATE_AI_MODEL.read_text(encoding="utf-8")
         wizard = WIZARD_MODEL.read_text(encoding="utf-8")
         assistant = AI_ASSISTANT_MODEL.read_text(encoding="utf-8")
         codex_runtime = CODEX_RUNTIME_MODEL.read_text(encoding="utf-8")
@@ -230,7 +239,25 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("prepare_service_draft", templates_model)
         self.assertIn("values.schema.json", templates_model)
         self.assertIn("readme_excerpt", templates_model)
+        self.assertIn("def _compose_validator()", templates_model)
+        self.assertIn("def _services_wizard()", templates_model)
+        self.assertIn("ComposeValidationError = compose_rules.ComposeValidationError", templates_model)
+        self.assertNotIn("services_wizard = wiz.model(\"struct/services_wizard\")", templates_model)
+        self.assertNotIn("validator = wiz.model(\"struct/compose_validator\")", templates_model)
+        self.assertIn("def _is_template_source", wizard)
+        self.assertIn("source_ref.get(\"source\") == \"compose_template\"", wizard)
+        self.assertIn("self._is_template_source(body)", wizard)
         self.assertIn("TEMPLATE_README_REQUIRED", templates_model)
+        self.assertIn("DELETED_SEEDS_FILENAME", templates_model)
+        self.assertIn("_deleted_seed_namespaces", templates_model)
+        self.assertIn("_mark_deleted_seed(namespace", templates_model)
+        self.assertIn("_unmark_deleted_seed(namespace", templates_model)
+        ensure_defaults_start = templates_model.index("def ensure_defaults")
+        self.assertLess(
+            templates_model.index("deleted_seeds = _deleted_seed_namespaces(root)", ensure_defaults_start),
+            templates_model.index("for item in _seed_templates():", ensure_defaults_start),
+        )
+        self.assertIn("if namespace in deleted_seeds:", templates_model)
         self.assertIn("WIZ Framework 개발환경", templates_seed)
         self.assertIn('"tags": tags', templates_seed)
         self.assertIn("templates_model.load_summaries", templates_api)
@@ -238,7 +265,11 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("def preview_template():", templates_api)
         self.assertIn("def ai_model_options():", templates_api)
         self.assertIn("def ai_contract():", templates_api)
+        self.assertIn("payload = ai_settings.model_options()", templates_api)
+        self.assertIn("payload = {\"contract\": template_ai.template_contract()}", templates_api)
         self.assertIn("def stream_template_ai():", templates_api)
+        self.assertIn("COMPOSE_TEMPLATE_MCP_TOOLS", template_ai)
+        self.assertIn("\"can_run_ssh_command\": False", template_ai)
         self.assertIn("public useTemplate", templates_view)
         self.assertIn("activeEditorOptions", templates_view)
         self.assertIn("setActiveTab", templates_view)
@@ -254,6 +285,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("chooseNewTemplateMode", templates_view)
         self.assertIn("showTemplateEditor", templates_view)
         self.assertIn("removeDeletedTemplateFromList", templates_view)
+        self.assertIn("upsertSavedTemplate", templates_view)
+        self.assertIn("templateSummaryFromDetail", templates_view)
         self.assertIn("templateStandardGuide", templates_view)
         self.assertIn("templateAiTargetRows", templates_view)
         self.assertIn("Compose 탭 표준", templates_view)
@@ -289,6 +322,12 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         remove_block = templates_view[remove_start:remove_end]
         self.assertIn("removeDeletedTemplateFromList(id)", remove_block)
         self.assertNotIn("await this.load", remove_block)
+        save_start = templates_view.index("public async save()")
+        save_end = templates_view.index("public async remove()", save_start)
+        save_block = templates_view[save_start:save_end]
+        self.assertIn("this.upsertSavedTemplate(data.template || {})", save_block)
+        self.assertNotIn("await this.load", save_block)
+        self.assertNotIn("await this.selectTemplate", save_block)
         self.assertIn("COMPOSE_TEMPLATE_MCP_TOOLS", codex_runtime)
         self.assertIn('"compose_template": COMPOSE_TEMPLATE_MCP_TOOLS', codex_runtime)
         self.assertIn("SERVICE_DRAFT_REQUIRED", wizard)
@@ -384,6 +423,87 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("추가 코멘트", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         self.assertIn("compose_template: 'Compose 템플릿'", SERVICES_VIEW.read_text(encoding="utf-8"))
 
+    def test_seed_template_delete_persists_across_default_reload(self):
+        class FakeConfig:
+            def __init__(self, root):
+                self.root = root
+
+            def data_dir(self, env=None):
+                return str(self.root)
+
+        class FakeSeed:
+            def default_templates(self):
+                return [
+                    {
+                        "name": "Seed One",
+                        "namespace": "seed_one",
+                        "enabled": True,
+                        "metadata": {"tags": ["seed"]},
+                        "files": {
+                            "docker-compose.yaml": "services:\n  app:\n    image: nginx:alpine\n",
+                            "values.default.yaml": "namespace: seed_one\n",
+                            "values.schema.json": json.dumps({"type": "object", "properties": {}}),
+                            "README.md": "# Seed One\n",
+                        },
+                    }
+                ]
+
+        class FakeValidator:
+            class ComposeValidationError(Exception):
+                pass
+
+            def validate(self, payload):
+                return {"ok": True}
+
+        class FakeWiz:
+            def __init__(self, root):
+                self._config = FakeConfig(root)
+                self._seed = FakeSeed()
+                self._validator = FakeValidator()
+
+            def config(self, name):
+                return self._config
+
+            def model(self, name):
+                if name == "struct/templates_seed":
+                    return self._seed
+                if name == "struct/compose_rules":
+                    return self._validator
+                if name == "struct/compose_validator":
+                    return self._validator
+                return object()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spec = importlib.util.spec_from_file_location("templates_delete_test", TEMPLATES_MODEL)
+            module = importlib.util.module_from_spec(spec)
+            module.wiz = FakeWiz(Path(tmpdir))
+            spec.loader.exec_module(module)
+
+            templates = module.Model
+            self.assertEqual([item["namespace"] for item in templates.load()["templates"]], ["seed_one"])
+
+            templates.delete("seed_one")
+            self.assertEqual(templates.load()["templates"], [])
+            tombstone = Path(templates.root()) / module.DELETED_SEEDS_FILENAME
+            self.assertIn("seed_one", json.loads(tombstone.read_text(encoding="utf-8"))["namespaces"])
+
+            templates.save(
+                {
+                    "namespace": "seed_one",
+                    "name": "Seed One Custom",
+                    "enabled": True,
+                    "metadata": {"tags": ["custom"]},
+                    "files": {
+                        "compose": "services:\n  app:\n    image: nginx:alpine\n",
+                        "values_default": "namespace: seed_one\n",
+                        "values_schema": json.dumps({"type": "object", "properties": {}}),
+                        "readme": "# Seed One Custom\n",
+                    },
+                }
+            )
+            self.assertEqual([item["name"] for item in templates.load()["templates"]], ["Seed One Custom"])
+            self.assertFalse(tombstone.exists())
+
     def test_service_management_hides_ambiguous_lifecycle_status(self):
         view = SERVICES_VIEW.read_text(encoding="utf-8")
         template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
@@ -415,10 +535,14 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("services_model.update_wizard", api)
         self.assertIn("public openEditModal", view)
         self.assertIn("public async saveEditService", view)
+        self.assertIn("editLoading = signal", view)
+        self.assertLess(view.index("this.editModalOpen.set(true)"), view.index("await this.loadDetailSection('source')"))
         self.assertIn("editOperatorComment", view)
         self.assertIn("operator_comment", view)
         self.assertIn("operator_comment", update)
         self.assertIn("서비스 수정", template)
+        self.assertIn("수정 정보를 불러오는 중입니다.", template)
+        self.assertIn('editBusy() || editLoading()', template)
         self.assertIn("추가 코멘트", template)
         self.assertIn("ServiceUpdateMixin", services)
         for token in ["def update_wizard", "service_domains", "SERVICE_PREFLIGHT_BLOCKED", "last_update"]:
@@ -458,7 +582,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("public async deleteSelectedService", view)
         self.assertIn("서비스 삭제", template)
         self.assertIn("ServiceDeleteMixin", services)
-        for token in ["def delete", "_managed_nginx_delete_path", "_remove_volumes", "_remove_dns_records", "delete_service_dns_records", "SERVICE_DNS_RECORD_REMOVE_FAILED", "service.stack.remove", "service.stack.volumes.remove", "proxy.nginx.configtest", "proxy.nginx.reload"]:
+        for token in ["def delete", "_managed_nginx_delete_path", "_remove_volumes", "_remove_dns_records", "delete_service_dns_records", "SERVICE_DNS_RECORD_REMOVE_FAILED", "service.stack.remove", "service.stack.volumes.remove", "proxy.nginx.configtest", "proxy.nginx.reload", "DDNS unregister warning"]:
             self.assertIn(token, delete_model)
         self.assertIn("service.stack.remove", commands)
         self.assertIn("service.stack.volumes.remove", commands)
@@ -468,12 +592,14 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
     def test_service_delete_removes_cloudflare_dns_records(self):
         delete_model = (ROOT / "src" / "model" / "struct" / "services_delete.py").read_text(encoding="utf-8")
         domains = DOMAINS_MODEL.read_text(encoding="utf-8")
+        ddns = (ROOT / "src" / "model" / "struct" / "domains_ddns.py").read_text(encoding="utf-8")
 
         self.assertIn("domains_model.delete_service_dns_records", delete_model)
         self.assertIn("def delete_service_dns_records", domains)
         self.assertIn("domain.record.delete_service", domains)
         self.assertIn("SERVICE_DNS_RECORD_DELETE_FAILED", domains)
         self.assertIn("Managed by Docker Infra", domains)
+        self.assertIn("ddns_registration_not_found", ddns)
 
     def test_service_rollback_contract_is_wired(self):
         api = SERVICES_API.read_text(encoding="utf-8")
@@ -616,6 +742,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         services_view = SERVICES_VIEW.read_text(encoding="utf-8")
         services_template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
         runtime = (ROOT / "src" / "model" / "struct" / "services_runtime.py").read_text(encoding="utf-8")
+        nginx = NGINX_MODEL.read_text(encoding="utf-8")
+        deploy_targets = DEPLOY_TARGETS_MODEL.read_text(encoding="utf-8")
         webserver = WEBSERVER_MODEL.read_text(encoding="utf-8")
         domains = DOMAINS_MODEL.read_text(encoding="utf-8")
         domains_view = DOMAINS_VIEW.read_text(encoding="utf-8")
@@ -630,6 +758,17 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("saveAdvancedEditor", services_view)
         self.assertIn("saveComposeContent", services_view)
         self.assertIn("saveNginxConfig", services_view)
+        self.assertIn("applyAdvancedCompose", services_view)
+        self.assertIn("compose_source_apply", services_view)
+        self.assertIn('(click)="applyAdvancedCompose()"', services_template)
+        self.assertIn("deploy_targets.compose_ports", runtime)
+        self.assertIn("service_nginx.render_preview", runtime)
+        self.assertIn('"preview": not readable', runtime)
+        self.assertIn("def render_preview", nginx)
+        for token in ["_domain_proxy_profile", "_render_header", "DNS provider:", "DDNS endpoint:", "Proxy topology:", "ddns_management", "managed_dns"]:
+            self.assertIn(token, nginx)
+        for token in ["proxy_topology", "local-master", "remote-node", "proxy_node_is_local_master", "registered_private_host", "registered_public_ip", "proxy_swarm_addr"]:
+            self.assertIn(token, deploy_targets)
         self.assertIn("chain_file", route)
         self.assertIn("chain_file", domains_view)
         self.assertIn("fullchain.pem", webserver)
@@ -658,6 +797,13 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("_wait_runtime_ready", deploy)
         self.assertLess(deploy.index("_wait_runtime_ready"), deploy.index("service_nginx.apply"))
         self.assertIn("runtime ready", deploy)
+        for token in ["_runtime_progress_snapshot", "runtime wait", "runtime_progress", "이미지 pull", "runtime_ready_timeout_seconds\") or 600"]:
+            self.assertIn(token, deploy)
+        self.assertIn("include_operations=True", services_api)
+        for token in ["activeOperationProgressTitle", "activeOperationProgressMessage", "deploymentProgressRows", "runtimeEmptyText", "refreshActiveOperationOverview", "이미지 pull 또는 Docker 작업 처리 중"]:
+            self.assertIn(token, services_view)
+        for token in ["백그라운드 작업 진행 중", "Docker 작업", "컨테이너", "{{runtimeEmptyText()}}"]:
+            self.assertIn(token, services_template)
         self.assertIn("current.startswith(\"running\")", deploy_targets)
         self.assertIn("free_certificates", runtime)
         self.assertIn("service_certificates", runtime)
@@ -675,6 +821,31 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
             self.assertIn(token, services_view)
         for token in ["무료 SSL 인증서", "수동 갱신", "자동 설정"]:
             self.assertIn(token, services_template)
+
+    def test_service_detail_splits_slow_extras_from_initial_overview(self):
+        fast_model = (ROOT / "src" / "model" / "struct" / "services_detail_fast.py").read_text(encoding="utf-8")
+        runtime = RUNTIME_MODEL.read_text(encoding="utf-8")
+        services_api = SERVICES_API.read_text(encoding="utf-8")
+        services_view = SERVICES_VIEW.read_text(encoding="utf-8")
+        nginx_cert = NGINX_CERT_MODEL.read_text(encoding="utf-8")
+
+        self.assertIn('wiz.model("struct/services_detail_fast").overview', services_api)
+        self.assertIn('wiz.model("struct/services_detail_fast").extras', services_api)
+        self.assertIn("include_backup_system=not lightweight", services_api)
+        self.assertIn("def detail_service_extras():", services_api)
+        self.assertIn("def detail_extras", runtime)
+        self.assertIn("include_backup_system=True", runtime)
+        self.assertIn("detail_service_extras", services_view)
+        self.assertIn("lightweight: true", services_view)
+        self.assertNotIn("this.loadAiModelOptions().catch", services_view)
+        self.assertIn("payload = ai_settings.model_options()", services_api)
+        self.assertNotIn("payload = ai_assistant.model_options()", services_api)
+        self.assertIn("class ServiceDetailFast", fast_model)
+        self.assertIn("def overview", fast_model)
+        self.assertIn("def extras", fast_model)
+        self.assertNotIn("refreshOverviewExtras", services_view)
+        self.assertIn('"auto_renewal": None', nginx_cert)
+        self.assertIn("if rows:", nginx_cert)
 
 
 if __name__ == "__main__":

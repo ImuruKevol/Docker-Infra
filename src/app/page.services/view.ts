@@ -50,6 +50,7 @@ export class Component implements OnInit, OnDestroy {
     public filePreviewContent = signal<string>('');
     public editModalOpen = signal<boolean>(false);
     public editSection = signal<EditSection>('basic');
+    public editLoading = signal<boolean>(false);
     public editBusy = signal<boolean>(false);
     public editAiBusy = signal<boolean>(false);
     public runtimeAiBusy = signal<boolean>(false);
@@ -95,7 +96,9 @@ export class Component implements OnInit, OnDestroy {
     public editAiOutputTokenCount = signal<number>(0);
     public nginxConfigDrafts: any = {};
     private operationPollTimer: any = null;
+    private activeOperationPollTimer: any = null;
     private detailRequestSeq = 0;
+    private editRequestSeq = 0;
     private editOptionsLoaded = false;
     private aiModelOptionsLoaded = false;
     private supportOptionsLoaded = false;
@@ -111,11 +114,11 @@ export class Component implements OnInit, OnDestroy {
         this.refreshCompose(true);
         const params = new URLSearchParams(window.location.search || '');
         await this.load(params.get('service_id') || params.get('selected_service_id') || '');
-        this.loadAiModelOptions().catch(() => null);
     }
 
     public ngOnDestroy() {
         this.stopOperationPolling();
+        this.stopActiveOperationPolling();
         this.stopThemeObserver();
     }
 
@@ -197,6 +200,7 @@ export class Component implements OnInit, OnDestroy {
             this.advancedEditorTarget.set(null);
             this.advancedEditorContent.set('');
             this.advancedEditorDirty.set(false);
+            this.stopActiveOperationPolling();
             return;
         }
         const previousEditorKey = this.advancedEditorTarget()?.key || 'compose';
@@ -215,6 +219,7 @@ export class Component implements OnInit, OnDestroy {
         this.detail.set(merged || null);
         this.selected.set(merged?.service || null);
         if (merged?.service) this.detailLoading.set(false);
+        this.syncActiveOperationPolling();
 
         const refreshAdvancedState = !sameService || this.hasOwn(data, 'compose_content') || this.hasOwn(data, 'nginx_configs');
         if (refreshAdvancedState) {
@@ -346,13 +351,16 @@ export class Component implements OnInit, OnDestroy {
         }
     }
 
-    private async refreshOverviewExtras(serviceId: string, requestSeq: number) {
+    private async refreshDetailExtras(serviceId: string, requestSeq: number, silent: boolean = true) {
+        if (this.detail()?.service?.id === serviceId && this.detail()?.detail_sections?.overview_extras) return;
         try {
-            const { code, data } = await wiz.call('detail_service', { service_id: serviceId });
+            const { code, data } = await wiz.call('detail_service_extras', { service_id: serviceId });
             if (requestSeq !== this.detailRequestSeq || this.selected()?.id !== serviceId) return;
             if (code === 200) {
                 this.applyDetail(data);
                 await this.service.render();
+            } else if (!silent) {
+                await this.alert(data?.message || '서비스 상세 추가 정보를 불러올 수 없습니다.');
             }
         } catch (_) {
             return;
@@ -428,6 +436,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public hasAiModels() {
+        if (!this.aiModelOptionsLoaded) return true;
         return this.aiAvailable() && this.aiModelOptions().length > 0;
     }
 
@@ -460,7 +469,6 @@ export class Component implements OnInit, OnDestroy {
         }
         this.detailLoading.set(false);
         await this.service.render();
-        if (code === 200) this.refreshOverviewExtras(service.id, requestSeq);
     }
 
     private async loadEditOptions() {
@@ -998,13 +1006,15 @@ export class Component implements OnInit, OnDestroy {
     }
 
     private async openMigrationModalAsync() {
-        if (!this.selected()?.id || this.migrationBusy() || this.supportOptionsLoading()) return;
+        const serviceId = this.selected()?.id;
+        if (!serviceId || this.migrationBusy() || this.supportOptionsLoading()) return;
         if (!(await this.ensureSupportOptions())) return;
         const first = this.migrationNodeOptions().find((item: any) => !item.disabled);
         this.migrationTargetNodeId.set(first?.value || '');
         this.migrationPause.set(true);
         this.migrationModalOpen.set(true);
         await this.service.render();
+        await this.refreshDetailExtras(serviceId, this.detailRequestSeq);
     }
 
     public closeMigrationModal() {
@@ -1123,6 +1133,7 @@ export class Component implements OnInit, OnDestroy {
 
     public certificateAutoRenewText(item: any) {
         const renewal = item?.auto_renewal || {};
+        if (renewal.status === 'deferred') return '자동 갱신 상태는 필요 시 확인합니다.';
         if (renewal.configured) return `자동 갱신 감지됨 · ${renewal.method || 'system'}`;
         if (renewal.status === 'ok') return '자동 갱신 작업 없음';
         return '자동 갱신 상태 확인 실패';
@@ -1200,7 +1211,7 @@ export class Component implements OnInit, OnDestroy {
                 key: `nginx:${config.domain_id}`,
                 kind: 'nginx',
                 label: config.domain || 'nginx 설정',
-                description: config.editable ? '접속 연결 설정을 직접 수정합니다.' : '읽기 전용 nginx 설정입니다.',
+                description: config.preview ? '배포 시 적용될 nginx 설정 미리보기입니다.' : (config.editable ? '접속 연결 설정을 직접 수정합니다.' : '읽기 전용 nginx 설정입니다.'),
                 path: config.path || '설정 파일 없음',
                 editable: !!config.editable,
                 language: 'nginx',
@@ -1279,6 +1290,27 @@ export class Component implements OnInit, OnDestroy {
         }
     }
 
+    private async persistComposeContent(content: string) {
+        const serviceId = this.selected()?.id;
+        if (!serviceId) return false;
+        const service = this.selected() || {};
+        const metadata = service.metadata || {};
+        const { code, data } = await wiz.call('save_compose_content', {
+            service_id: serviceId,
+            name: service.name,
+            description: metadata.description || '',
+            content,
+        });
+        if (code === 200) {
+            this.applyDetail(data);
+            this.advancedEditorDirty.set(false);
+            return true;
+        }
+        this.busy.set(false);
+        await this.alert(this.formatPreflightError(data));
+        return false;
+    }
+
     public async saveComposeContent() {
         const serviceId = this.selected()?.id;
         if (!serviceId) return;
@@ -1290,23 +1322,38 @@ export class Component implements OnInit, OnDestroy {
         const ok = await this.confirm('Compose 원문을 검사한 뒤 초안으로 저장합니다. 버전 이력은 릴리즈 버튼을 눌렀을 때만 추가됩니다.', '검사 후 저장', 'warning');
         if (!ok) return;
         this.busy.set(true);
-        const service = this.selected() || {};
-        const metadata = service.metadata || {};
-        const { code, data } = await wiz.call('save_compose_content', {
-            service_id: serviceId,
-            name: service.name,
-            description: metadata.description || '',
-            content,
-        });
+        const saved = await this.persistComposeContent(content);
         this.busy.set(false);
-        if (code === 200) {
-            this.applyDetail(data);
-            this.advancedEditorDirty.set(false);
+        if (saved) {
             await this.alert('Compose 원문을 저장했습니다. 적용 버튼을 누르면 서버에 반영됩니다.', 'success');
-        } else {
-            await this.alert(this.formatPreflightError(data));
         }
         await this.service.render();
+    }
+
+    public async applyAdvancedCompose() {
+        const serviceId = this.selected()?.id;
+        const target = this.advancedEditorTarget();
+        if (!serviceId || this.busy() || target?.kind !== 'compose') return;
+        const content = this.advancedComposeDraft() || this.advancedEditorContent();
+        if (!String(content || '').trim()) {
+            await this.alert('Compose 내용이 비어 있습니다.');
+            return;
+        }
+        const message = this.advancedEditorDirty()
+            ? 'Compose 원문을 검사해 저장한 뒤 서버에 다시 적용합니다. 접속 주소와 nginx 연결 설정도 함께 갱신됩니다.'
+            : '저장된 Compose 원문을 서버에 다시 적용합니다. 접속 주소와 nginx 연결 설정도 함께 갱신됩니다.';
+        const ok = await this.confirm(message, this.deployActionLabel(), 'warning');
+        if (!ok) return;
+        if (this.advancedEditorDirty()) {
+            this.busy.set(true);
+            const saved = await this.persistComposeContent(content);
+            this.busy.set(false);
+            if (!saved) {
+                await this.service.render();
+                return;
+            }
+        }
+        await this.deployService(this.selected()?.id || serviceId, false, { deployment_reason: 'compose_source_apply' });
     }
 
     public async saveNginxConfig(config: any) {
@@ -1395,29 +1442,22 @@ export class Component implements OnInit, OnDestroy {
     }
 
     private async openEditModalAsync() {
+        const requestSeq = ++this.editRequestSeq;
         let detail = this.detail();
         let service = detail?.service;
         if (!service) return;
-        if (!(await this.loadDetailSection('source'))) return;
-        detail = this.detail();
-        service = detail?.service;
-        if (!service) return;
-        if (!(await this.loadEditOptions())) return;
-        const domain = (detail.domains || [])[0] || null;
-        this.editComponents = this.clone(detail.components || []) || [];
         this.editForm = {
             service_id: service.id,
             name: service.name || '',
             description: service?.metadata?.description || '',
-            domain_mode: domain ? 'registered' : 'none',
+            domain_mode: 'none',
             zone_id: '',
             domain_prefix: '',
-            domain: domain?.domain || '',
+            domain: '',
             domain_target_key: '',
-            domain_target_port: domain?.metadata?.target_port || domain?.port || 80,
+            domain_target_port: 80,
         };
-        if (domain?.domain) this.matchEditDomainZone(domain.domain);
-        this.ensureEditDomainTarget();
+        this.editComponents = [];
         this.editAdvancedSettings.set(false);
         this.editOperatorComment.set(service?.metadata?.operator_comment || '');
         this.editAiIntent.set('');
@@ -1426,10 +1466,48 @@ export class Component implements OnInit, OnDestroy {
         this.editAiResult = null;
         this.editSection.set('basic');
         this.editModalOpen.set(true);
+        this.editLoading.set(true);
+        await this.service.render();
+        try {
+            if (!(await this.loadDetailSection('source'))) {
+                if (requestSeq === this.editRequestSeq) this.editModalOpen.set(false);
+                return;
+            }
+            detail = this.detail();
+            service = detail?.service;
+            if (!service || requestSeq !== this.editRequestSeq || !this.editModalOpen()) return;
+            if (!(await this.loadEditOptions())) {
+                if (requestSeq === this.editRequestSeq) this.editModalOpen.set(false);
+                return;
+            }
+            if (requestSeq !== this.editRequestSeq || !this.editModalOpen()) return;
+            const domain = (detail.domains || [])[0] || null;
+            this.editComponents = this.clone(detail.components || []) || [];
+            this.editForm = {
+                service_id: service.id,
+                name: service.name || '',
+                description: service?.metadata?.description || '',
+                domain_mode: domain ? 'registered' : 'none',
+                zone_id: '',
+                domain_prefix: '',
+                domain: domain?.domain || '',
+                domain_target_key: '',
+                domain_target_port: domain?.metadata?.target_port || domain?.port || 80,
+            };
+            if (domain?.domain) this.matchEditDomainZone(domain.domain);
+            this.ensureEditDomainTarget();
+        } finally {
+            if (requestSeq === this.editRequestSeq) {
+                this.editLoading.set(false);
+                await this.service.render();
+            }
+        }
     }
 
     public closeEditModal() {
         if (this.editBusy()) return;
+        this.editRequestSeq++;
+        this.editLoading.set(false);
         this.editModalOpen.set(false);
     }
 
@@ -1846,7 +1924,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async saveEditService(deployAfterSave: boolean = false) {
-        if (this.editBusy()) return;
+        if (this.editBusy() || this.editLoading()) return;
         if (!String(this.editForm.name || '').trim()) {
             await this.alert('서비스 이름을 입력해주세요.');
             return;
@@ -1942,10 +2020,17 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public openReleaseModal() {
-        if (!this.selected()?.id || this.releaseBusy()) return;
+        this.openReleaseModalAsync();
+    }
+
+    private async openReleaseModalAsync() {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || this.releaseBusy()) return;
         this.releaseIncludeSnapshots.set(false);
         this.releaseComment.set('');
         this.releaseModalOpen.set(true);
+        await this.service.render();
+        await this.refreshDetailExtras(serviceId, this.detailRequestSeq);
     }
 
     public closeReleaseModal() {
@@ -2274,6 +2359,39 @@ export class Component implements OnInit, OnDestroy {
         }
     }
 
+    private syncActiveOperationPolling() {
+        const serviceId = this.selected()?.id || this.detail()?.service?.id;
+        if (!serviceId || !this.activeBackgroundOperation()) {
+            this.stopActiveOperationPolling();
+            return;
+        }
+        if (this.activeOperationPollTimer) return;
+        this.activeOperationPollTimer = setInterval(async () => {
+            await this.refreshActiveOperationOverview();
+        }, 3000);
+    }
+
+    private stopActiveOperationPolling() {
+        if (this.activeOperationPollTimer) {
+            clearInterval(this.activeOperationPollTimer);
+            this.activeOperationPollTimer = null;
+        }
+    }
+
+    private async refreshActiveOperationOverview() {
+        const serviceId = this.selected()?.id || this.detail()?.service?.id;
+        if (!serviceId || !this.activeBackgroundOperation()) {
+            this.stopActiveOperationPolling();
+            return;
+        }
+        const requestSeq = this.detailRequestSeq;
+        const { code, data } = await wiz.call('detail_service', { service_id: serviceId, lightweight: true });
+        if (requestSeq !== this.detailRequestSeq || this.selected()?.id !== serviceId) return;
+        if (code === 200) this.applyDetail(data);
+        if (!this.activeBackgroundOperation()) this.stopActiveOperationPolling();
+        await this.service.render();
+    }
+
     public async refreshOperationDetail(showBusy: boolean = true) {
         const operationId = this.operationDetail()?.id;
         if (!operationId) return;
@@ -2283,9 +2401,12 @@ export class Component implements OnInit, OnDestroy {
             const operation = data.operation || null;
             this.operationDetail.set(operation);
             if (operation && !this.isActiveOperation(operation) && this.selected()?.id) {
-                const endpoint = ['source', 'versions'].includes(this.detailTab()) ? 'detail_service_advanced' : 'detail_service';
-                const detailResult = await wiz.call(endpoint, { service_id: this.selected().id });
+                const selectedId = this.selected().id;
+                const advancedTab = ['source', 'versions'].includes(this.detailTab());
+                const endpoint = advancedTab ? 'detail_service_advanced' : 'detail_service';
+                const detailResult = await wiz.call(endpoint, advancedTab ? { service_id: selectedId } : { service_id: selectedId, lightweight: true });
                 if (detailResult.code === 200) this.applyDetail(detailResult.data);
+                if (!advancedTab && detailResult.code === 200) this.refreshDetailExtras(selectedId, this.detailRequestSeq);
             }
         } else if (showBusy) {
             await this.alert(data?.message || '처리 내역을 불러올 수 없습니다.');
@@ -2759,12 +2880,93 @@ export class Component implements OnInit, OnDestroy {
         return this.runtimeStatus()?.stack?.summary || {};
     }
 
+    public runtimeStackTasks() {
+        return this.runtimeStatus()?.stack?.tasks || [];
+    }
+
     public runtimeDomainSummary() {
         return this.runtimeStatus()?.domains?.summary || {};
     }
 
     public runtimeContainers() {
         return this.runtimeStatus()?.containers?.containers || [];
+    }
+
+    public deploymentProgressRows() {
+        return this.runtimeStackTasks().slice(0, 6);
+    }
+
+    private taskText(task: any, keys: string[]) {
+        for (const key of keys) {
+            const value = task?.[key];
+            if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+        }
+        return '';
+    }
+
+    public runtimeTaskName(task: any) {
+        return this.taskText(task, ['Name', 'name', 'Service', 'service']) || 'Docker task';
+    }
+
+    public runtimeTaskCurrentState(task: any) {
+        return this.taskText(task, ['CurrentState', 'Current state', 'current_state']) || '-';
+    }
+
+    public runtimeTaskDesiredState(task: any) {
+        return this.taskText(task, ['DesiredState', 'Desired state', 'desired_state']) || '-';
+    }
+
+    public runtimeTaskNodeLabel(task: any) {
+        return this.taskText(task, ['registered_node_label', 'registered_node_name', 'Node', 'node', 'Hostname', 'hostname']) || '노드 배정 대기';
+    }
+
+    public runtimeTaskError(task: any) {
+        return this.taskText(task, ['Error', 'error']);
+    }
+
+    public runtimeTaskStateClass(task: any) {
+        const state = this.runtimeTaskCurrentState(task).toLowerCase();
+        if (this.runtimeTaskError(task)) return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300';
+        if (state.startsWith('running') || state.includes('complete')) return this.statusClass('running');
+        if (['preparing', 'starting', 'assigned', 'accepted', 'new', 'pending'].some((token: string) => state.includes(token))) return this.statusClass('pending');
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
+    public activeOperationProgressTitle() {
+        const operation = this.activeBackgroundOperation();
+        if (!operation) return '';
+        const type = String(operation.type || '');
+        const stack = this.runtimeStackSummary();
+        const containers = this.runtimeContainerSummary();
+        const desired = Number(stack.desired || 0);
+        const running = Number(stack.running || 0);
+        const total = Number(containers.total || 0);
+        if (type === 'service.deploy' && desired > 0 && running < desired) return '이미지 pull 또는 Docker 작업 처리 중';
+        if (type === 'service.deploy' && total <= 0) return '컨테이너 생성 대기 중';
+        return '백그라운드 작업 진행 중';
+    }
+
+    public activeOperationProgressMessage() {
+        const operation = this.activeBackgroundOperation();
+        if (!operation) return '';
+        const stack = this.runtimeStackSummary();
+        const containers = this.runtimeContainerSummary();
+        const desired = Number(stack.desired || 0);
+        const running = Number(stack.running || 0);
+        const total = Number(containers.total || 0);
+        const runningContainers = Number(containers.running || 0);
+        const base = operation?.message || '작업 상태를 갱신하는 중입니다.';
+        if (desired > 0 && running < desired) return `${base} · Docker 작업 ${running}/${desired}`;
+        if (total > 0) return `${base} · 컨테이너 ${runningContainers}/${total}`;
+        return base;
+    }
+
+    public runtimeEmptyText() {
+        const operation = this.activeBackgroundOperation();
+        if (operation?.type === 'service.deploy') {
+            return '이미지 pull 또는 Docker 작업 처리 중이라 컨테이너 목록이 아직 비어 있습니다.';
+        }
+        return '실행 중이거나 기록된 컨테이너가 없습니다.';
     }
 
     private runtimePublicServiceNames() {
@@ -3271,8 +3473,9 @@ export class Component implements OnInit, OnDestroy {
             const result = data?.result || {};
             this.runtimeAiResult = result;
             this.runtimeAiModalOpen.set(false);
-            const detailResult = await wiz.call('detail_service', { service_id: serviceId });
+            const detailResult = await wiz.call('detail_service', { service_id: serviceId, lightweight: true });
             if (detailResult.code === 200) this.applyDetail(detailResult.data);
+            if (detailResult.code === 200) this.refreshDetailExtras(serviceId, this.detailRequestSeq);
             if (result.operation) await this.openOperationModal(result.operation);
         } catch (error: any) {
             this.pushRuntimeAiEvent({ type: 'error', message: error?.message || 'AI 런타임 검사/수정 중 오류가 발생했습니다.' });

@@ -184,13 +184,24 @@ def _service_detail_payload(service_id):
 
 
 def _service_overview_payload(service_id, lightweight=False):
+    if lightweight:
+        payload = wiz.model("struct/services_detail_fast").overview(service_id)
+        payload["detail_sections"] = {"overview": True, "logs": False, "source": False, "files": True, "versions": False}
+        return payload
     services_model = wiz.model("struct").services
     payload = services_model.detail_overview(
         service_id,
         include_certificates=not lightweight,
-        include_operations=False,
+        include_operations=True,
+        include_backup_system=not lightweight,
     )
     payload["detail_sections"] = {"overview": True, "logs": False, "source": False, "files": True, "versions": False}
+    return payload
+
+
+def _service_extras_payload(service_id):
+    payload = wiz.model("struct/services_detail_fast").extras(service_id)
+    payload["detail_sections"] = {"overview_extras": True, "certificates": True, "backup_system": True}
     return payload
 
 
@@ -280,11 +291,11 @@ def ai_contract():
 
 
 def ai_model_options():
-    ai_assistant = wiz.model("struct").ai_assistant
+    ai_settings = wiz.model("struct").ai_settings
     code = 200
     payload = {}
     try:
-        payload = ai_assistant.model_options()
+        payload = ai_settings.model_options()
     except Exception as exc:
         code = getattr(exc, "status_code", 400)
         payload = {
@@ -520,7 +531,7 @@ def refresh_deploy_status():
     payload = {}
     try:
         result = services_model.refresh_deploy_status(service_id)
-        payload = {"result": result, **_service_overview_payload(service_id)}
+        payload = {"result": result, **_service_overview_payload(service_id, lightweight=True)}
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -570,7 +581,6 @@ def ensure_service_certificate_renewal():
 
 
 def detail_service():
-    services_model = wiz.model("struct").services
     body = wiz.request.query()
     service_id = body.get("service_id")
     if not service_id:
@@ -581,12 +591,14 @@ def detail_service():
     payload = {}
     try:
         payload = _service_overview_payload(service_id, lightweight=_truthy(body.get("lightweight") or body.get("basic")))
-    except services_model.ServiceError as exc:
-        code = exc.status_code
-        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        if _is_service_error_like(exc):
+            code, payload = _service_error_response(exc)
+        else:
+            raise
 
     wiz.response.status(code, **payload)
 
@@ -610,6 +622,29 @@ def detail_service_logs():
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+
+    wiz.response.status(code, **payload)
+
+
+def detail_service_extras():
+    body = wiz.request.query()
+    service_id = body.get("service_id")
+    if not service_id:
+        wiz.response.status(400, message="service_id는 필수입니다.", error_code="SERVICE_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = _service_extras_payload(service_id)
+    except DATABASE_ERRORS as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        if _is_service_error_like(exc):
+            code, payload = _service_error_response(exc)
+        else:
+            raise
 
     wiz.response.status(code, **payload)
 

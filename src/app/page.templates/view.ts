@@ -180,6 +180,70 @@ export class Component implements OnInit {
         this.resetDetailState();
     }
 
+    private readmeExcerpt(value: any) {
+        for (const line of String(value || '').split('\n')) {
+            const clean = line.trim().replace(/^#+\s*/, '').trim();
+            if (clean) return clean.slice(0, 140);
+        }
+        return '';
+    }
+
+    private templateSummaryFromDetail(template: any) {
+        const id = String(template?.id || template?.namespace || this.form.namespace || '').trim();
+        const namespace = String(template?.namespace || id).trim();
+        return {
+            id: id || namespace,
+            namespace,
+            name: template?.name || this.form.name || namespace,
+            enabled: template?.enabled !== false,
+            metadata: template?.metadata || this.payloadMetadata(),
+            readme_excerpt: template?.readme_excerpt || this.readmeExcerpt(template?.files?.readme || this.files.readme),
+            created_at: template?.created_at || this.detail()?.created_at || '',
+            updated_at: template?.updated_at || '',
+        };
+    }
+
+    private sortedTemplateList(items: any[]) {
+        return [...items].sort((left: any, right: any) => this.templateItemId(left).localeCompare(this.templateItemId(right)));
+    }
+
+    private upsertSavedTemplate(template: any) {
+        const previousKey = this.selectedId();
+        const key = this.templateItemId(template) || String(this.form.namespace || '').trim();
+        if (!key || !template) return false;
+        const summary = this.templateSummaryFromDetail(template);
+        const rows: any[] = [];
+        let inserted = false;
+        for (const item of this.templates()) {
+            const itemKey = this.templateItemId(item);
+            if (itemKey === key || (previousKey && itemKey === previousKey)) {
+                if (!inserted) {
+                    rows.push({ ...item, ...summary });
+                    inserted = true;
+                }
+                continue;
+            }
+            rows.push(item);
+        }
+        if (!inserted) rows.push(summary);
+        this.templates.set(this.sortedTemplateList(rows));
+
+        const nextCache = { ...this.detailCache };
+        if (previousKey && previousKey !== key) delete nextCache[previousKey];
+        nextCache[key] = template;
+        this.detailCache = nextCache;
+        this.detailLoadRequestId += 1;
+        this.detailLoading.set(false);
+        this.selectedId.set(key);
+        this.newTemplateMode.set('');
+        this.newTemplateDraftReady.set(false);
+        this.cloneLoading.set(false);
+        this.cloneSourceId.set('');
+        this.detailLoadError.set('');
+        this.applyTemplateDetail(template, key);
+        return true;
+    }
+
     private normalizeTags(value: any) {
         const raw = Array.isArray(value) ? value : String(value || '').split(',');
         const tags: string[] = [];
@@ -793,9 +857,9 @@ export class Component implements OnInit {
         const { code, data } = await wiz.call('save_template', this.payload());
         this.busy.set(false);
         if (code === 200) {
+            this.upsertSavedTemplate(data.template || {});
+            await this.service.render();
             await this.alert('템플릿을 저장했습니다.', 'success');
-            await this.load(false);
-            await this.selectTemplate(data.template?.id || data.template?.namespace || this.form.namespace, true, true);
             return;
         }
         await this.alert(data?.message || '템플릿을 저장할 수 없습니다.');

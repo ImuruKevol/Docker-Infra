@@ -76,6 +76,26 @@ def _node_maps(env=None):
     }
 
 
+def _registered_metadata(row):
+    return dict((row or {}).get("metadata") or {})
+
+
+def _registered_private_host(row):
+    metadata = _registered_metadata(row)
+    return str(
+        metadata.get("node_access_host")
+        or metadata.get("private_host")
+        or metadata.get("internal_host")
+        or (row or {}).get("host")
+        or ""
+    ).strip()
+
+
+def _registered_public_ip(row):
+    metadata = _registered_metadata(row)
+    return str(metadata.get("public_ip") or metadata.get("public_host") or "").strip()
+
+
 def _task_node(task, maps):
     swarm_node_name = str(task.get("Node") or "").strip()
     swarm_row = maps["by_hostname"].get(swarm_node_name) or maps["by_node_id"].get(swarm_node_name) or {}
@@ -89,16 +109,40 @@ def _task_node(task, maps):
     )
     registered_name = str((registered or {}).get("name") or "").strip()
     registered_host = str((registered or {}).get("host") or "").strip()
+    registered_private_host = _registered_private_host(registered)
+    registered_public_ip = _registered_public_ip(registered)
+    node_is_local_master = bool((registered or {}).get("is_local_master"))
     display_name = registered_name or registered_host or swarm_node_name
-    host = str(swarm_addr or registered_host or swarm_node_name or "127.0.0.1").strip()
+    if node_is_local_master:
+        host = "127.0.0.1"
+        topology = "local-master"
+        host_source = "loopback"
+    elif registered is not None:
+        host = str(registered_private_host or registered_host or swarm_addr or swarm_node_name or "127.0.0.1").strip()
+        topology = "remote-node"
+        host_source = "registered_private_host" if registered_private_host else ("registered_host" if registered_host else "swarm_addr")
+    elif swarm_addr:
+        host = swarm_addr
+        topology = "swarm-node"
+        host_source = "swarm_addr"
+    else:
+        host = str(swarm_node_name or "127.0.0.1").strip()
+        topology = "swarm-node" if swarm_node_name else "local-default"
+        host_source = "swarm_node_name" if swarm_node_name else "loopback"
     return {
         "node_name": display_name,
         "swarm_node_name": swarm_node_name,
         "swarm_node_id": swarm_id or str((registered or {}).get("swarm_node_id") or ""),
         "node_id": "" if registered is None else str(registered.get("id")),
         "node_host": host,
+        "node_host_source": host_source,
+        "proxy_topology": topology,
+        "node_is_local_master": node_is_local_master,
+        "swarm_addr": swarm_addr,
         "registered_node_name": registered_name,
         "registered_node_host": registered_host,
+        "registered_node_private_host": registered_private_host,
+        "registered_node_public_ip": registered_public_ip,
         "registered": registered is not None,
     }
 
@@ -194,12 +238,18 @@ def sync_domain_proxy_targets(service_id, stack_name, attempts=10, delay_seconds
                 node = _task_node(task, maps)
                 metadata.update({
                     "proxy_host": node["node_host"],
+                    "proxy_host_source": node["node_host_source"],
+                    "proxy_topology": node["proxy_topology"],
                     "proxy_node_name": node["node_name"],
+                    "proxy_node_is_local_master": node["node_is_local_master"],
                     "proxy_swarm_node_name": node["swarm_node_name"],
                     "proxy_swarm_node_id": node["swarm_node_id"],
+                    "proxy_swarm_addr": node["swarm_addr"],
                     "proxy_node_id": node["node_id"],
                     "proxy_registered_node_name": node["registered_node_name"],
                     "proxy_registered_node_host": node["registered_node_host"],
+                    "proxy_registered_node_private_host": node["registered_node_private_host"],
+                    "proxy_registered_node_public_ip": node["registered_node_public_ip"],
                     "proxy_node_registered": node["registered"],
                 })
                 cursor.execute(

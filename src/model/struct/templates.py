@@ -9,8 +9,7 @@ import yaml
 
 config = wiz.config("docker_infra")
 seed = wiz.model("struct/templates_seed")
-services_wizard = wiz.model("struct/services_wizard")
-validator = wiz.model("struct/compose_validator")
+compose_rules = wiz.model("struct/compose_rules")
 
 TEMPLATE_FILES = {
     "compose": "docker-compose.yaml",
@@ -18,6 +17,7 @@ TEMPLATE_FILES = {
     "values_schema": "values.schema.json",
     "readme": "README.md",
 }
+DELETED_SEEDS_FILENAME = ".deleted-seed-templates.json"
 
 _SEED_TEMPLATE_CACHE = None
 _SUMMARY_CACHE = {}
@@ -81,6 +81,14 @@ def _invalidate_cache(namespace=None, env=None):
             _DETAIL_CACHE.pop(key, None)
 
 
+def _compose_validator():
+    return wiz.model("struct/compose_validator")
+
+
+def _services_wizard():
+    return wiz.model("struct/services_wizard")
+
+
 class TemplateError(Exception):
     def __init__(self, status_code, message, error_code, **extra):
         super().__init__(message)
@@ -101,6 +109,63 @@ def _namespace(value):
 
 def _template_root(env=None):
     return Path(config.data_dir(env)) / "templates"
+
+
+def _deleted_seed_path(root):
+    return root / DELETED_SEEDS_FILENAME
+
+
+def _seed_template_namespaces():
+    namespaces = set()
+    for item in _seed_templates():
+        raw = str(item.get("namespace") or item.get("name") or "").strip()
+        if raw:
+            namespaces.add(_namespace(raw))
+    return namespaces
+
+
+def _deleted_seed_namespaces(root):
+    payload = _safe_json(_read_text(_deleted_seed_path(root)), {})
+    raw = payload.get("namespaces") if isinstance(payload, dict) else []
+    namespaces = set()
+    for item in (raw if isinstance(raw, list) else []):
+        value = str(item or "").strip()
+        if value:
+            namespaces.add(_namespace(value))
+    return namespaces
+
+
+def _write_deleted_seed_namespaces(root, namespaces):
+    values = sorted({_namespace(item) for item in namespaces if str(item or "").strip()})
+    path = _deleted_seed_path(root)
+    if not values:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    path.write_text(
+        json.dumps({"namespaces": values, "updated_at": _now()}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _mark_deleted_seed(namespace, env=None):
+    root = _template_root(env)
+    root.mkdir(parents=True, exist_ok=True)
+    deleted = _deleted_seed_namespaces(root)
+    deleted.add(_namespace(namespace))
+    _write_deleted_seed_namespaces(root, deleted)
+
+
+def _unmark_deleted_seed(namespace, env=None):
+    root = _template_root(env)
+    deleted = _deleted_seed_namespaces(root)
+    normalized = _namespace(namespace)
+    if normalized not in deleted:
+        return
+    deleted.discard(normalized)
+    _write_deleted_seed_namespaces(root, deleted)
 
 
 def _read_text(path, fallback=""):
@@ -212,7 +277,7 @@ def _fields_from_schema(schema, values):
 
 class Templates:
     TemplateError = TemplateError
-    ComposeValidationError = validator.ComposeValidationError
+    ComposeValidationError = compose_rules.ComposeValidationError
 
     def root(self, env=None):
         root = _template_root(env)
@@ -227,8 +292,11 @@ class Templates:
 
     def ensure_defaults(self, env=None):
         root = self.root(env=env)
+        deleted_seeds = _deleted_seed_namespaces(root)
         for item in _seed_templates():
             namespace = _namespace(item.get("namespace"))
+            if namespace in deleted_seeds:
+                continue
             directory = root / namespace
             record_path = directory / "template.json"
             if record_path.exists():
@@ -370,17 +438,24 @@ class Templates:
         if is_new:
             record["created_at"] = _now()
         (directory / "template.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        _unmark_deleted_seed(namespace, env=env)
         _invalidate_cache(namespace, env=env)
         return {"template": self._read(namespace, include_files=True, env=env)}
 
     def delete(self, template_id, env=None):
-        directory = self._dir(template_id, env=env)
+        namespace = _namespace(template_id)
+        directory = self._dir(namespace, env=env)
         if not directory.exists():
             raise TemplateError(404, "템플릿을 찾을 수 없습니다.", "TEMPLATE_NOT_FOUND")
+        record = _safe_json(_read_text(directory / "template.json"), {})
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        is_seed_template = metadata.get("source") == "seed" or namespace in _seed_template_namespaces()
         for path in sorted(directory.rglob("*"), reverse=True):
             path.unlink() if path.is_file() else path.rmdir()
         directory.rmdir()
-        _invalidate_cache(template_id, env=env)
+        if is_seed_template:
+            _mark_deleted_seed(namespace, env=env)
+        _invalidate_cache(namespace, env=env)
         return {"deleted": True}
 
     def render(self, payload, env=None):
@@ -404,7 +479,7 @@ class Templates:
     def preview(self, payload, env=None):
         rendered = self.render(payload, env=env)
         namespace = rendered["values"].get("namespace") or "template_preview"
-        validation = validator.validate(
+        validation = _compose_validator().validate(
             {
                 "namespace": namespace,
                 "filename": "docker-compose.yaml",
@@ -419,7 +494,7 @@ class Templates:
         rendered = self.preview(payload, env=env)
         template = rendered["template"]
         metadata = template.get("metadata") or {}
-        components = services_wizard.components_from_content(rendered["rendered"], metadata=metadata)
+        components = _services_wizard().components_from_content(rendered["rendered"], metadata=metadata)
         return {
             "filename": "docker-compose.yaml",
             "content": rendered["rendered"],

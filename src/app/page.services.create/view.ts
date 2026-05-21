@@ -1327,7 +1327,7 @@ export class Component implements OnInit {
                 this.service.href(`/services?service_id=${encodeURIComponent(serviceId)}`);
                 return;
             }
-            await this.alert('서비스를 저장했고 배포는 백그라운드에서 시작했습니다. 서비스 화면에서 진행 상태를 확인할 수 있습니다.', 'success');
+            await this.alert('서비스를 저장했고 배포는 백그라운드에서 시작했습니다. 서비스 화면에서 Docker 작업과 이미지 pull 대기 상태를 확인할 수 있습니다.', 'success');
             this.service.href(`/services?service_id=${encodeURIComponent(serviceId)}`);
             return;
         }

@@ -291,3 +291,14 @@
 | 2026-05-20 | 289 | 검색 select 드롭다운 overflow clipping 방지 | [상세](devlog/2026-05-20/289-search-select-dropdown-fixed-position.md) |
 | 2026-05-20 | 290 | 각 화면 초기 표시 로딩 보강과 템플릿 API 캐시 추가 | [상세](devlog/2026-05-20/290-screen-api-ui-loading-performance.md) |
 | 2026-05-20 | 291 | README/라이선스/installer 공개 준비 | [상세](devlog/2026-05-20/291-readme-license-installer-public-prep.md) |
+| 2026-05-21 | 292 | 서비스 생성 배포 진행 상태 UX 개선 | [상세](devlog/2026-05-21/292-service-create-deploy-progress-ux.md) |
+| 2026-05-21 | 293 | 서비스 상세 Compose 원문 재적용과 nginx 설정 미리보기 보강 | [상세](devlog/2026-05-21/293-service-detail-compose-nginx-apply.md) |
+| 2026-05-21 | 294 | DDNS/일반 도메인과 노드 토폴로지별 nginx 자동 생성 보강 | [상세](devlog/2026-05-21/294-nginx-domain-node-topology.md) |
+| 2026-05-21 | 295 | 서비스 수정 모달 즉시 표시와 DDNS 삭제 실패 내성 보강 | [상세](devlog/2026-05-21/295-service-edit-modal-delete-ddns.md) |
+| 2026-05-21 | 296 | 템플릿 생성 도메인/DDNS/nginx 플로우 점검과 DDNS 매칭 실패 보강 | [상세](devlog/2026-05-21/296-template-domain-nginx-flow-check.md) |
+| 2026-05-21 | 297 | 기본 템플릿 삭제 후 재생성 방지 | [상세](devlog/2026-05-21/297-template-delete-seed-persistence.md) |
+| 2026-05-21 | 298 | 템플릿 저장 후 목록 재조회 제거 | [상세](devlog/2026-05-21/298-template-save-local-list-update.md) |
+| 2026-05-21 | 299 | wiz_dev 템플릿 DDNS 실생성 검증과 배치/검증 오류 보강 | [상세](devlog/2026-05-21/299-wiz-dev-ddns-browser-create-test.md) |
+| 2026-05-21 | 300 | 서비스 상세 느린 부가 정보 API 분리 | [상세](devlog/2026-05-21/300-service-detail-api-extras-split.md) |
+| 2026-05-21 | 301 | 템플릿 상세 화면 API 초기화 경량화와 브라우저 속도 검증 | [상세](devlog/2026-05-21/301-template-detail-api-fast-path.md) |
+| 2026-05-21 | 302 | 서비스 상세 fast path와 AI 옵션 지연 로딩 적용 | [상세](devlog/2026-05-21/302-service-detail-fast-path-ai-lazy-load.md) |

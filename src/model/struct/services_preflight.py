@@ -378,6 +378,10 @@ class ServicesPreflight:
                 ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=ddns_endpoint_id, env=env)
             elif not zone_id:
                 ddns_endpoint = ddns_model.match_domain(domain, env=env)
+            ddns_requested = metadata.get("routing_provider") == "ddns" or metadata.get("dns_provider") == "ddns" or bool(metadata.get("ddns_endpoint_id"))
+            if ddns_requested and not ddns_endpoint:
+                issues.append(_item("domain.ddns.endpoint", "DDNS 도메인", "error", f"{domain} 도메인을 처리할 DDNS 관리 서버를 찾을 수 없습니다."))
+                continue
             dns_provider = ""
             external_proxy = ""
             ssl_mode = ""

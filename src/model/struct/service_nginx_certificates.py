@@ -126,7 +126,6 @@ class ServiceNginxCertificates:
         return result
 
     def service_certificates(self, domains, env=None):
-        renewal = self.automatic_renewal_status(env=env)
         rows = []
         for row in domains or []:
             domain = str(row.get("domain") or "").strip().lower()
@@ -145,9 +144,13 @@ class ServiceNginxCertificates:
                 "requested_ssl_mode": row.get("ssl_mode"),
                 "applied_ssl_mode": metadata.get("nginx_ssl_mode"),
                 "certificate": cert,
-                "auto_renewal": renewal,
+                "auto_renewal": None,
                 "manual_renew_enabled": bool(cert and cert.get("cert_path")),
             })
+        if rows:
+            renewal = self.automatic_renewal_status(env=env)
+            for row in rows:
+                row["auto_renewal"] = renewal
         return rows
 
     def renew_certificate(self, domain, commands=None, env=None):

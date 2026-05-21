@@ -148,6 +148,11 @@ class ServicesWizard:
     def _is_import_source(self, body):
         return bool(body.get("import_source")) or body.get("source") in {"server_compose_import", "server_compose_import_wizard"}
 
+    def _is_template_source(self, body):
+        source_ref = body.get("source_ref") if isinstance(body.get("source_ref"), dict) else {}
+        draft_metadata = body.get("draft_metadata") if isinstance(body.get("draft_metadata"), dict) else {}
+        return body.get("source") == "compose_template" or source_ref.get("source") == "compose_template" or draft_metadata.get("source") == "compose_template"
+
     def _require_base_content_source(self, body):
         if str(body.get("base_content") or "").strip():
             return
@@ -497,7 +502,7 @@ class ServicesWizard:
         return _rewrite_internal_service_ref(content, namespace, service_names)
 
     def _validation_options(self, body):
-        if self._is_import_source(body):
+        if self._is_import_source(body) or self._is_template_source(body):
             return {
                 "allow_warnings": True,
                 "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],

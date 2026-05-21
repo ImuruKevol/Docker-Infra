@@ -106,11 +106,11 @@ def preview_template():
 
 
 def ai_model_options():
-    ai_assistant = wiz.model("struct").ai_assistant
+    ai_settings = wiz.model("struct").ai_settings
     code = 200
     payload = {}
     try:
-        payload = ai_assistant.model_options()
+        payload = ai_settings.model_options()
     except Exception as exc:
         code = getattr(exc, "status_code", 400)
         payload = {
@@ -121,11 +121,11 @@ def ai_model_options():
 
 
 def ai_contract():
-    ai_assistant = wiz.model("struct").ai_assistant
+    template_ai = wiz.model("struct/template_ai")
     code = 200
     payload = {}
     try:
-        payload = {"contract": ai_assistant.template_contract()}
+        payload = {"contract": template_ai.template_contract()}
     except Exception as exc:
         code = getattr(exc, "status_code", 400)
         payload = {

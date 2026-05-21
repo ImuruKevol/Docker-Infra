@@ -156,6 +156,73 @@ class ServiceDeployMixin:
         stream = "stdout" if result.get("status") == "ok" else "stderr"
         operations.append_output(operation_id, text, stream=stream, metadata={"step": label}, env=env)
 
+    def _runtime_task_text(self, task, *keys):
+        for key in keys:
+            value = task.get(key)
+            if value not in (None, ""):
+                return str(value).strip()
+        return ""
+
+    def _runtime_progress_snapshot(self, runtime, fallback_message=""):
+        runtime = runtime or {}
+        stack = runtime.get("stack") or {}
+        stack_summary = stack.get("summary") or {}
+        container_summary = ((runtime.get("containers") or {}).get("summary") or {})
+        desired = int(stack_summary.get("desired") or 0)
+        running = int(stack_summary.get("running") or 0)
+        container_total = int(container_summary.get("total") or 0)
+        container_running = int(container_summary.get("running") or 0)
+
+        tasks = []
+        for task in stack.get("tasks") or []:
+            if not isinstance(task, dict):
+                continue
+            state = self._runtime_task_text(task, "CurrentState", "Current state", "current_state")
+            desired_state = self._runtime_task_text(task, "DesiredState", "Desired state", "desired_state")
+            error = self._runtime_task_text(task, "Error", "error")
+            name = self._runtime_task_text(task, "Name", "name", "Service", "service")
+            node = self._runtime_task_text(
+                task,
+                "registered_node_label",
+                "registered_node_name",
+                "Node",
+                "node",
+                "Hostname",
+                "hostname",
+            )
+            image = self._runtime_task_text(task, "Image", "image")
+            tasks.append({
+                "name": name,
+                "image": image,
+                "node": node,
+                "desired_state": desired_state,
+                "current_state": state,
+                "error": error,
+            })
+
+        state_text = " ".join(task.get("current_state", "").lower() for task in tasks)
+        has_pull_wait = any(token in state_text for token in ["preparing", "assigned", "accepted", "new", "pending"])
+        if desired <= 0:
+            message = "Docker 작업을 아직 확인하지 못했습니다."
+        elif running < desired and has_pull_wait:
+            message = f"이미지 pull 또는 Docker 작업 준비 중입니다. Docker 작업 {running}/{desired}"
+        elif running < desired:
+            message = f"Docker 작업 실행 대기 중입니다. Docker 작업 {running}/{desired}"
+        elif container_total <= 0:
+            message = "Docker 작업은 확인됐지만 컨테이너 목록은 아직 비어 있습니다."
+        elif container_running < container_total:
+            message = f"컨테이너 실행 대기 중입니다. {container_running}/{container_total}"
+        else:
+            message = fallback_message or "컨테이너 실행 상태를 확인했습니다."
+
+        return {
+            "message": message,
+            "stack_summary": stack_summary,
+            "container_summary": container_summary,
+            "tasks": tasks[:8],
+            "checked_at": runtime.get("checked_at"),
+        }
+
     def _runtime_ready_result(self, runtime):
         stack = ((runtime or {}).get("stack") or {}).get("summary") or {}
         containers = ((runtime or {}).get("containers") or {}).get("summary") or {}
@@ -186,13 +253,40 @@ class ServiceDeployMixin:
         deadline = time.monotonic() + timeout
         attempts = 0
         last = {"message": "컨테이너 실행 상태를 아직 확인하지 못했습니다."}
+        last_progress_message = ""
         while time.monotonic() <= deadline:
             attempts += 1
             try:
                 refreshed = self.refresh_deploy_status(service_id, operation_id=operation_id, env=env)
                 runtime = refreshed.get("runtime_status") or {}
                 ready, message = self._runtime_ready_result(runtime)
-                last = {"message": message, "runtime_status": runtime}
+                progress = self._runtime_progress_snapshot(runtime, fallback_message=message)
+                progress["ready"] = ready
+                progress["attempt"] = attempts
+                last = {"message": progress.get("message") or message, "runtime_status": runtime, "progress": progress}
+                if operation_id:
+                    should_append = (
+                        attempts == 1
+                        or ready
+                        or progress.get("message") != last_progress_message
+                        or attempts % 5 == 0
+                    )
+                    operations.transition(
+                        operation_id,
+                        "running",
+                        message=progress.get("message") or message,
+                        metadata={"runtime_progress": progress},
+                        env=env,
+                    )
+                    if should_append:
+                        operations.append_output(
+                            operation_id,
+                            progress.get("message") or message,
+                            stream="system",
+                            metadata={"step": "runtime wait", "attempt": attempts, "progress": progress},
+                            env=env,
+                        )
+                        last_progress_message = progress.get("message") or message
                 if ready:
                     return {"status": "ok", "message": message, "attempts": attempts, "runtime_status": runtime}
             except Exception as exc:
@@ -582,6 +676,13 @@ class ServiceDeployMixin:
         else:
             operation = self._create_deploy_operation(service, stack_name, compose_path, env=env)
         operation_id = operation["id"]
+        operations.append_output(
+            operation_id,
+            "Docker stack 배포를 시작합니다. 이미지 pull 중에는 docker ps에 컨테이너가 보이지 않을 수 있어 Docker 작업 상태를 함께 추적합니다.",
+            stream="system",
+            metadata={"step": "deploy start", "stack_name": stack_name},
+            env=env,
+        )
 
         inspect = local_executor.run(
             "swarm.network.inspect",
@@ -644,7 +745,7 @@ class ServiceDeployMixin:
         runtime_wait = self._wait_runtime_ready(
             service_id,
             operation_id,
-            timeout_seconds=payload.get("runtime_ready_timeout_seconds") or 120,
+            timeout_seconds=payload.get("runtime_ready_timeout_seconds") or 600,
             env=env,
         )
         operations.append_output(

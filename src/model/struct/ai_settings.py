@@ -8,8 +8,6 @@ from psycopg.types.json import Jsonb
 
 
 connect = wiz.model("db/postgres").connect
-nodes = wiz.model("struct/nodes")
-scripts = wiz.model("struct/local_command_scripts")
 settings = wiz.model("struct/settings")
 
 AI_CONFIG_KEY = "ai.config"
@@ -124,6 +122,14 @@ class AISettingsError(Exception):
 
 def utcnow():
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _nodes_model():
+    return wiz.model("struct/nodes")
+
+
+def _scripts_model():
+    return wiz.model("struct/local_command_scripts")
 
 
 def today():
@@ -426,7 +432,7 @@ class AISettings:
 
     def _node_options(self, env=None):
         try:
-            rows = nodes.list(env=env)
+            rows = _nodes_model().list(env=env)
         except Exception:
             return []
         return [
@@ -440,6 +446,181 @@ class AISettings:
             }
             for row in rows
         ]
+
+    def _normalize_model_for_provider(self, provider, model_id):
+        model_id = _str(model_id)
+        if provider == "gemini":
+            model_id = model_id.replace("models/", "", 1)
+        return model_id
+
+    def _cached_model(self, cache, provider, model_id):
+        provider_cache = cache.get(provider) or {}
+        models = provider_cache.get("models") or []
+        normalized = self._normalize_model_for_provider(provider, model_id)
+        for model in models:
+            for candidate in [model.get("id"), model.get("model"), model.get("full_name")]:
+                if self._normalize_model_for_provider(provider, candidate) == normalized:
+                    return model
+        return None
+
+    def _provider_label(self, provider):
+        labels = {
+            "codex": "Codex",
+            "openai": "OpenAI",
+            "gemini": "Gemini",
+            "ollama": "Ollama",
+        }
+        return labels.get(provider, provider or "AI")
+
+    def _provider_badge_class(self, provider, state_level=None):
+        if state_level == "error":
+            return "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300"
+        if state_level == "warning":
+            return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300"
+        if provider == "openai":
+            return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300"
+        if provider == "codex":
+            return "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-900/70 dark:bg-fuchsia-950/40 dark:text-fuchsia-300"
+        if provider == "gemini":
+            return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300"
+        if provider == "ollama":
+            return "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300"
+        return "border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300"
+
+    def _selected_model_candidates(self, config, cache):
+        result = []
+        seen = set()
+
+        def add(provider, model_id):
+            model_id = self._normalize_model_for_provider(provider, model_id)
+            if not model_id:
+                return
+            key = "%s::%s" % (provider, model_id)
+            if key in seen:
+                return
+            seen.add(key)
+            cached = self._cached_model(cache, provider, model_id)
+            if provider == "codex":
+                codex = config.get("codex") or {}
+                effort = _str(codex.get("reasoning_effort") or "xhigh").upper()
+                cached = {
+                    "id": model_id,
+                    "label": "%s · %s" % (model_id, effort),
+                    "capabilities": {"labels": ["텍스트", "MCP"]},
+                    "pricing": {"label": "Codex 로그인 세션 사용"},
+                    "state": {
+                        "level": "ok",
+                        "message": "Codex 로그인 세션으로 실행합니다.",
+                    },
+                }
+            result.append(
+                {
+                    "provider": provider,
+                    "model_id": model_id,
+                    "model": cached or {"id": model_id, "label": model_id},
+                }
+            )
+
+        openai = config.get("openai") or {}
+        if openai.get("enabled") and openai.get("selected_model"):
+            add("openai", openai.get("selected_model"))
+
+        gemini = config.get("gemini") or {}
+        if gemini.get("enabled") and gemini.get("selected_model"):
+            add("gemini", gemini.get("selected_model"))
+
+        ollama = config.get("ollama") or {}
+        runtime = config.get("runtime") or {}
+        runtime_mode = runtime.get("mode") or "cloud_api"
+        runtime_enabled = bool(runtime.get("enabled"))
+        if runtime_enabled and runtime_mode in {"external_ollama", "local_server", "registered_node"} and runtime.get("selected_model"):
+            add("ollama", runtime.get("selected_model"))
+        if ollama.get("enabled") and ollama.get("selected_model"):
+            add("ollama", ollama.get("selected_model"))
+        if runtime_enabled and runtime_mode in {"external_ollama", "local_server", "registered_node"} and not runtime.get("selected_model"):
+            add("ollama", ollama.get("selected_model"))
+        return result
+
+    def _default_model_ref(self, config):
+        codex = config.get("codex") or {}
+        if codex.get("enabled") and codex.get("model"):
+            return "codex"
+        openai = config.get("openai") or {}
+        if openai.get("enabled") and openai.get("selected_model"):
+            return "openai::%s" % self._normalize_model_for_provider("openai", openai.get("selected_model"))
+        gemini = config.get("gemini") or {}
+        if gemini.get("enabled") and gemini.get("selected_model"):
+            return "gemini::%s" % self._normalize_model_for_provider("gemini", gemini.get("selected_model"))
+        runtime = config.get("runtime") or {}
+        runtime_mode = runtime.get("mode") or "cloud_api"
+        if runtime.get("enabled") and runtime_mode in {"external_ollama", "local_server", "registered_node"} and runtime.get("selected_model"):
+            return "ollama::%s" % self._normalize_model_for_provider("ollama", runtime.get("selected_model"))
+        ollama = config.get("ollama") or {}
+        if ollama.get("enabled") and ollama.get("selected_model"):
+            return "ollama::%s" % self._normalize_model_for_provider("ollama", ollama.get("selected_model"))
+        return ""
+
+    def model_options(self, env=None):
+        config = self._normalize_config(self._saved_config(env=env))
+        cache = self._model_cache(env=env)
+        options = []
+        seen = set()
+        codex = config.get("codex") or {}
+        if codex.get("enabled") and codex.get("model"):
+            options.append(
+                {
+                    "value": "codex",
+                    "label": "Codex",
+                    "description": "Codex CLI 로그인 세션으로 실행합니다.",
+                    "badge": "로그인",
+                    "badgeClass": "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-900/70 dark:bg-fuchsia-950/40 dark:text-fuchsia-300",
+                    "cli_mode": "system",
+                }
+            )
+            seen.add("codex")
+        for item in self._selected_model_candidates(config, cache):
+            provider = item["provider"]
+            if provider == "codex":
+                continue
+            model_id = item["model_id"]
+            model = item["model"]
+            value = "%s::%s" % (provider, model_id)
+            if value in seen:
+                continue
+            seen.add(value)
+            state = model.get("state") or {}
+            capabilities = model.get("capabilities") or {}
+            pricing = model.get("pricing") or {}
+            labels = capabilities.get("labels") or ["텍스트"]
+            description_bits = [
+                self._provider_label(provider),
+                " / ".join(labels),
+            ]
+            if pricing.get("label"):
+                description_bits.append(pricing.get("label"))
+            if state.get("message"):
+                description_bits.append(state.get("message"))
+            options.append(
+                {
+                    "value": value,
+                    "label": model.get("label") or model_id,
+                    "description": " · ".join([bit for bit in description_bits if bit]),
+                    "badge": self._provider_label(provider),
+                    "badgeClass": self._provider_badge_class(provider, state.get("level")),
+                    "state": state,
+                    "cli_mode": "api",
+                }
+            )
+        default_ref = self._default_model_ref(config)
+        if default_ref not in seen:
+            default_ref = options[0]["value"] if options else ""
+        return {
+            "options": options,
+            "default_model_ref": default_ref,
+            "selected": default_ref,
+            "has_enabled_models": bool(options),
+            "message": "" if options else "시스템 설정에서 사용 중인 AI 모델이 없습니다.",
+        }
 
     def public_payload(self, env=None):
         return {
@@ -767,10 +948,11 @@ class AISettings:
         }
 
     def _probe_node_resource(self, node, env=None):
+        nodes = _nodes_model()
         if node.get("is_local_master") or node.get("role") == "local_master" or node.get("name") == "local-master":
             result = nodes.local_executor.run("ai.resources", timeout_seconds=12, env=env)
         else:
-            result = nodes._run_ssh_command(node, ["sh", "-lc", scripts.AI_RESOURCE_SCRIPT], timeout_seconds=15, env=env)
+            result = nodes._run_ssh_command(node, ["sh", "-lc", _scripts_model().AI_RESOURCE_SCRIPT], timeout_seconds=15, env=env)
         payload = _json_from_stdout(result)
         status = "ok" if result.get("status") == "ok" and isinstance(payload, dict) else "error"
         return {
@@ -786,11 +968,12 @@ class AISettings:
         }
 
     def _probe_node_ollama(self, node, port, env=None):
+        nodes = _nodes_model()
         port = _as_port(port, DEFAULT_CONFIG["runtime"]["node_ollama_port"])
         if node.get("is_local_master") or node.get("role") == "local_master" or node.get("name") == "local-master":
             result = nodes.local_executor.run("ai.ollama_scan", params={"port": port}, timeout_seconds=12, env=env)
         else:
-            command = "export OLLAMA_PORT=%s\n%s" % (port, scripts.AI_OLLAMA_SCAN_SCRIPT)
+            command = "export OLLAMA_PORT=%s\n%s" % (port, _scripts_model().AI_OLLAMA_SCAN_SCRIPT)
             result = nodes._run_ssh_command(node, ["sh", "-lc", command], timeout_seconds=15, env=env)
         payload = _json_from_stdout(result)
         payload = payload if isinstance(payload, dict) else {}
@@ -852,6 +1035,7 @@ class AISettings:
         probe = _as_bool(body.get("probe"), default=False)
         target_node_id = _str(body.get("node_id"))
         port = _as_port(body.get("port") or body.get("node_ollama_port"), DEFAULT_CONFIG["runtime"]["node_ollama_port"])
+        nodes = _nodes_model()
         rows = nodes.list(env=env)
         if target_node_id:
             rows = [row for row in rows if row.get("id") == target_node_id]

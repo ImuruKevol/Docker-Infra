@@ -130,14 +130,15 @@ class ServiceDeleteMixin:
         try:
             result = ddns_model.unregister_service_domains(domains, env=env)
         except ddns_model.DomainError as exc:
-            metadata = {"step": "ddns unregister", "error_code": exc.error_code, **exc.extra}
-            operations.append_output(operation_id, exc.message, stream="stderr", metadata=metadata, env=env)
-            raise ServiceError(
-                409,
-                "DDNS DNS 레코드를 삭제할 수 없습니다.",
-                "SERVICE_DDNS_RECORD_REMOVE_FAILED",
-                ddns={"message": exc.message, "error_code": exc.error_code, **exc.extra},
+            result = {"status": "warning", "message": exc.message, "error_code": exc.error_code, **exc.extra}
+            operations.append_output(
+                operation_id,
+                f"DDNS unregister warning: {exc.message}",
+                stream="stderr",
+                metadata={"step": "ddns unregister", "result": result},
+                env=env,
             )
+            return result
         operations.append_output(
             operation_id,
             f"checked DDNS registrations: unregistered={len(result.get('unregistered') or [])}, skipped={len(result.get('skipped') or [])}",

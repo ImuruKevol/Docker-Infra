@@ -1185,19 +1185,22 @@ class DomainDdns:
                         )
                         self._mark_service_domain(cursor, domain_row, endpoint, registration, target)
 
+        blocking_skipped = [item for item in skipped if item.get("reason") == "ddns_endpoint_not_matched"]
         dispatcher = {}
-        if not failures:
+        if not failures and not blocking_skipped:
             dispatcher = self.sync_dispatcher(env=env)
         result = {"registered": registered, "skipped": skipped, "failures": failures, "dispatcher": dispatcher}
         self._record_operation(
             "domain.ddns.register_service",
             payload={"service_id": str(service_id)},
             result=result,
-            status="failed" if failures else "succeeded",
+            status="failed" if failures or blocking_skipped else "succeeded",
             env=env,
         )
         if failures:
             raise DomainError(409, "DDNS 관리 서버에 DNS 레코드를 등록할 수 없습니다.", "DDNS_SERVICE_REGISTER_FAILED", **result)
+        if blocking_skipped:
+            raise DomainError(409, "DDNS 도메인을 처리할 관리 서버를 찾을 수 없습니다.", "DDNS_SERVICE_ENDPOINT_NOT_MATCHED", **result)
         unchanged = [item for item in skipped if item.get("reason") == "public_ip_unchanged"]
         return {"status": "ok" if registered or unchanged else "skipped", **result}
 
@@ -1345,8 +1348,17 @@ class DomainDdns:
             if endpoint is None:
                 skipped.append({"domain": domain, "reason": "ddns_endpoint_not_matched"})
                 continue
+            existing = self._existing_registration(endpoint["id"], domain, env=env)
+            registered_status = str(metadata.get("ddns_status") or (existing or {}).get("status") or "").strip().lower()
+            remote_id = str(metadata.get("ddns_remote_record_id") or (existing or {}).get("remote_record_id") or "").strip()
+            if not remote_id and registered_status != "registered":
+                if existing:
+                    with connect(env=env) as connection:
+                        with connection.cursor() as cursor:
+                            cursor.execute("DELETE FROM ddns_registrations WHERE id = %s", (existing["id"],))
+                skipped.append({"domain": domain, "reason": "ddns_registration_not_found"})
+                continue
             try:
-                remote_id = str(metadata.get("ddns_remote_record_id") or "").strip()
                 target = remote_id or domain
                 delete_path = f"{(endpoint.get('registration_path') or DEFAULT_REGISTRATION_PATH).rstrip('/')}/{urlparse.quote(target, safe='')}"
                 response = _request(endpoint, "DELETE", delete_path)
