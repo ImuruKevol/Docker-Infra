@@ -181,7 +181,10 @@ main(class="space-y-5 px-5 py-5")
                                                 details(class="relative")
                                                     summary(class="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 [&::-webkit-details-marker]:hidden")
                                                         i(class="fa-solid fa-ellipsis-vertical")
-                                                    div(class="absolute right-0 z-20 mt-2 w-32 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900")
+                                                    div(class="absolute right-0 z-20 mt-2 w-36 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900")
+                                                        button(type="button", [attr.title]="runtimeContainerTerminalTitle(container)", (click)="openContainerTerminal(container)", [disabled]="busy() || !canOpenRuntimeContainerTerminal(container)", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-40 dark:text-sky-300 dark:hover:bg-sky-950/30")
+                                                            i(class="fa-solid fa-terminal w-4")
+                                                            span 터미널
                                                         button(type="button", [attr.title]="runtimeContainerActionTitle(container, 'start')", (click)="runRuntimeContainerAction(container, 'start')", [disabled]="busy() || !canRunRuntimeContainerAction(container, 'start')", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                                             i(class="fa-solid fa-play w-4")
                                                             span 실행
@@ -217,7 +220,10 @@ main(class="space-y-5 px-5 py-5")
                                                 details(class="relative")
                                                     summary(class="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 [&::-webkit-details-marker]:hidden")
                                                         i(class="fa-solid fa-ellipsis-vertical")
-                                                    div(class="absolute right-0 z-20 mt-2 w-32 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900")
+                                                    div(class="absolute right-0 z-20 mt-2 w-36 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900")
+                                                        button(type="button", [attr.title]="runtimeContainerTerminalTitle(container)", (click)="openContainerTerminal(container)", [disabled]="busy() || !canOpenRuntimeContainerTerminal(container)", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-40 dark:text-sky-300 dark:hover:bg-sky-950/30")
+                                                            i(class="fa-solid fa-terminal w-4")
+                                                            span 터미널
                                                         button(type="button", [attr.title]="runtimeContainerActionTitle(container, 'start')", (click)="runRuntimeContainerAction(container, 'start')", [disabled]="busy() || !canRunRuntimeContainerAction(container, 'start')", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                                             i(class="fa-solid fa-play w-4")
                                                             span 실행
@@ -725,6 +731,28 @@ div(*ngIf="runtimeAiModalOpen()", class="fixed inset-0 z-50 flex items-center ju
                 button(type="button", (click)="submitRuntimeAiRepair()", [disabled]="runtimeAiBusy()", class="inline-flex h-9 min-w-[126px] items-center justify-center gap-2 rounded-md bg-sky-600 px-3 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60")
                     i(class="fa-solid", [ngClass]="runtimeAiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
                     span {{runtimeAiBusy() ? '시작 중' : '백그라운드 시작'}}
+
+div(*ngIf="containerTerminalOpen()", class="fixed inset-0 z-50 flex items-center justify-center px-4 py-6")
+    div(class="absolute inset-0 bg-zinc-950/65", (click)="closeContainerTerminal()")
+    section(class="relative flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950 shadow-xl")
+        div(class="flex flex-col gap-3 border-b border-zinc-800 px-4 py-3 sm:flex-row sm:items-center sm:justify-between")
+            div(class="min-w-0")
+                div(class="flex flex-wrap items-center gap-2")
+                    h2(class="truncate text-base font-semibold text-zinc-50") {{containerTerminalTitle()}}
+                    span(class="inline-flex shrink-0 rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="containerTerminalConnected() ? statusClass('running') : (containerTerminalConnecting() ? statusClass('pending') : statusClass(''))") {{containerTerminalStatus()}}
+                p(class="mt-1 truncate text-xs text-zinc-400") {{containerTerminalSubtitle()}}
+                p(*ngIf="containerTerminalError()", class="mt-2 text-xs text-rose-300") {{containerTerminalError()}}
+            div(class="flex shrink-0 items-center gap-2")
+                button(type="button", (click)="connectContainerTerminal()", [disabled]="containerTerminalConnecting()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-700 px-2.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-900 disabled:opacity-50")
+                    i(class="fa-solid", [ngClass]="containerTerminalConnecting() ? 'fa-spinner fa-spin' : 'fa-plug'")
+                    span {{containerTerminalConnected() ? '다시 연결' : '연결'}}
+                button(type="button", (click)="clearContainerTerminal()", [disabled]="!containerTerminalConnected()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-700 px-2.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-900 disabled:opacity-50")
+                    i(class="fa-solid fa-eraser")
+                    span 지우기
+                button(type="button", (click)="closeContainerTerminal()", class="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100")
+                    i(class="fa-solid fa-xmark")
+        div(class="min-h-0 flex-1 p-3")
+            div(data-testid="services-container-terminal-host", class="min-h-[520px] rounded-md border border-zinc-800 bg-black")
 
 div(*ngIf="operationModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center px-4 py-6")
     div(class="absolute inset-0 bg-zinc-950/55", (click)="closeOperationModal()")

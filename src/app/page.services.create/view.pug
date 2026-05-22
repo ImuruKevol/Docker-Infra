@@ -287,9 +287,9 @@ main(class="space-y-5 px-5 py-5")
                     span 이전
                 div(class="flex items-center justify-end gap-2")
                     button(type="button", (click)="cancel()", [disabled]="busy()", class="inline-flex h-9 items-center rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800") 취소
-                    button(*ngIf="step() < 4", type="button", (click)="nextStep()", [disabled]="busy()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
-                        span 다음
-                        i(class="fa-solid fa-chevron-right")
+                    button(*ngIf="step() < 4", type="button", (click)="nextStep()", [disabled]="nextStepBusy()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                        span {{nextStepLabel()}}
+                        i(class="fa-solid", [ngClass]="nextStepIconClass()")
                     button(*ngIf="step() === 4", type="button", (click)="save(false)", [disabled]="busy() || preflightLoading()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                         i(class="fa-solid", [ngClass]="busy() ? 'fa-spinner fa-spin' : 'fa-floppy-disk'")
                         span 초안 저장

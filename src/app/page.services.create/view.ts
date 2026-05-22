@@ -258,15 +258,17 @@ export class Component implements OnInit {
         return 'text';
     }
 
-    public async applyTemplateDraft() {
+    public async applyTemplateDraft(options: any = {}) {
+        const advance = options.advance !== false;
+        const showSuccess = options.showSuccess !== false;
         const templateId = this.selectedTemplateId();
         if (!templateId) {
             await this.alert('사용할 템플릿을 선택해주세요.');
-            return;
+            return false;
         }
         if (!String(this.form.name || '').trim()) {
             await this.alert('서비스 이름을 입력해주세요.');
-            return;
+            return false;
         }
         this.templateBusy.set(true);
         const { code, data } = await wiz.call('prepare_template_draft', {
@@ -277,13 +279,17 @@ export class Component implements OnInit {
         if (code === 200) {
             this.importSource.set(null);
             this.applyComposeDraft(data, 'compose_template');
-            this.step.set(2);
-            await this.alert('템플릿 초안을 적용했습니다. 다음 단계에서 구성을 확인하세요.', 'success');
+            if (advance) this.step.set(2);
+            if (showSuccess) await this.alert('템플릿 초안을 적용했습니다. 다음 단계에서 구성을 확인하세요.', 'success');
+            this.templateBusy.set(false);
+            await this.service.render();
+            return true;
         } else {
             await this.alert(this.formatComposeError(data, '템플릿 초안을 적용할 수 없습니다.'));
         }
         this.templateBusy.set(false);
         await this.service.render();
+        return false;
     }
 
     public async loadAiModelOptions() {
@@ -806,11 +812,13 @@ export class Component implements OnInit {
         }
     }
 
-    public async applyManualCompose() {
+    public async applyManualCompose(options: any = {}) {
+        const advance = options.advance !== false;
+        const showSuccess = options.showSuccess !== false;
         const content = String(this.manualCompose || '').trim();
         if (!content) {
             await this.alert('Compose 내용을 입력해주세요.');
-            return;
+            return false;
         }
         this.manualBusy.set(true);
         const { code, data } = await wiz.call('prepare_compose_draft', {
@@ -822,13 +830,17 @@ export class Component implements OnInit {
             this.importSource.set(null);
             this.applyComposeDraft(data, 'manual_compose');
             this.manualComposeOpen.set(false);
-            this.step.set(2);
-            await this.alert('Compose 초안을 적용했습니다. 다음 단계에서 구성을 확인하세요.', 'success');
+            if (advance) this.step.set(2);
+            if (showSuccess) await this.alert('Compose 초안을 적용했습니다. 다음 단계에서 구성을 확인하세요.', 'success');
+            this.manualBusy.set(false);
+            await this.service.render();
+            return true;
         } else {
             await this.alert(this.formatComposeError(data, 'Compose 초안을 적용할 수 없습니다.'));
         }
         this.manualBusy.set(false);
         await this.service.render();
+        return false;
     }
 
     private applyAiServiceDraft(data: any) {
@@ -864,18 +876,20 @@ export class Component implements OnInit {
         this.preflightOk = false;
     }
 
-    public async generateServiceWithAi() {
+    public async generateServiceWithAi(options: any = {}) {
+        const advance = options.advance !== false;
+        const showSuccess = options.showSuccess !== false;
         await this.ensureAiModelOptions();
         if (!this.hasAiModels()) {
             this.manualComposeOpen.set(true);
             await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
             await this.service.render();
-            return;
+            return false;
         }
         const intent = this.aiIntentText();
         if (!intent) {
             await this.alert('만들고 싶은 서비스를 한 줄 이상 입력해주세요.');
-            return;
+            return false;
         }
         await this.ensureDomainOptions(true);
         this.aiBusy.set(true);
@@ -902,13 +916,17 @@ export class Component implements OnInit {
                 this.aiResult = data;
                 this.applyAiServiceDraft(data);
             });
-            this.step.set(2);
-            await this.alert(this.aiResult?.summary || 'AI 서비스 구성을 적용했습니다. 다음 단계에서 검토하세요.', 'success');
+            if (advance) this.step.set(2);
+            if (showSuccess) await this.alert(this.aiResult?.summary || 'AI 서비스 구성을 적용했습니다. 다음 단계에서 검토하세요.', 'success');
+            this.aiBusy.set(false);
+            await this.service.render();
+            return true;
         } catch (error: any) {
             await this.alert(error?.message || 'AI 서비스 구성을 생성할 수 없습니다.');
         }
         this.aiBusy.set(false);
         await this.service.render();
+        return false;
     }
 
     public async setStep(step: StepId) {
@@ -929,7 +947,44 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
+    public nextStepLabel() {
+        if (this.step() !== 1) return '다음';
+        if (this.creationMode() === 'template') return this.templateBusy() ? '적용 중' : '템플릿 적용 후 다음';
+        if (this.creationMode() === 'ai') return this.aiBusy() ? '생성 중' : 'AI 생성 후 다음';
+        if (this.creationMode() === 'manual') return this.manualBusy() ? '적용 중' : 'Compose 적용 후 다음';
+        return '다음';
+    }
+
+    public nextStepBusy() {
+        if (this.busy()) return true;
+        if (this.step() !== 1) return false;
+        return this.templateBusy() || this.templateLoading() || this.aiBusy() || this.manualBusy();
+    }
+
+    public nextStepIconClass() {
+        return this.nextStepBusy() ? 'fa-spinner fa-spin' : 'fa-chevron-right';
+    }
+
     public async nextStep() {
+        if (this.nextStepBusy()) return;
+        if (this.step() === 1) {
+            if (this.creationMode() === 'template') {
+                await this.applyTemplateDraft();
+                return;
+            }
+            if (this.creationMode() === 'ai') {
+                if (this.baseContent.trim() && this.draftSource() === 'ai_draft') {
+                    await this.setStep(2);
+                    return;
+                }
+                await this.generateServiceWithAi();
+                return;
+            }
+            if (this.creationMode() === 'manual') {
+                await this.applyManualCompose();
+                return;
+            }
+        }
         await this.setStep(Math.min(4, this.step() + 1) as StepId);
     }
 
@@ -938,12 +993,12 @@ export class Component implements OnInit {
     }
 
     public async validateStep(step: StepId = this.step()) {
-        if (step === 1 && !this.baseContent.trim()) {
-            await this.alert(this.hasAiModels() ? '템플릿, AI 또는 직접 작성으로 서비스 초안을 만들어주세요.' : '템플릿을 적용하거나 Compose 초안을 직접 작성해 적용해주세요.');
-            return false;
-        }
         if (step === 1 && !String(this.form.name || '').trim()) {
             await this.alert('서비스 이름을 입력해주세요.');
+            return false;
+        }
+        if (step === 1 && !this.baseContent.trim()) {
+            await this.alert(this.hasAiModels() ? '템플릿, AI 또는 직접 작성으로 서비스 초안을 만들어주세요.' : '템플릿을 적용하거나 Compose 초안을 직접 작성해 적용해주세요.');
             return false;
         }
         if (step === 2) {

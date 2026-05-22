@@ -36,13 +36,16 @@ def _truthy(value):
 
 
 def _domain_match(domain, pattern):
-    domain = str(domain or "").strip().lower()
-    pattern = str(pattern or "").strip().lower()
+    domain = str(domain or "").strip().lower().strip(".")
+    pattern = str(pattern or "").strip().lower().strip(".")
     if not domain or not pattern:
         return False
     if pattern.startswith("*."):
-        suffix = pattern[1:]
-        return domain.endswith(suffix) and domain != suffix[1:]
+        suffix = pattern[2:]
+        if not suffix or not domain.endswith(f".{suffix}"):
+            return False
+        wildcard_label = domain[: -(len(suffix) + 1)]
+        return bool(wildcard_label) and "." not in wildcard_label
     return domain == pattern
 
 

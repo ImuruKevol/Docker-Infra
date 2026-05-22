@@ -1,5 +1,8 @@
-import { OnDestroy, OnInit, signal } from '@angular/core';
+import { HostListener, OnDestroy, OnInit, signal } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 
 type EditSection = 'basic' | 'components' | 'domain' | 'advanced' | 'ai';
 type DetailTab = 'overview' | 'logs' | 'source' | 'files' | 'versions';
@@ -70,6 +73,12 @@ export class Component implements OnInit, OnDestroy {
     public operationModalOpen = signal<boolean>(false);
     public operationBusy = signal<boolean>(false);
     public operationDetail = signal<any>(null);
+    public containerTerminalOpen = signal<boolean>(false);
+    public containerTerminalConnecting = signal<boolean>(false);
+    public containerTerminalConnected = signal<boolean>(false);
+    public containerTerminalStatus = signal<string>('연결되지 않음');
+    public containerTerminalError = signal<string>('');
+    public containerTerminalTarget = signal<any>(null);
     public serviceForm: any = this.emptyForm();
     public compose: any = this.emptyCompose();
     public envVars: any[] = [];
@@ -104,6 +113,10 @@ export class Component implements OnInit, OnDestroy {
     private supportOptionsLoaded = false;
     private supportOptionsRequest: Promise<boolean> | null = null;
     private themeObserver: MutationObserver | null = null;
+    private containerTerminalRoom = '';
+    private containerTerminalSocket: any = null;
+    private containerTerminalInstance: Terminal | null = null;
+    private containerTerminalFitAddon: FitAddon | null = null;
 
     constructor(public service: Service) { }
 
@@ -120,6 +133,12 @@ export class Component implements OnInit, OnDestroy {
         this.stopOperationPolling();
         this.stopActiveOperationPolling();
         this.stopThemeObserver();
+        this.disconnectContainerTerminal(true);
+    }
+
+    @HostListener('window:resize')
+    public handleWindowResize() {
+        this.fitContainerTerminal();
     }
 
     private emptyForm() {
@@ -164,7 +183,10 @@ export class Component implements OnInit, OnDestroy {
 
     private startThemeObserver() {
         if (typeof MutationObserver === 'undefined') return;
-        this.themeObserver = new MutationObserver(() => this.syncAdvancedEditorTheme());
+        this.themeObserver = new MutationObserver(() => {
+            this.syncAdvancedEditorTheme();
+            this.applyContainerTerminalTheme();
+        });
         this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     }
 
@@ -191,6 +213,7 @@ export class Component implements OnInit, OnDestroy {
 
     private applyDetail(data: any) {
         if (!data) {
+            this.disconnectContainerTerminal(true);
             this.detail.set(null);
             this.selected.set(null);
             this.detailLoading.set(false);
@@ -443,6 +466,9 @@ export class Component implements OnInit, OnDestroy {
     public async selectService(service: any, silent: boolean = false) {
         if (!service?.id) return;
         const requestSeq = ++this.detailRequestSeq;
+        if (this.selected()?.id !== service.id) {
+            this.disconnectContainerTerminal(true);
+        }
         this.selected.set(service);
         if (this.detail()?.service?.id !== service.id) {
             this.detail.set(null);
@@ -3191,6 +3217,225 @@ export class Component implements OnInit, OnDestroy {
             await this.alert(data?.message || '구성요소 동작을 실행할 수 없습니다.');
         }
         await this.service.render();
+    }
+
+    private containerTerminalTheme() {
+        return {
+            background: '#000000',
+            foreground: '#f5f5f5',
+            cursor: '#f5f5f5',
+            cursorAccent: '#000000',
+            selectionBackground: '#264f78',
+            black: '#000000',
+            red: '#cd3131',
+            green: '#0dbc79',
+            yellow: '#e5e510',
+            blue: '#2472c8',
+            magenta: '#bc3fbc',
+            cyan: '#11a8cd',
+            white: '#e5e5e5',
+            brightBlack: '#666666',
+            brightRed: '#f14c4c',
+            brightGreen: '#23d18b',
+            brightYellow: '#f5f543',
+            brightBlue: '#3b8eea',
+            brightMagenta: '#d670d6',
+            brightCyan: '#29b8db',
+            brightWhite: '#ffffff',
+        };
+    }
+
+    private applyContainerTerminalTheme() {
+        if (!this.containerTerminalInstance) return;
+        this.containerTerminalInstance.options.theme = this.containerTerminalTheme();
+    }
+
+    private async ensureContainerTerminalMounted() {
+        await this.service.render();
+        const host = document.querySelector('[data-testid="services-container-terminal-host"]') as HTMLElement | null;
+        if (!host) return;
+        if (this.containerTerminalInstance) {
+            this.applyContainerTerminalTheme();
+            this.fitContainerTerminal();
+            return;
+        }
+        host.innerHTML = '';
+        this.containerTerminalInstance = new Terminal({
+            allowProposedApi: false,
+            convertEol: true,
+            cursorBlink: true,
+            scrollback: 5000,
+            fontSize: 13,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace',
+            theme: this.containerTerminalTheme(),
+            allowTransparency: false,
+            drawBoldTextInBrightColors: true,
+        });
+        this.containerTerminalFitAddon = new FitAddon();
+        this.containerTerminalInstance.loadAddon(this.containerTerminalFitAddon);
+        this.containerTerminalInstance.loadAddon(new WebLinksAddon());
+        this.containerTerminalInstance.open(host);
+        this.containerTerminalInstance.focus();
+    }
+
+    public fitContainerTerminal() {
+        try {
+            this.containerTerminalFitAddon?.fit();
+        } catch (error) {
+            return;
+        }
+        if (!this.containerTerminalSocket || !this.containerTerminalConnected() || !this.containerTerminalInstance) return;
+        this.containerTerminalSocket.emit('resize', {
+            namespace: this.containerTerminalRoom,
+            cols: this.containerTerminalInstance.cols,
+            rows: this.containerTerminalInstance.rows,
+        });
+    }
+
+    public clearContainerTerminal() {
+        this.containerTerminalInstance?.clear();
+    }
+
+    public canOpenRuntimeContainerTerminal(container: any) {
+        const signal = this.containerSignal(container);
+        return Boolean(container?.id && container?.node_id && ['running', 'healthy', 'unhealthy', 'starting'].includes(signal));
+    }
+
+    public runtimeContainerTerminalTitle(container: any) {
+        if (this.canOpenRuntimeContainerTerminal(container)) return `${this.containerDisplayName(container)} 터미널 접속`;
+        if (!container?.node_id) return '서버 정보를 확인할 수 없어 터미널을 열 수 없습니다.';
+        return '실행 중인 컨테이너만 터미널에 접속할 수 있습니다.';
+    }
+
+    public containerTerminalTitle() {
+        const target = this.containerTerminalTarget();
+        return `${this.containerDisplayName(target)} 터미널`;
+    }
+
+    public containerTerminalSubtitle() {
+        const target = this.containerTerminalTarget();
+        const node = target?.node_name || target?.node_host || '서버 확인 필요';
+        const shell = this.containerTerminalConnected() ? this.containerTerminalStatus() : 'bash 우선 연결';
+        return `${node} · ${shell}`;
+    }
+
+    public async openContainerTerminal(container: any) {
+        if (!this.canOpenRuntimeContainerTerminal(container)) {
+            await this.alert(this.runtimeContainerTerminalTitle(container));
+            return;
+        }
+        this.disconnectContainerTerminal(true);
+        this.containerTerminalTarget.set(container);
+        this.containerTerminalOpen.set(true);
+        this.containerTerminalStatus.set('터미널 연결 중');
+        this.containerTerminalError.set('');
+        await this.service.render();
+        await this.connectContainerTerminal();
+    }
+
+    public closeContainerTerminal() {
+        this.disconnectContainerTerminal(true);
+        this.containerTerminalOpen.set(false);
+        this.containerTerminalTarget.set(null);
+    }
+
+    public disconnectContainerTerminal(silent: boolean = false) {
+        if (this.containerTerminalSocket) {
+            try {
+                this.containerTerminalSocket.emit('close', { namespace: this.containerTerminalRoom });
+            } catch (error) {
+                // ignore socket close errors
+            }
+            try {
+                this.containerTerminalSocket.close();
+            } catch (error) {
+                // ignore disconnect errors
+            }
+        }
+        this.containerTerminalSocket = null;
+        this.containerTerminalRoom = '';
+        this.containerTerminalConnected.set(false);
+        this.containerTerminalConnecting.set(false);
+        this.containerTerminalError.set('');
+        this.containerTerminalStatus.set(silent ? '연결되지 않음' : '연결 종료됨');
+        if (this.containerTerminalInstance) {
+            this.containerTerminalInstance.dispose();
+            this.containerTerminalInstance = null;
+            this.containerTerminalFitAddon = null;
+        }
+    }
+
+    public async connectContainerTerminal() {
+        const target = this.containerTerminalTarget();
+        const serviceId = this.selected()?.id;
+        if (!target?.id || !target?.node_id || !serviceId) return;
+        this.disconnectContainerTerminal(true);
+        this.containerTerminalConnecting.set(true);
+        this.containerTerminalConnected.set(false);
+        this.containerTerminalError.set('');
+        this.containerTerminalStatus.set('터미널 연결 중');
+        await this.ensureContainerTerminalMounted();
+        if (!this.containerTerminalInstance) {
+            this.containerTerminalConnecting.set(false);
+            this.containerTerminalError.set('터미널 영역을 초기화할 수 없습니다.');
+            await this.service.render();
+            return;
+        }
+
+        const socket = wiz.socket();
+        const room = `services-container-terminal-${target.node_id}-${target.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        this.containerTerminalSocket = socket;
+        this.containerTerminalRoom = room;
+        this.containerTerminalInstance.clear();
+        this.containerTerminalInstance.focus();
+        this.containerTerminalInstance.onData((input) => {
+            socket.emit('ptyinput', { namespace: room, input });
+        });
+        this.containerTerminalInstance.onResize(({ cols, rows }) => {
+            socket.emit('resize', { namespace: room, cols, rows });
+        });
+
+        socket.on('connect', () => {
+            socket.emit('join', { namespace: room });
+            socket.emit('create', {
+                namespace: room,
+                service_id: serviceId,
+                node_id: target.node_id,
+                container_id: target.id,
+                cols: this.containerTerminalInstance?.cols || 120,
+                rows: this.containerTerminalInstance?.rows || 32,
+            });
+        });
+        socket.on('terminal_status', async (data: any) => {
+            if (room !== this.containerTerminalRoom) return;
+            this.containerTerminalConnecting.set(false);
+            this.containerTerminalConnected.set(true);
+            this.containerTerminalStatus.set(`${data?.shell || 'shell'} 연결됨`);
+            this.fitContainerTerminal();
+            await this.service.render();
+        });
+        socket.on('ptyoutput', (data: any) => {
+            if (room !== this.containerTerminalRoom || !this.containerTerminalInstance) return;
+            this.containerTerminalInstance.write(String(data?.output || ''));
+        });
+        socket.on('terminal_error', async (data: any) => {
+            if (room !== this.containerTerminalRoom) return;
+            this.containerTerminalConnecting.set(false);
+            this.containerTerminalConnected.set(false);
+            this.containerTerminalError.set(data?.message || '터미널을 연결할 수 없습니다.');
+            this.containerTerminalStatus.set('연결 실패');
+            await this.service.render();
+        });
+        socket.on('exit', async (data: any) => {
+            if (room !== this.containerTerminalRoom) return;
+            this.containerTerminalConnecting.set(false);
+            this.containerTerminalConnected.set(false);
+            this.containerTerminalStatus.set(data?.closed ? '연결 종료됨' : `세션 종료 (${data?.exit_code ?? '-'})`);
+            if (this.containerTerminalInstance) {
+                this.containerTerminalInstance.write('\r\n[세션 종료]\r\n');
+            }
+            await this.service.render();
+        });
     }
 
     public runtimeDomains() {

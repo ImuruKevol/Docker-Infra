@@ -302,3 +302,6 @@
 | 2026-05-21 | 300 | 서비스 상세 느린 부가 정보 API 분리 | [상세](devlog/2026-05-21/300-service-detail-api-extras-split.md) |
 | 2026-05-21 | 301 | 템플릿 상세 화면 API 초기화 경량화와 브라우저 속도 검증 | [상세](devlog/2026-05-21/301-template-detail-api-fast-path.md) |
 | 2026-05-21 | 302 | 서비스 상세 fast path와 AI 옵션 지연 로딩 적용 | [상세](devlog/2026-05-21/302-service-detail-fast-path-ai-lazy-load.md) |
+| 2026-05-21 | 303 | 서비스 생성 다음 버튼을 생성 방식별 주 동작과 연결 | [상세](devlog/2026-05-21/303-service-create-next-primary-action.md) |
+| 2026-05-21 | 304 | DDNS SSL 와일드카드 매칭과 certbot fallback 보강 | [상세](devlog/2026-05-21/304-ddns-ssl-wildcard-certbot-fallback.md) |
+| 2026-05-22 | 001 | 서비스 컨테이너 웹 터미널 exec 기능 추가 | [상세](devlog/2026-05-22/001-service-container-terminal-exec.md) |

@@ -321,7 +321,10 @@ class ServiceNginx:
         for row in domains:
             domain = str(row.get("domain") or "").strip().lower()
             metadata = dict(row.get("metadata") or {})
-            if row.get("ssl_mode") != "certbot" and self_signed_test is not True:
+            ssl_mode = str(row.get("ssl_mode") or "").strip().lower()
+            uses_ddns = metadata.get("dns_provider") == "ddns" or bool(metadata.get("ddns_endpoint_id"))
+            needs_managed_certificate = ssl_mode == "certbot" or (uses_ddns and ssl_mode in {"existing", "upload"})
+            if not needs_managed_certificate and self_signed_test is not True:
                 continue
             if certificates.valid_cert(domain, zone_id=metadata.get("zone_id"), env=env):
                 continue
