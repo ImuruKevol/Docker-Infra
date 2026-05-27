@@ -51,7 +51,7 @@ def _normalize_namespace(value):
 class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMixin, ServiceDeployMixin, ServiceMigrationMixin, ServiceDeleteMixin, ServiceStatusMixin, ServiceRuntimeMixin, ServiceCertbotMixin):
     ServiceError = ServiceError
     ComposeValidationError = validator.ComposeValidationError
-    IMPORT_WARNING_CODES = {"FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"}
+    IMPORT_WARNING_CODES = {"FORBIDDEN_CONTAINER_NAME"}
 
     def service_root(self):
         status = setup.status(include_checks=False)

@@ -16,7 +16,7 @@ class TemplateAIContract:
             "required": [
                 "root object",
                 "services object with at least one service",
-                "each service has a healthcheck unless an external health_check override exists",
+                "healthchecks are recommended when practical, but not required",
             ],
             "forbidden": [
                 "services.*.container_name",

@@ -791,6 +791,33 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("인증서 적용 서비스", domains_template)
         self.assertIn("certificateKeyText", domains_view)
 
+    def test_services_api_handles_reloaded_service_error_shapes(self):
+        spec = importlib.util.spec_from_file_location("services_api_contract", SERVICES_API)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        class ReloadedComposeValidationError(Exception):
+            status_code = 409
+            message = "Compose validation failed."
+            error_code = "COMPOSE_VALIDATION_FAILED"
+            details = [{"path": "networks.default", "error_code": "UNSUPPORTED_NETWORK"}]
+            warning = True
+            can_continue = True
+
+        code, payload = module._raise_unless_service_error_like(ReloadedComposeValidationError())
+
+        self.assertEqual(code, 409)
+        self.assertEqual(payload["error_code"], "COMPOSE_VALIDATION_FAILED")
+        self.assertEqual(payload["details"][0]["error_code"], "UNSUPPORTED_NETWORK")
+        self.assertTrue(payload["warning"])
+        self.assertTrue(payload["can_continue"])
+
+        services_api = SERVICES_API.read_text(encoding="utf-8")
+        for function_name in ["deploy_service", "save_nginx_config", "save_compose_content"]:
+            block = services_api[services_api.index(f"def {function_name}():"):]
+            block = block[: block.find("\ndef ", 1) if block.find("\ndef ", 1) != -1 else len(block)]
+            self.assertIn("_raise_unless_service_error_like", block)
+
     def test_certbot_issue_waits_for_runtime_and_exposes_renewal_ops(self):
         deploy = DEPLOY_MODEL.read_text(encoding="utf-8")
         deploy_targets = DEPLOY_TARGETS_MODEL.read_text(encoding="utf-8")

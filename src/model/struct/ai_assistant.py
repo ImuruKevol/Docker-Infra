@@ -307,7 +307,7 @@ class AIAssistant:
             "required": [
                 "root object",
                 "services object with at least one service",
-                "each service has a healthcheck unless an external health_check override exists",
+                "healthchecks are recommended when practical, but not required",
             ],
             "forbidden": [
                 "services.*.container_name",
@@ -3109,7 +3109,7 @@ class AIAssistant:
                 "filename": "docker-compose.yaml",
                 "content": rendered,
                 "allow_warnings": True,
-                "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],
+                "warning_codes": ["FORBIDDEN_CONTAINER_NAME"],
             }
         )
         components = services_wizard.components_from_content(rendered, metadata=template.get("metadata") or {})

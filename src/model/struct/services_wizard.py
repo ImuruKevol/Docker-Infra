@@ -184,7 +184,7 @@ class ServicesWizard:
             "filename": filename,
             "content": content,
             "allow_warnings": True,
-            "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],
+            "warning_codes": ["FORBIDDEN_CONTAINER_NAME"],
         })
         components = self.components_from_content(content)
         checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -317,7 +317,7 @@ class ServicesWizard:
             "filename": filename,
             "content": content,
             "allow_warnings": True,
-            "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],
+            "warning_codes": ["FORBIDDEN_CONTAINER_NAME"],
         })
         components = self.components_from_content(content)
         return {
@@ -505,7 +505,7 @@ class ServicesWizard:
         if self._is_import_source(body) or self._is_template_source(body):
             return {
                 "allow_warnings": True,
-                "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],
+                "warning_codes": ["FORBIDDEN_CONTAINER_NAME"],
             }
         return {}
 

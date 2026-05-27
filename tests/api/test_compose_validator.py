@@ -1,3 +1,4 @@
+import importlib.util
 import unittest
 from pathlib import Path
 
@@ -7,6 +8,8 @@ from tests.fixtures.api_client import DockerInfraApiClient, password_only_login
 ROOT = Path(__file__).resolve().parents[2]
 ROUTE_ROOT = ROOT / "src" / "route" / "api-compose-validate"
 OPENAPI_JSON = ROOT / "docs" / "api" / "openapi.json"
+VALIDATOR_MODEL = ROOT / "src" / "model" / "struct" / "compose_validator.py"
+RULES_MODEL = ROOT / "src" / "model" / "struct" / "compose_rules.py"
 
 
 class ComposeValidateStaticContractTest(unittest.TestCase):
@@ -25,6 +28,35 @@ class ComposeValidateStaticContractTest(unittest.TestCase):
             "ComposeValidationErrorDetail",
         ]:
             self.assertIn(token, document)
+
+    def test_healthcheck_is_not_required_by_validator(self):
+        rules_spec = importlib.util.spec_from_file_location("compose_rules_contract", RULES_MODEL)
+        rules_module = importlib.util.module_from_spec(rules_spec)
+        rules_spec.loader.exec_module(rules_module)
+
+        class FakeWiz:
+            def model(self, name):
+                if name == "struct/compose_rules":
+                    return rules_module.Model
+                raise AssertionError(f"unexpected model: {name}")
+
+        validator_spec = importlib.util.spec_from_file_location("compose_validator_contract", VALIDATOR_MODEL)
+        validator_module = importlib.util.module_from_spec(validator_spec)
+        validator_module.wiz = FakeWiz()
+        validator_spec.loader.exec_module(validator_module)
+
+        validation = validator_module.Model.validate({
+            "namespace": "demo_app",
+            "filename": "docker-compose.yaml",
+            "content": """
+services:
+  web:
+    image: nginx:1.27
+""",
+        })
+
+        self.assertTrue(validation["valid"])
+        self.assertEqual(validation["warnings"], [])
 
 
 class ComposeValidateLiveFlowTest(unittest.TestCase):

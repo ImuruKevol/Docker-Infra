@@ -88,7 +88,7 @@ class ServiceCompose:
             "filename": payload.get("filename") or "docker-compose.yaml",
             "content": payload.get("content"),
             "allow_warnings": True,
-            "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],
+            "warning_codes": ["FORBIDDEN_CONTAINER_NAME"],
         })
         compose = validation["normalized"]
         services = compose.get("services") or {}

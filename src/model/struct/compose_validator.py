@@ -12,7 +12,6 @@ DEFAULT_RESTART_POLICY = rules.DEFAULT_RESTART_POLICY
 ComposeValidationError = rules.ComposeValidationError
 _error = rules.error
 _merge_defaults = rules.merge_defaults
-_is_enabled_healthcheck = rules.is_enabled_healthcheck
 _has_health_check_override = rules.has_health_check_override
 _load_compose = rules.load_compose
 _network_names = rules.network_names
@@ -150,13 +149,6 @@ class ComposeValidator:
                     )
                 )
 
-            if not _is_enabled_healthcheck(service) and not has_health_check:
-                issue = _error(
-                    f"{service_path}.healthcheck",
-                    "HEALTHCHECK_REQUIRED",
-                    "Compose healthcheck 또는 서비스 health check가 필요합니다.",
-                )
-                (warnings if "HEALTHCHECK_REQUIRED" in warning_codes else errors).append(issue)
             deploy = service.get("deploy")
             if deploy is None:
                 deploy = {}

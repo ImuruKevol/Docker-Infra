@@ -618,7 +618,7 @@ export class Component implements OnInit {
                 rows: [
                     { label: '변수', value: `사용자 입력값은 ${placeholder} 형식으로 작성하고 기본값/Schema에 같은 이름으로 등록` },
                     { label: '구성', value: 'container_name, hostname, 등록 서버 ID, 실제 도메인처럼 배포 환경에 묶이는 값은 제외' },
-                    { label: '검증', value: '기본값으로 렌더링했을 때 Docker Compose 검증을 통과하고 필수 healthcheck를 포함' },
+                    { label: '검증', value: '기본값으로 렌더링했을 때 Docker Compose 검증을 통과하고 필요한 경우 healthcheck를 포함' },
                 ],
             },
             values: {

@@ -14,11 +14,24 @@ def _is_service_error_like(exc):
 
 
 def _service_error_response(exc):
-    return getattr(exc, "status_code", 500), {
+    payload = {
         "message": getattr(exc, "message", str(exc)),
         "error_code": getattr(exc, "error_code", "SERVICE_ERROR"),
         **(getattr(exc, "extra", {}) or {}),
     }
+    if hasattr(exc, "details"):
+        payload["details"] = getattr(exc, "details", []) or []
+    if hasattr(exc, "warning"):
+        payload["warning"] = bool(getattr(exc, "warning", False))
+    if hasattr(exc, "can_continue"):
+        payload["can_continue"] = bool(getattr(exc, "can_continue", False))
+    return getattr(exc, "status_code", 500), payload
+
+
+def _raise_unless_service_error_like(exc):
+    if not _is_service_error_like(exc):
+        raise exc
+    return _service_error_response(exc)
 
 
 def _request_payload():
@@ -426,6 +439,8 @@ def deploy_service():
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _raise_unless_service_error_like(exc)
 
     wiz.response.status(code, **payload)
 
@@ -711,6 +726,8 @@ def save_nginx_config():
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _raise_unless_service_error_like(exc)
     wiz.response.status(code, **payload)
 
 
@@ -731,6 +748,8 @@ def save_compose_content():
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _raise_unless_service_error_like(exc)
     wiz.response.status(code, **payload)
 
 

@@ -305,3 +305,5 @@
 | 2026-05-21 | 303 | 서비스 생성 다음 버튼을 생성 방식별 주 동작과 연결 | [상세](devlog/2026-05-21/303-service-create-next-primary-action.md) |
 | 2026-05-21 | 304 | DDNS SSL 와일드카드 매칭과 certbot fallback 보강 | [상세](devlog/2026-05-21/304-ddns-ssl-wildcard-certbot-fallback.md) |
 | 2026-05-22 | 001 | 서비스 컨테이너 웹 터미널 exec 기능 추가 | [상세](devlog/2026-05-22/001-service-container-terminal-exec.md) |
+| 2026-05-27 | 001 | Compose/Nginx 탭 서비스 예외 응답 보강 | [상세](devlog/2026-05-27/001-compose-nginx-service-error-response.md) |
+| 2026-05-27 | 002 | Compose healthcheck 필수 검증 제거 | [상세](devlog/2026-05-27/002-compose-healthcheck-optional.md) |

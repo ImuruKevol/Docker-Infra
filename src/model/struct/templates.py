@@ -485,7 +485,7 @@ class Templates:
                 "filename": "docker-compose.yaml",
                 "content": rendered["rendered"],
                 "allow_warnings": True,
-                "warning_codes": ["FORBIDDEN_CONTAINER_NAME", "HEALTHCHECK_REQUIRED"],
+                "warning_codes": ["FORBIDDEN_CONTAINER_NAME"],
             }
         )
         return {**rendered, "validation": validation}
