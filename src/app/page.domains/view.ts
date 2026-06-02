@@ -51,7 +51,8 @@ export class Component implements OnInit {
 
     public async ngOnInit() {
         await this.service.init();
-        await this.load();
+        const zoneId = this.routeZoneId();
+        await this.load(zoneId, true);
     }
 
     public async alert(message: string, status: string = 'error') {
@@ -62,7 +63,21 @@ export class Component implements OnInit {
         return await this.service.modal.show({ title: '', message, cancel: true, cancelLabel: '취소', actionBtn: status, action, status });
     }
 
-    public async load(selectZoneId: string = '') {
+    private routeZoneId() {
+        return this.service.routeSegment('zone_id') || this.service.queryParam('zone_id') || this.service.queryParam('selected_zone_id');
+    }
+
+    private zoneDetailRoute(zoneId: string = this.selectedZoneId()) {
+        const encodedId = this.service.encodeRouteSegment(zoneId);
+        return encodedId ? `/domains/${encodedId}` : '/domains';
+    }
+
+    private async syncZoneRoute(zoneId: string = this.selectedZoneId(), replace: boolean = false) {
+        const target = this.zoneDetailRoute(zoneId);
+        if (this.service.currentPath() !== target) await this.service.routeTo(target, replace);
+    }
+
+    public async load(selectZoneId: string = '', replaceRoute: boolean = false) {
         this.loading.set(true);
         this.error.set('');
         await this.service.render();
@@ -77,8 +92,11 @@ export class Component implements OnInit {
             const currentZoneId = this.selectedZoneId();
             const nextZoneId = selectZoneId || (zones.some((zone: any) => zone.id === currentZoneId) ? currentZoneId : '') || zones[0]?.id || '';
             this.selectedZoneId.set(nextZoneId);
-            if (nextZoneId) await this.loadDetail(nextZoneId);
-            else this.detail.set(this.emptyDetail());
+            if (nextZoneId) await this.loadDetail(nextZoneId, replaceRoute);
+            else {
+                this.detail.set(this.emptyDetail());
+                if (selectZoneId) await this.syncZoneRoute('', true);
+            }
         } else {
             this.error.set(data?.message || '도메인 정보를 불러올 수 없습니다.');
             this.ddnsWarning.set('');
@@ -180,10 +198,11 @@ export class Component implements OnInit {
         return labels[endpoint?.status] || endpoint?.status || '-';
     }
 
-    public async loadDetail(zoneId: string) {
+    public async loadDetail(zoneId: string, replaceRoute: boolean = false) {
         if (!zoneId) return;
         this.detailLoading.set(true);
         this.selectedZoneId.set(zoneId);
+        await this.syncZoneRoute(zoneId, replaceRoute);
         const { code, data } = await wiz.call('detail', { zone_id: zoneId });
         if (code === 200) {
             this.detail.set({ ...this.emptyDetail(), ...data });
@@ -508,7 +527,7 @@ export class Component implements OnInit {
 
     public serviceDetailHref(item: any) {
         const serviceId = String(item?.service_id || '').trim();
-        return serviceId ? `/services?service_id=${encodeURIComponent(serviceId)}` : '/services';
+        return serviceId ? `/services/${this.service.encodeRouteSegment(serviceId)}` : '/services';
     }
 
     public certificateAppliedServiceLinks() {

@@ -62,7 +62,8 @@ export class Component implements OnInit {
     public async ngOnInit() {
         await this.service.init();
         this.syncEditorTheme();
-        await this.load();
+        const templateId = this.routeTemplateId();
+        await this.load(true, templateId, true);
         this.loadAuxiliaryData().catch(() => null);
     }
 
@@ -148,6 +149,7 @@ export class Component implements OnInit {
     private resetNewTemplateFlow(mode: NewTemplateMode = 'choose') {
         this.detailLoadRequestId += 1;
         this.resetNewDraftState();
+        void this.syncTemplateRoute('');
         this.newTemplateMode.set(mode);
         this.newTemplateDraftReady.set(false);
         this.cloneLoading.set(false);
@@ -281,7 +283,21 @@ export class Component implements OnInit {
         this.setActiveTab('readme');
     }
 
-    public async load(selectFirst: boolean = true) {
+    private routeTemplateId() {
+        return this.service.routeSegment('template_id') || this.service.queryParam('template_id') || this.service.queryParam('selected_template_id');
+    }
+
+    private templateDetailRoute(templateId: string = this.selectedId()) {
+        const encodedId = this.service.encodeRouteSegment(templateId);
+        return encodedId ? `/templates/${encodedId}` : '/templates';
+    }
+
+    private async syncTemplateRoute(templateId: string = this.selectedId(), replace: boolean = false) {
+        const target = this.templateDetailRoute(templateId);
+        if (this.service.currentPath() !== target) await this.service.routeTo(target, replace);
+    }
+
+    public async load(selectFirst: boolean = true, preferredTemplateId: string = '', replaceRoute: boolean = false) {
         this.loading.set(true);
         this.error.set('');
         this.detailLoading.set(false);
@@ -297,10 +313,11 @@ export class Component implements OnInit {
         const { code, data } = await wiz.call('load', {});
         if (code === 200) {
             this.templates.set(data.templates || []);
-            const first = this.templates()[0];
+            const first = this.templates().find((item: any) => this.templateItemId(item) === preferredTemplateId) || this.templates()[0];
             this.loading.set(false);
             await this.service.render();
-            if (selectFirst && first) this.selectInitialTemplate(first.id || first.namespace);
+            if (selectFirst && first) this.selectInitialTemplate(first.id || first.namespace, replaceRoute);
+            else if (preferredTemplateId) await this.syncTemplateRoute('', true);
             return;
         } else {
             this.error.set(data?.message || '템플릿 목록을 불러올 수 없습니다.');
@@ -309,9 +326,9 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
-    private async selectInitialTemplate(templateId: string) {
+    private async selectInitialTemplate(templateId: string, replaceRoute: boolean = false) {
         try {
-            await this.selectTemplate(templateId, true, true);
+            await this.selectTemplate(templateId, true, true, replaceRoute);
         } catch (error: any) {
             this.detailLoading.set(false);
             this.detailLoadError.set(error?.message || '템플릿 정보를 불러올 수 없습니다.');
@@ -331,7 +348,7 @@ export class Component implements OnInit {
         return this.templateItemId(item) === this.selectedId();
     }
 
-    public async selectTemplate(templateId: string, render: boolean = true, force: boolean = false) {
+    public async selectTemplate(templateId: string, render: boolean = true, force: boolean = false, replaceRoute: boolean = false) {
         if (!templateId) return;
         const key = String(templateId || '').trim();
         const requestId = ++this.detailLoadRequestId;
@@ -341,6 +358,7 @@ export class Component implements OnInit {
         this.cloneSourceId.set('');
         this.cloneLoading.set(false);
         this.selectedId.set(key);
+        await this.syncTemplateRoute(key, replaceRoute);
         this.preview.set(null);
         this.detailLoadError.set('');
         const cached = force ? null : this.detailCacheItem(key);
@@ -405,6 +423,7 @@ export class Component implements OnInit {
     }
 
     public newTemplate() {
+        void this.syncTemplateRoute('');
         this.defaultTemplateDraft();
     }
 

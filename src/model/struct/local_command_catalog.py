@@ -921,19 +921,7 @@ DOCKER_IMAGE_USAGE_SCRIPT = scripts.DOCKER_IMAGE_USAGE_SCRIPT
 DOCKER_IMAGE_STORAGE_SCRIPT = scripts.DOCKER_IMAGE_STORAGE_SCRIPT
 DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = scripts.DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT
 DOCKER_PRUNE_ESTIMATE_SCRIPT = scripts.DOCKER_PRUNE_ESTIMATE_SCRIPT
-AI_RESOURCE_SCRIPT = scripts.AI_RESOURCE_SCRIPT
-AI_OLLAMA_SCAN_SCRIPT = scripts.AI_OLLAMA_SCAN_SCRIPT
 DDNS_DISPATCHER_AGENT_SCRIPT = getattr(scripts, "DDNS_DISPATCHER_AGENT_SCRIPT", "")
-
-
-def _ai_ollama_scan_command(params):
-    try:
-        port = int((params or {}).get("port") or 11434)
-    except (TypeError, ValueError):
-        port = 11434
-    port = max(1, min(port, 65535))
-    script = "export OLLAMA_PORT=%s\n%s" % (shlex.quote(str(port)), AI_OLLAMA_SCAN_SCRIPT)
-    return ["sh", "-lc", script]
 
 
 COMMAND_SPECS = {
@@ -976,8 +964,6 @@ COMMAND_SPECS = {
     "monitoring.metrics_collector.status": {"category": "monitoring", "factory": _metrics_collector_status_command, "default_timeout_seconds": 20},
     "ddns.dispatcher.ensure": {"category": "ddns", "factory": _ddns_dispatcher_ensure_command, "destructive": True, "default_timeout_seconds": 60},
     "system.metrics": {"category": "system", "argv": ["sh", "-lc", SYSTEM_METRICS_SCRIPT]},
-    "ai.resources": {"category": "ai", "argv": ["sh", "-lc", AI_RESOURCE_SCRIPT], "default_timeout_seconds": 12},
-    "ai.ollama_scan": {"category": "ai", "factory": _ai_ollama_scan_command, "default_timeout_seconds": 12},
     "filesystem.list": {"category": "filesystem", "factory": _filesystem_list_command},
     "filesystem.read": {"category": "filesystem", "factory": _filesystem_read_command},
     "swarm.info": {"category": "swarm", "argv": ["docker", "info", "--format", "{{json .Swarm}}"]},
@@ -1013,8 +999,6 @@ class LocalCommandCatalog:
     LocalCommandError = LocalCommandError
     COMMAND_SPECS = COMMAND_SPECS
     docker_daemon_insecure_registries_command = staticmethod(_docker_daemon_insecure_registries_command)
-    AI_RESOURCE_SCRIPT = AI_RESOURCE_SCRIPT
-    AI_OLLAMA_SCAN_SCRIPT = AI_OLLAMA_SCAN_SCRIPT
 
 
 Model = LocalCommandCatalog()

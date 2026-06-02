@@ -31,7 +31,7 @@
 
 ## 검증
 
-- `dig +short oo.tmpi.kr A @1.1.1.1` 결과 `220.82.71.78` 응답을 확인했다.
+- `dig +short oo.tmpi.kr A @1.1.1.1` 결과 `---.---.---.---` 응답을 확인했다.
 - `certbot certonly --nginx -d oo.tmpi.kr`로 Let's Encrypt 인증서 발급을 완료했다.
 - `nginx -t` 통과 후 nginx reload를 완료했다.
 - `curl -I https://oo.tmpi.kr/ --max-time 12`에서 인증서 검증 포함 HTTP/2 303 응답을 확인했다.

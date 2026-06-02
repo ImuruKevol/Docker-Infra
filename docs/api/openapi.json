@@ -30,6 +30,10 @@
         {
             "name": "compose",
             "description": "Compose validation and normalization"
+        },
+        {
+            "name": "ai-agent",
+            "description": "AI Agent status, chat, and OpenAPI-driven control capabilities"
         }
     ],
     "paths": {
@@ -690,7 +694,9 @@
                                                 "test_run_id": "di-test-run",
                                                 "metadata": {},
                                                 "created_at": "2026-05-06T00:00:00Z",
-                                                "updated_at": "2026-05-06T00:00:00Z"
+                                                "updated_at": "2026-05-06T00:00:00Z",
+                                                "private_host": "127.0.0.1",
+                                                "public_ip": null
                                             },
                                             "checks": {
                                                 "advertise_address": "127.0.0.1",
@@ -813,7 +819,9 @@
                                                 "test_run_id": "di-test-run",
                                                 "metadata": {},
                                                 "created_at": "2026-05-06T00:00:00Z",
-                                                "updated_at": "2026-05-06T00:00:00Z"
+                                                "updated_at": "2026-05-06T00:00:00Z",
+                                                "private_host": "127.0.0.1",
+                                                "public_ip": null
                                             },
                                             "checks": {
                                                 "advertise_address": "127.0.0.1",
@@ -880,7 +888,9 @@
                                             "test_run_id": "di-test-run",
                                             "metadata": {},
                                             "created_at": "2026-05-06T00:00:00Z",
-                                            "updated_at": "2026-05-06T00:00:00Z"
+                                            "updated_at": "2026-05-06T00:00:00Z",
+                                            "private_host": "127.0.0.1",
+                                            "public_ip": null
                                         },
                                         "authenticated": true,
                                         "session": {
@@ -1654,6 +1664,124 @@
                                             }
                                         ]
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ai-agent/status": {
+            "get": {
+                "summary": "Return AI Agent availability and compact capability summary",
+                "tags": [
+                    "ai-agent"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "AI Agent status",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ai-agent/capabilities": {
+            "get": {
+                "summary": "Return OpenAPI-based AI Agent operation catalog",
+                "tags": [
+                    "ai-agent"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "AI Agent OpenAPI capabilities",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AIAgentCapabilitiesResponse"
+                                },
+                                "example": {
+                                    "code": 200,
+                                    "data": {
+                                        "swagger_url": "/swagger",
+                                        "openapi_url": "/openapi.json",
+                                        "operations": [
+                                            {
+                                                "operationId": "dashboard.summary",
+                                                "menu": "dashboard",
+                                                "method": "POST",
+                                                "path": "/wiz/api/page.dashboard/summary",
+                                                "safety": "read",
+                                                "summary": "대시보드 핵심 요약 조회",
+                                                "required": []
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ai-agent/chat": {
+            "post": {
+                "summary": "Send a chat request to AI Agent",
+                "tags": [
+                    "ai-agent"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AIAgentChatRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "AI Agent response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AIAgentChatResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ai-agent/plan": {
+            "post": {
+                "summary": "Create a conceptual TODO plan for an AI Agent request",
+                "tags": [
+                    "ai-agent"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AIAgentChatRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "AI Agent TODO plan",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AIAgentPlanResponse"
                                 }
                             }
                         }
@@ -3771,7 +3899,792 @@
                         "type": "string"
                     }
                 }
+            },
+            "AIAgentCapabilityOperation": {
+                "type": "object",
+                "required": [
+                    "operationId",
+                    "menu",
+                    "method",
+                    "path",
+                    "safety",
+                    "summary"
+                ],
+                "properties": {
+                    "operationId": {
+                        "type": "string"
+                    },
+                    "menu": {
+                        "type": "string"
+                    },
+                    "method": {
+                        "type": "string",
+                        "enum": [
+                            "GET",
+                            "POST",
+                            "DELETE"
+                        ]
+                    },
+                    "path": {
+                        "type": "string"
+                    },
+                    "safety": {
+                        "type": "string",
+                        "enum": [
+                            "read",
+                            "write",
+                            "destructive"
+                        ]
+                    },
+                    "summary": {
+                        "type": "string"
+                    },
+                    "required": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "AIAgentCapabilitiesResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "properties": {
+                    "code": {
+                        "type": "integer",
+                        "example": 200
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "swagger_url",
+                            "openapi_url",
+                            "operations"
+                        ],
+                        "properties": {
+                            "swagger_url": {
+                                "type": "string"
+                            },
+                            "openapi_url": {
+                                "type": "string"
+                            },
+                            "operations": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/AIAgentCapabilityOperation"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "AIAgentChatRequest": {
+                "type": "object",
+                "required": [
+                    "message"
+                ],
+                "properties": {
+                    "message": {
+                        "type": "string"
+                    },
+                    "history": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        }
+                    },
+                    "screen": {
+                        "type": "object"
+                    },
+                    "events": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        }
+                    },
+                    "selection": {
+                        "type": "object"
+                    }
+                }
+            },
+            "AIAgentPlanResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "properties": {
+                    "code": {
+                        "type": "integer",
+                        "example": 200
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "todos"
+                        ],
+                        "properties": {
+                            "summary": {
+                                "type": "string"
+                            },
+                            "todos": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": [
+                                        "title",
+                                        "prompt"
+                                    ],
+                                    "properties": {
+                                        "id": {
+                                            "type": "string"
+                                        },
+                                        "title": {
+                                            "type": "string"
+                                        },
+                                        "prompt": {
+                                            "type": "string"
+                                        },
+                                        "reason": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            },
+                            "provider": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "AIAgentChatResponse": {
+                "type": "object",
+                "required": [
+                    "code",
+                    "data"
+                ],
+                "properties": {
+                    "code": {
+                        "type": "integer",
+                        "example": 200
+                    },
+                    "data": {
+                        "type": "object",
+                        "required": [
+                            "answer",
+                            "needs_confirmation",
+                            "client_actions"
+                        ],
+                        "properties": {
+                            "answer": {
+                                "type": "string"
+                            },
+                            "summary": {
+                                "type": "string"
+                            },
+                            "needs_confirmation": {
+                                "type": "boolean"
+                            },
+                            "client_actions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object"
+                                }
+                            },
+                            "suggested_actions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
+    },
+    "x-ai-agent": {
+        "version": "2026-06-01",
+        "swaggerUrl": "/swagger",
+        "openapiUrl": "/openapi.json",
+        "description": "AI Agent executable operation catalog. Read operations may run directly; write/destructive operations require explicit user intent or confirmation.",
+        "operations": [
+            {
+                "operationId": "dashboard.summary",
+                "menu": "dashboard",
+                "method": "POST",
+                "path": "/wiz/api/page.dashboard/summary",
+                "safety": "read",
+                "summary": "대시보드 핵심 요약 조회",
+                "required": []
+            },
+            {
+                "operationId": "dashboard.resources",
+                "menu": "dashboard",
+                "method": "POST",
+                "path": "/wiz/api/page.dashboard/resources",
+                "safety": "read",
+                "summary": "대시보드 리소스 요약 조회",
+                "required": []
+            },
+            {
+                "operationId": "dashboard.servers",
+                "menu": "dashboard",
+                "method": "POST",
+                "path": "/wiz/api/page.dashboard/servers",
+                "safety": "read",
+                "summary": "대시보드 서버 상태 목록 조회",
+                "required": []
+            },
+            {
+                "operationId": "dashboard.services",
+                "menu": "dashboard",
+                "method": "POST",
+                "path": "/wiz/api/page.dashboard/services",
+                "safety": "read",
+                "summary": "대시보드 서비스 상태 목록 조회",
+                "required": []
+            },
+            {
+                "operationId": "dashboard.domains",
+                "menu": "dashboard",
+                "method": "POST",
+                "path": "/wiz/api/page.dashboard/domains",
+                "safety": "read",
+                "summary": "대시보드 도메인 상태 조회",
+                "required": []
+            },
+            {
+                "operationId": "dashboard.operations",
+                "menu": "dashboard",
+                "method": "POST",
+                "path": "/wiz/api/page.dashboard/operations",
+                "safety": "read",
+                "summary": "대시보드 최근 작업 조회",
+                "required": []
+            },
+            {
+                "operationId": "services.load",
+                "menu": "services",
+                "method": "POST",
+                "path": "/wiz/api/page.services/load",
+                "safety": "read",
+                "summary": "서비스 목록과 요약 조회",
+                "required": []
+            },
+            {
+                "operationId": "services.detail",
+                "menu": "services",
+                "method": "POST",
+                "path": "/wiz/api/page.services/detail_service",
+                "safety": "read",
+                "summary": "서비스 상세 조회",
+                "required": [
+                    "service_id"
+                ]
+            },
+            {
+                "operationId": "services.logs",
+                "menu": "services",
+                "method": "POST",
+                "path": "/wiz/api/page.services/detail_service_logs",
+                "safety": "read",
+                "summary": "서비스 로그 조회",
+                "required": [
+                    "service_id"
+                ]
+            },
+            {
+                "operationId": "services.extras",
+                "menu": "services",
+                "method": "POST",
+                "path": "/wiz/api/page.services/detail_service_extras",
+                "safety": "read",
+                "summary": "서비스 확장 정보 조회",
+                "required": [
+                    "service_id"
+                ]
+            },
+            {
+                "operationId": "services.validate_compose",
+                "menu": "services",
+                "method": "POST",
+                "path": "/wiz/api/page.services/validate_compose",
+                "safety": "read",
+                "summary": "Compose 내용 검증",
+                "required": [
+                    "content"
+                ]
+            },
+            {
+                "operationId": "services.deploy",
+                "menu": "services",
+                "method": "POST",
+                "path": "/wiz/api/page.services/deploy_service_background",
+                "safety": "write",
+                "summary": "서비스 배포 실행",
+                "required": [
+                    "service_id"
+                ]
+            },
+            {
+                "operationId": "services.update",
+                "menu": "services",
+                "method": "POST",
+                "path": "/wiz/api/page.services/update_service",
+                "safety": "write",
+                "summary": "서비스 설정 저장",
+                "required": [
+                    "service_id"
+                ]
+            },
+            {
+                "operationId": "services.container_action",
+                "menu": "services",
+                "method": "POST",
+                "path": "/wiz/api/page.services/service_container_action",
+                "safety": "write",
+                "summary": "서비스 컨테이너 액션 실행",
+                "required": [
+                    "service_id",
+                    "container_id",
+                    "action"
+                ]
+            },
+            {
+                "operationId": "services.delete",
+                "menu": "services",
+                "method": "POST",
+                "path": "/wiz/api/page.services/delete_service",
+                "safety": "destructive",
+                "summary": "서비스 삭제",
+                "required": [
+                    "service_id"
+                ]
+            },
+            {
+                "operationId": "servers.load",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/load",
+                "safety": "read",
+                "summary": "서버 목록과 상태 조회",
+                "required": []
+            },
+            {
+                "operationId": "servers.detail",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/detail",
+                "safety": "read",
+                "summary": "서버 상세 조회",
+                "required": [
+                    "node_id"
+                ]
+            },
+            {
+                "operationId": "servers.metrics",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/refresh_metrics",
+                "safety": "read",
+                "summary": "서버 메트릭 새로고침",
+                "required": [
+                    "node_id"
+                ]
+            },
+            {
+                "operationId": "servers.containers",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/refresh_containers",
+                "safety": "read",
+                "summary": "서버 컨테이너 목록 새로고침",
+                "required": [
+                    "node_id"
+                ]
+            },
+            {
+                "operationId": "servers.macros",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/list_macros",
+                "safety": "read",
+                "summary": "서버에서 실행 가능한 전역 매크로 조회",
+                "required": [
+                    "node_id"
+                ]
+            },
+            {
+                "operationId": "servers.run_macro",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/run_macro",
+                "safety": "write",
+                "summary": "서버에서 매크로 실행",
+                "required": [
+                    "node_id",
+                    "macro_id"
+                ]
+            },
+            {
+                "operationId": "servers.container_action",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/container_action",
+                "safety": "write",
+                "summary": "서버 컨테이너 액션 실행",
+                "required": [
+                    "node_id",
+                    "container_id",
+                    "action"
+                ]
+            },
+            {
+                "operationId": "servers.service_action",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/service_action",
+                "safety": "write",
+                "summary": "서버 서비스 액션 실행",
+                "required": [
+                    "node_id",
+                    "service_name",
+                    "action"
+                ]
+            },
+            {
+                "operationId": "servers.register_slave",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/register_slave",
+                "safety": "write",
+                "summary": "서버 등록",
+                "required": []
+            },
+            {
+                "operationId": "servers.unregister",
+                "menu": "servers",
+                "method": "POST",
+                "path": "/wiz/api/page.servers/unregister_server",
+                "safety": "destructive",
+                "summary": "서버 등록 해제",
+                "required": [
+                    "node_id"
+                ]
+            },
+            {
+                "operationId": "domains.load",
+                "menu": "domains",
+                "method": "POST",
+                "path": "/wiz/api/page.domains/load",
+                "safety": "read",
+                "summary": "도메인 관리 목록 조회",
+                "required": []
+            },
+            {
+                "operationId": "domains.detail",
+                "menu": "domains",
+                "method": "POST",
+                "path": "/wiz/api/page.domains/detail",
+                "safety": "read",
+                "summary": "도메인 상세 조회",
+                "required": [
+                    "zone_id"
+                ]
+            },
+            {
+                "operationId": "domains.sync_zone",
+                "menu": "domains",
+                "method": "POST",
+                "path": "/wiz/api/page.domains/sync_zone",
+                "safety": "write",
+                "summary": "도메인 존 동기화",
+                "required": [
+                    "zone_id"
+                ]
+            },
+            {
+                "operationId": "domains.sync_all",
+                "menu": "domains",
+                "method": "POST",
+                "path": "/wiz/api/page.domains/sync_all",
+                "safety": "write",
+                "summary": "전체 도메인 동기화",
+                "required": []
+            },
+            {
+                "operationId": "domains.save_record",
+                "menu": "domains",
+                "method": "POST",
+                "path": "/wiz/api/page.domains/save_record",
+                "safety": "write",
+                "summary": "DNS 레코드 저장",
+                "required": [
+                    "zone_id",
+                    "name",
+                    "type",
+                    "content"
+                ]
+            },
+            {
+                "operationId": "domains.delete_record",
+                "menu": "domains",
+                "method": "POST",
+                "path": "/wiz/api/page.domains/delete_record",
+                "safety": "destructive",
+                "summary": "DNS 레코드 삭제",
+                "required": [
+                    "zone_id",
+                    "record_id"
+                ]
+            },
+            {
+                "operationId": "images.load",
+                "menu": "images",
+                "method": "POST",
+                "path": "/wiz/api/page.images/load",
+                "safety": "read",
+                "summary": "이미지 저장소와 로컬 이미지 상태 조회",
+                "required": []
+            },
+            {
+                "operationId": "images.harbor_detail",
+                "menu": "images",
+                "method": "POST",
+                "path": "/wiz/api/page.images/harbor_detail",
+                "safety": "read",
+                "summary": "Harbor 프로젝트 상세 조회",
+                "required": [
+                    "project_name"
+                ]
+            },
+            {
+                "operationId": "images.local_detail",
+                "menu": "images",
+                "method": "POST",
+                "path": "/wiz/api/page.images/local_detail",
+                "safety": "read",
+                "summary": "서버 로컬 이미지 상세 조회",
+                "required": [
+                    "node_id"
+                ]
+            },
+            {
+                "operationId": "images.create_harbor_project",
+                "menu": "images",
+                "method": "POST",
+                "path": "/wiz/api/page.images/create_harbor_project",
+                "safety": "write",
+                "summary": "Harbor 프로젝트 생성",
+                "required": [
+                    "project_name"
+                ]
+            },
+            {
+                "operationId": "images.local_prune_estimate",
+                "menu": "images",
+                "method": "POST",
+                "path": "/wiz/api/page.images/local_prune_estimate",
+                "safety": "read",
+                "summary": "로컬 이미지 정리 예상 결과 조회",
+                "required": [
+                    "node_id"
+                ]
+            },
+            {
+                "operationId": "images.local_prune",
+                "menu": "images",
+                "method": "POST",
+                "path": "/wiz/api/page.images/local_prune",
+                "safety": "destructive",
+                "summary": "로컬 이미지 정리 실행",
+                "required": [
+                    "node_id"
+                ]
+            },
+            {
+                "operationId": "macros.load",
+                "menu": "macros",
+                "method": "POST",
+                "path": "/wiz/api/page.macros/load",
+                "safety": "read",
+                "summary": "전역 매크로 목록 조회",
+                "required": []
+            },
+            {
+                "operationId": "macros.save",
+                "menu": "macros",
+                "method": "POST",
+                "path": "/wiz/api/page.macros/save_macro",
+                "safety": "write",
+                "summary": "전역 매크로 저장",
+                "required": [
+                    "name",
+                    "script"
+                ]
+            },
+            {
+                "operationId": "macros.delete",
+                "menu": "macros",
+                "method": "POST",
+                "path": "/wiz/api/page.macros/delete_macro",
+                "safety": "destructive",
+                "summary": "전역 매크로 삭제",
+                "required": [
+                    "macro_id"
+                ]
+            },
+            {
+                "operationId": "operations.load",
+                "menu": "operations",
+                "method": "POST",
+                "path": "/wiz/api/page.operations/load",
+                "safety": "read",
+                "summary": "작업 이력 목록 조회",
+                "required": []
+            },
+            {
+                "operationId": "operations.detail",
+                "menu": "operations",
+                "method": "POST",
+                "path": "/wiz/api/page.operations/detail",
+                "safety": "read",
+                "summary": "작업 이력 상세 조회",
+                "required": [
+                    "operation_id"
+                ]
+            },
+            {
+                "operationId": "templates.load",
+                "menu": "templates",
+                "method": "POST",
+                "path": "/wiz/api/page.templates/load",
+                "safety": "read",
+                "summary": "Compose 템플릿 목록 조회",
+                "required": []
+            },
+            {
+                "operationId": "templates.detail",
+                "menu": "templates",
+                "method": "POST",
+                "path": "/wiz/api/page.templates/detail",
+                "safety": "read",
+                "summary": "Compose 템플릿 상세 조회",
+                "required": [
+                    "template_id"
+                ]
+            },
+            {
+                "operationId": "templates.preview",
+                "menu": "templates",
+                "method": "POST",
+                "path": "/wiz/api/page.templates/preview_template",
+                "safety": "read",
+                "summary": "Compose 템플릿 미리보기",
+                "required": [
+                    "template_id"
+                ]
+            },
+            {
+                "operationId": "templates.save",
+                "menu": "templates",
+                "method": "POST",
+                "path": "/wiz/api/page.templates/save_template",
+                "safety": "write",
+                "summary": "Compose 템플릿 저장",
+                "required": [
+                    "name"
+                ]
+            },
+            {
+                "operationId": "templates.delete",
+                "menu": "templates",
+                "method": "POST",
+                "path": "/wiz/api/page.templates/delete_template",
+                "safety": "destructive",
+                "summary": "Compose 템플릿 삭제",
+                "required": [
+                    "template_id"
+                ]
+            },
+            {
+                "operationId": "system.load",
+                "menu": "system",
+                "method": "POST",
+                "path": "/wiz/api/page.system/load",
+                "safety": "read",
+                "summary": "시스템 설정 조회",
+                "required": []
+            },
+            {
+                "operationId": "system.backup_status",
+                "menu": "system",
+                "method": "POST",
+                "path": "/wiz/api/page.system/backup_status",
+                "safety": "read",
+                "summary": "백업 시스템 상태 조회",
+                "required": []
+            },
+            {
+                "operationId": "system.save_general",
+                "menu": "system",
+                "method": "POST",
+                "path": "/wiz/api/page.system/save_general",
+                "safety": "write",
+                "summary": "일반 시스템 설정 저장",
+                "required": []
+            },
+            {
+                "operationId": "system.save_ai_settings",
+                "menu": "system",
+                "method": "POST",
+                "path": "/wiz/api/page.system/save_ai_settings",
+                "safety": "write",
+                "summary": "AI Agent 설정 저장",
+                "required": []
+            },
+            {
+                "operationId": "system.agent_status",
+                "menu": "system",
+                "method": "POST",
+                "path": "/wiz/api/page.system/ai_agent_status",
+                "safety": "read",
+                "summary": "시스템 설정의 AI Agent 상태 조회",
+                "required": []
+            },
+            {
+                "operationId": "system.backup_cleanup_plan",
+                "menu": "system",
+                "method": "POST",
+                "path": "/wiz/api/page.system/backup_cleanup_plan",
+                "safety": "read",
+                "summary": "백업 정리 계획 조회",
+                "required": []
+            },
+            {
+                "operationId": "system.run_backup_policy_now",
+                "menu": "system",
+                "method": "POST",
+                "path": "/wiz/api/page.system/run_backup_policy_now",
+                "safety": "write",
+                "summary": "백업 정책 즉시 실행",
+                "required": []
+            },
+            {
+                "operationId": "system.reset_backup_system",
+                "menu": "system",
+                "method": "POST",
+                "path": "/wiz/api/page.system/reset_backup_system",
+                "safety": "destructive",
+                "summary": "백업 시스템 초기화",
+                "required": []
+            }
+        ]
     }
 }

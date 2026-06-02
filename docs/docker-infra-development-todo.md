@@ -180,7 +180,7 @@ Done:
 
 - 템플릿/기본 구성 개념을 제거하고 서비스 생성의 시작점을 AI 초안, Compose 직접 작성, 서버 Compose 가져오기로 정리
 - AI 초안은 완성 Compose, wizard form, 구성요소, 경고, 운영 메모를 반환
-- AI에 전달할 context, 허용 scope, MCP allowlist를 서비스 AI/Codex Agent 설계로 고정
+- AI에 전달할 context, Agent full-control MCP 계약, critical guard를 서비스 AI/Agent 설계로 고정
 - 배포 후 검증에 필요한 DNS/TCP/HTTP probe MCP와 중복 생성/배포 방지 기준을 서비스 AI 설계에 반영
 - 직접 작성 또는 가져온 Compose는 동일한 `components_from_content` 경로로 wizard form에 반영
 - DB, Redis 같은 내부 구성은 외부 공개 port 없이 Compose 내부 네트워크로만 연결

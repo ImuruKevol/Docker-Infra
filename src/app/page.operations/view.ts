@@ -1,4 +1,5 @@
 import { OnDestroy, OnInit, signal } from '@angular/core';
+import { Router, NavigationEnd } from '@angular/router';
 import { Service } from '@wiz/libs/portal/season/service';
 
 type OperationStatus = '' | 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled';
@@ -16,6 +17,7 @@ export class Component implements OnInit, OnDestroy {
     public limit = signal<number>(80);
     public pagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 80 });
     private pollTimer: any = null;
+    private routeSub: any = null;
 
     public statusFilters: { value: OperationStatus; label: string }[] = [
         { value: '', label: '전체' },
@@ -26,15 +28,50 @@ export class Component implements OnInit, OnDestroy {
         { value: 'canceled', label: '취소' },
     ];
 
-    constructor(public service: Service) { }
+    constructor(public service: Service, private router: Router) { }
 
     public async ngOnInit() {
         await this.service.init();
         await this.load(1);
+        const operationId = this.routeOperationId();
+        if (operationId) {
+            const operation = this.operations().find((item: any) => item.id === operationId) || { id: operationId };
+            await this.openOperation(operation, true);
+        }
+        this.routeSub = this.router.events.subscribe((event: any) => {
+            if (event instanceof NavigationEnd) void this.handleRouteNavigation();
+        });
     }
 
     public ngOnDestroy() {
+        if (this.routeSub) this.routeSub.unsubscribe();
         this.stopPolling();
+    }
+
+    private routeOperationId() {
+        return this.service.routeSegment('operation_id') || this.service.queryParam('operation_id') || this.service.queryParam('selected_operation_id');
+    }
+
+    private operationDetailRoute(operationId: string = this.selectedOperation()?.id || '') {
+        const encodedId = this.service.encodeRouteSegment(operationId);
+        return encodedId ? `/operations/${encodedId}` : '/operations';
+    }
+
+    private async handleRouteNavigation() {
+        const operationId = this.routeOperationId();
+        const currentId = this.selectedOperation()?.id || '';
+        if (operationId === currentId) return;
+        if (!operationId) {
+            if (this.detailOpen()) await this.closeDetail();
+            return;
+        }
+        const operation = this.operations().find((item: any) => item.id === operationId) || { id: operationId };
+        await this.openOperation(operation, true);
+    }
+
+    private async syncOperationRoute(operationId: string = this.selectedOperation()?.id || '', replace: boolean = false) {
+        const target = this.operationDetailRoute(operationId);
+        if (this.service.currentPath() !== target) await this.service.routeTo(target, replace);
     }
 
     public async load(page: number = this.pagination().current || 1, showLoading: boolean = true) {
@@ -84,18 +121,20 @@ export class Component implements OnInit, OnDestroy {
         await this.load(1, true);
     }
 
-    public async openOperation(operation: any) {
+    public async openOperation(operation: any, replaceRoute: boolean = false) {
         if (!operation?.id) return;
         this.selectedOperation.set(operation);
         this.detailOpen.set(true);
+        await this.syncOperationRoute(operation.id, replaceRoute);
         await this.refreshDetail();
         this.startPolling();
     }
 
-    public closeDetail() {
+    public async closeDetail() {
         this.stopPolling();
         this.detailOpen.set(false);
         this.selectedOperation.set(null);
+        await this.syncOperationRoute('');
     }
 
     public async refreshDetail(showBusy: boolean = true) {

@@ -14,8 +14,6 @@ class FakeScripts:
     DOCKER_IMAGE_STORAGE_SCRIPT = "print('{}')"
     DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = "print('{}')"
     DOCKER_PRUNE_ESTIMATE_SCRIPT = "print('{}')"
-    AI_RESOURCE_SCRIPT = "true"
-    AI_OLLAMA_SCAN_SCRIPT = "true"
 
 
 class BackupRegistryNodeStaticContractTest(unittest.TestCase):

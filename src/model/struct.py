@@ -36,6 +36,10 @@ class Struct:
         return self._load("ai_assistant")
 
     @property
+    def ai_history(self):
+        return self._load("ai_history")
+
+    @property
     def codex_runtime(self):
         return self._load("codex_runtime")
 

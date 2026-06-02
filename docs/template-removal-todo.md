@@ -38,7 +38,7 @@
 템플릿 기능을 제거하더라도 다음은 반드시 살려서 서비스 관리로 옮긴다.
 
 - AI 모델 선택 옵션과 시스템 설정 기반 모델 제한
-- OpenAI, Gemini, Ollama 런타임 선택 정책
+- Codex, Claude Code, 헤르메스 Agent 선택 정책
 - SSE 스트리밍 응답과 thinking/progress 표시
 - AI output JSON 계약 검증
 - 실패 시 자동 재요청/보정 루프

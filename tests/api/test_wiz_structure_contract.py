@@ -97,6 +97,60 @@ class WizStructureContractTest(unittest.TestCase):
         if service_file.is_file():
             self.assertIn("EnvironmentFile=-/root/docker-infra/config.env", service_file.read_text(encoding="utf-8"))
 
+    def test_frontend_detail_routes_are_explicit(self):
+        routing = (ROOT / "src" / "angular" / "app" / "app-routing.module.ts").read_text(encoding="utf-8")
+        service_lib = (ROOT / "src" / "portal" / "season" / "libs" / "service.ts").read_text(encoding="utf-8")
+
+        for token in [
+            '"page.services": ["services/:service_id", "services/:service_id/:detail_tab"]',
+            '"page.servers": ["servers/:node_id", "servers/:node_id/:detail_tab"]',
+            '"page.domains": ["domains/:zone_id"]',
+            '"page.images": ["images/local", "images/local/:node_id", "images/harbor", "images/harbor/:project_name", "images/harbor/:project_name/:repository_name"]',
+            '"page.operations": ["operations/:operation_id"]',
+            '"page.system": ["system/:section", "system/:section/:subsection"]',
+        ]:
+            self.assertIn(token, routing)
+
+        for token in ["routeSegment(name: string)", "routeTo(url: any", "encodeRouteSegment(value: any)"]:
+            self.assertIn(token, service_lib)
+        self.assertEqual(routing.count("router.children.push({"), 1)
+        self.assertIn("let patterns = childPatterns(child);", routing)
+        self.assertIn("otherChildPathMatches(layout_childs, child, url)", routing)
+        self.assertIn("patternMatcher(child.path, url, false)", routing)
+        self.assertNotIn("let matcher = patternMatcher(alias, url);", routing)
+
+        route_aware_views = {
+            "page.services": ["routeServiceId", "syncServiceRoute", "serviceDetailRoute"],
+            "page.servers": ["routeNodeId", "syncNodeRoute", "nodeDetailRoute"],
+            "page.domains": ["routeZoneId", "syncZoneRoute", "zoneDetailRoute"],
+            "page.images": ["routeImageTarget", "syncImageRoute", "imageRoute"],
+            "page.macros": ["routeMacroId", "syncMacroRoute", "macroDetailRoute"],
+            "page.operations": ["routeOperationId", "syncOperationRoute", "operationDetailRoute"],
+            "page.system": ["applyRouteSelection", "syncSystemRoute", "systemRoute"],
+        }
+        for app, tokens in route_aware_views.items():
+            view = (ROOT / "src" / "app" / app / "view.ts").read_text(encoding="utf-8")
+            with self.subTest(app=app):
+                for token in tokens:
+                    self.assertIn(token, view)
+
+        for app in ["page.services", "page.servers", "page.operations", "page.system"]:
+            view = (ROOT / "src" / "app" / app / "view.ts").read_text(encoding="utf-8")
+            with self.subTest(app=app):
+                self.assertIn("NavigationEnd", view)
+                self.assertIn("handleRouteNavigation", view)
+
+    def test_servers_layout_uses_container_width_for_agent_dock(self):
+        view = (ROOT / "src" / "app" / "page.servers" / "view.pug").read_text(encoding="utf-8")
+        style = (ROOT / "src" / "app" / "page.servers" / "view.scss").read_text(encoding="utf-8")
+
+        self.assertIn("servers-page", view)
+        self.assertIn("servers-detail-grid", view)
+        self.assertNotIn("xl:grid-cols-[360px_1fr]", view)
+        self.assertIn("container-type: inline-size", style)
+        self.assertIn("@container (min-width: 1120px)", style)
+        self.assertIn("minmax(280px, 360px) minmax(0, 1fr)", style)
+
 
 if __name__ == "__main__":
     unittest.main()

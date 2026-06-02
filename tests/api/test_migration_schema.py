@@ -18,12 +18,14 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
                 "019_current_schema.sql",
                 "020_actual_schema_cleanup.down.sql",
                 "020_actual_schema_cleanup.sql",
+                "021_ai_agent_history.down.sql",
+                "021_ai_agent_history.sql",
             ],
         )
 
         sql = "\n".join(
             (MIGRATION_DIR / name).read_text(encoding="utf-8")
-            for name in ["019_current_schema.sql", "020_actual_schema_cleanup.sql"]
+            for name in ["019_current_schema.sql", "020_actual_schema_cleanup.sql", "021_ai_agent_history.sql"]
         )
 
         for table in [
@@ -42,10 +44,12 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
             "operator_auth",
             "auth_sessions",
             "auth_login_attempts",
+            "ai_agent_histories",
         ]:
             self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
         self.assertIn("metadata JSONB NOT NULL DEFAULT '{}'::jsonb", sql)
         self.assertIn("test_run_id TEXT", sql)
+        self.assertIn("request_id TEXT NOT NULL DEFAULT ''", sql)
 
     def test_removed_tables_are_not_created_by_current_schema(self):
         sql = (MIGRATION_DIR / "019_current_schema.sql").read_text(encoding="utf-8")

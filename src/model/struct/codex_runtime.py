@@ -11,11 +11,10 @@ import subprocess
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
+import yaml
 from pathlib import Path
+from urllib import request as urlrequest
 
 nodes_model = wiz.model("struct/nodes")
 placement_selector = wiz.model("struct/services_placement")
@@ -58,21 +57,168 @@ def _find_workspace_root(project_root):
     return project_root.parents[1]
 
 
+def _find_runtime_project_root(project_root):
+    project_root = Path(project_root)
+    if project_root.name == "bundle" and (project_root.parent / "src" / "model").exists():
+        return project_root.parent
+    return project_root
+
+
 PROJECT_ROOT = _find_project_root()
 WORKSPACE_ROOT = _find_workspace_root(PROJECT_ROOT)
+RUNTIME_PROJECT_ROOT = _find_runtime_project_root(PROJECT_ROOT)
 PYTHON_BIN = "/opt/conda/envs/docker-infra/bin/python"
 MCP_SCRIPT = PROJECT_ROOT / "tools" / "docker_infra_mcp.py"
 CODEX_RUNTIME_ROOT = PROJECT_ROOT / ".runtime" / "codex"
 CODEX_TIMEOUT_SECONDS = 1200
 CODEX_STATUS_TIMEOUT_SECONDS = 15
 CODEX_TEST_TIMEOUT_SECONDS = 180
-CODEX_DEVICE_LOGIN_START_TIMEOUT_SECONDS = 5
+CODEX_DEVICE_LOGIN_START_TIMEOUT_SECONDS = 10
+CLAUDE_LOGIN_START_TIMEOUT_SECONDS = 10
 CODEX_NPM_PACKAGE = "@openai/codex"
+CLAUDE_CODE_INSTALL_URL = "https://claude.ai/install.sh"
+CLAUDE_CODE_INSTALL_CHANNEL = "latest"
+HERMES_AGENT_INSTALL_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh"
+HERMES_AGENT_INSTALL_CHANNEL = ""
+AGENT_INSTALL_TIMEOUT_SECONDS = 1200
+AGENT_MODEL_CATALOG_TIMEOUT_SECONDS = 20
+NODE_SOURCE_SETUP_URL = "https://deb.nodesource.com/setup_lts.x"
 CODEX_NPM_VIEW_TIMEOUT_SECONDS = 30
 CODEX_NPM_INSTALL_TIMEOUT_SECONDS = 900
 CODEX_LOGIN_DEFAULT_MODEL = "gpt-5.5"
 CODEX_LOGIN_DEFAULT_REASONING_EFFORT = "xhigh"
 CODEX_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
+AGENT_RUNTIME_HOME_ROOT = RUNTIME_PROJECT_ROOT / ".runtime" / "agents"
+AGENT_TYPES = {"codex", "claude_code", "hermes"}
+AGENT_ORDER = ["codex", "claude_code", "hermes"]
+AGENT_DEFAULTS = {
+    "codex": {
+        "model": CODEX_LOGIN_DEFAULT_MODEL,
+        "reasoning_effort": CODEX_LOGIN_DEFAULT_REASONING_EFFORT,
+        "home_key": "codex_home",
+        "install_script_env": "DOCKER_INFRA_CODEX_INSTALL_SCRIPT",
+        "npm_package": CODEX_NPM_PACKAGE,
+        "npm_package_env": "DOCKER_INFRA_CODEX_NPM_PACKAGE",
+        "binary": "codex",
+        "upgrade_policy": "manual",
+    },
+    "claude_code": {
+        "model": "sonnet",
+        "home_key": "home",
+        "install_script_env": "DOCKER_INFRA_CLAUDE_CODE_INSTALL_SCRIPT",
+        "install_method": "native",
+        "install_url": CLAUDE_CODE_INSTALL_URL,
+        "install_url_env": "DOCKER_INFRA_CLAUDE_CODE_INSTALL_URL",
+        "install_channel": CLAUDE_CODE_INSTALL_CHANNEL,
+        "install_channel_env": "DOCKER_INFRA_CLAUDE_CODE_INSTALL_CHANNEL",
+        "cleanup_npm_package": "@anthropic-ai/claude-code",
+        "binary": "claude",
+        "upgrade_policy": "automatic",
+        "upgrade_command": "claude update",
+        "default_command_template": (
+            "{executable} --print --output-format text "
+            "--mcp-config {mcp_config} --model {model} {session_args} --dangerously-skip-permissions"
+        ),
+    },
+    "hermes": {
+        "model": "default",
+        "home_key": "home",
+        "install_script_env": "DOCKER_INFRA_HERMES_AGENT_INSTALL_SCRIPT",
+        "install_method": "native",
+        "install_url": HERMES_AGENT_INSTALL_URL,
+        "install_url_env": "DOCKER_INFRA_HERMES_AGENT_INSTALL_URL",
+        "install_channel": HERMES_AGENT_INSTALL_CHANNEL,
+        "install_channel_env": "DOCKER_INFRA_HERMES_AGENT_INSTALL_CHANNEL",
+        "cleanup_npm_package": "hermes-agent",
+        "binary": "hermes",
+        "upgrade_policy": "manual",
+        "upgrade_command": "hermes update",
+        "default_command_template": (
+            "{executable} -z {prompt} --provider {provider} --model {model} "
+            "--toolsets docker_infra --accept-hooks --yolo"
+        ),
+    },
+}
+MODEL_CATALOG_SOURCES = {
+    "openai": {
+        "label": "OpenAI",
+        "url": "https://platform.openai.com/docs/models",
+    },
+    "anthropic": {
+        "label": "Anthropic",
+        "url": "https://code.claude.com/docs/en/model-config",
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "url": "https://openrouter.ai/api/v1/models",
+    },
+    "gemini": {
+        "label": "Gemini",
+        "url": "https://ai.google.dev/gemini-api/docs/models",
+    },
+    "xai": {
+        "label": "xAI",
+        "url": "https://docs.x.ai/developers/models",
+    },
+    "deepseek": {
+        "label": "DeepSeek",
+        "url": "https://api-docs.deepseek.com/quick_start/pricing",
+    },
+    "novita": {
+        "label": "NovitaAI",
+        "url": "https://novita.ai/docs/api-reference/api-reference-overview",
+    },
+}
+MODEL_CATALOG_FALLBACKS = {
+    "openai": [
+        ("gpt-5.5", "GPT-5.5"),
+        ("gpt-5.2-codex", "GPT-5.2 Codex"),
+        ("gpt-5.1-codex", "GPT-5.1 Codex"),
+        ("gpt-5.1-codex-max", "GPT-5.1 Codex Max"),
+        ("gpt-5-codex", "GPT-5 Codex"),
+        ("gpt-5.2", "GPT-5.2"),
+        ("gpt-5.1", "GPT-5.1"),
+        ("gpt-5", "GPT-5"),
+        ("gpt-5.1-codex-mini", "GPT-5.1 Codex mini"),
+        ("codex-mini-latest", "Codex mini latest"),
+    ],
+    "anthropic": [
+        ("sonnet", "Sonnet"),
+        ("opus", "Opus"),
+        ("haiku", "Haiku"),
+        ("opusplan", "Opus Plan"),
+        ("claude-opus-4-8", "Claude Opus 4.8"),
+        ("claude-opus-4-7", "Claude Opus 4.7"),
+        ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+        ("claude-sonnet-4-5", "Claude Sonnet 4.5"),
+    ],
+    "gemini": [
+        ("gemini-3.1-pro", "Gemini 3.1 Pro"),
+        ("gemini-3.1-flash", "Gemini 3.1 Flash"),
+        ("gemini-3-pro-preview", "Gemini 3 Pro Preview"),
+        ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+        ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+        ("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite"),
+    ],
+    "xai": [
+        ("grok-4-1", "Grok 4.1"),
+        ("grok-4-1-fast", "Grok 4.1 Fast"),
+        ("grok-4-fast", "Grok 4 Fast"),
+        ("grok-code-fast-1", "Grok Code Fast 1"),
+    ],
+    "deepseek": [
+        ("deepseek-chat", "DeepSeek Chat"),
+        ("deepseek-reasoner", "DeepSeek Reasoner"),
+        ("deepseek-v4-flash", "DeepSeek V4 Flash"),
+        ("deepseek-v4-pro", "DeepSeek V4 Pro"),
+    ],
+    "novita": [
+        ("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B Instruct"),
+        ("qwen/qwen3-coder-480b-a35b-instruct", "Qwen3 Coder"),
+        ("deepseek/deepseek-v3.1", "DeepSeek V3.1"),
+        ("google/gemma-3-27b-it", "Gemma 3 27B"),
+    ],
+}
 PROMPT_CONTEXT_CHAR_BUDGET = 70000
 PROMPT_CONTEXT_STRING_LIMIT = 12000
 PROMPT_CONTEXT_DEEP_STRING_LIMIT = 3000
@@ -105,6 +251,28 @@ SYSTEM_CODEX_EXECUTABLE_CANDIDATES = [
     "/root/.npm-global/bin/codex",
     "/opt/homebrew/bin/codex",
 ]
+SYSTEM_CLAUDE_EXECUTABLE_CANDIDATES = [
+    "/usr/local/bin/claude",
+    "/usr/bin/claude",
+    "/bin/claude",
+    "~/.local/bin/claude",
+    "/root/.local/bin/claude",
+    "/root/.npm-global/bin/claude",
+    "/opt/homebrew/bin/claude",
+]
+SYSTEM_HERMES_EXECUTABLE_CANDIDATES = [
+    "/usr/local/bin/hermes-agent",
+    "/usr/bin/hermes-agent",
+    "/bin/hermes-agent",
+    "~/.local/bin/hermes-agent",
+    "/root/.local/bin/hermes-agent",
+    "/opt/hermes/bin/hermes-agent",
+    "/usr/local/bin/hermes",
+    "/usr/bin/hermes",
+    "~/.local/bin/hermes",
+    "/root/.local/bin/hermes",
+    "/opt/hermes/bin/hermes",
+]
 SYSTEM_NPM_EXECUTABLE_CANDIDATES = [
     "/usr/local/bin/npm",
     "/usr/bin/npm",
@@ -112,7 +280,8 @@ SYSTEM_NPM_EXECUTABLE_CANDIDATES = [
     "/opt/conda/bin/npm",
     "/opt/homebrew/bin/npm",
 ]
-MCP_TOOL_ALLOWLIST = {
+MCP_PERMISSION_MODE = "agent_full_control_except_critical_destruction"
+MCP_TOOL_ORDER = [
     "infra_context",
     "docker_search",
     "docker_image_check",
@@ -127,35 +296,13 @@ MCP_TOOL_ALLOWLIST = {
     "browser_probe",
     "server_collect",
     "ssh_command",
-}
-SERVICE_DRAFT_MCP_TOOLS = [
-    "infra_context",
-    "docker_search",
-    "docker_image_check",
-    "server_list",
-    "server_port_check",
-    "server_collect",
-    "ssh_command",
 ]
-COMPOSE_TEMPLATE_MCP_TOOLS = [
-    "infra_context",
-    "docker_search",
-    "docker_image_check",
-]
-RUNTIME_INSPECTION_MCP_TOOLS = [
-    "infra_context",
-    "server_list",
-    "server_port_check",
-    "service_stack_status",
-    "container_logs",
-    "server_collect",
-    "dns_lookup",
-    "tcp_connect_check",
-    "http_probe",
-    "browser_probe",
-    "ssh_command",
-]
-RUNTIME_REPAIR_MCP_TOOLS = [*RUNTIME_INSPECTION_MCP_TOOLS, "container_action"]
+MCP_TOOL_ALLOWLIST = set(MCP_TOOL_ORDER)
+AGENT_FULL_CONTROL_MCP_TOOLS = list(MCP_TOOL_ORDER)
+SERVICE_DRAFT_MCP_TOOLS = list(AGENT_FULL_CONTROL_MCP_TOOLS)
+COMPOSE_TEMPLATE_MCP_TOOLS = list(AGENT_FULL_CONTROL_MCP_TOOLS)
+RUNTIME_INSPECTION_MCP_TOOLS = list(AGENT_FULL_CONTROL_MCP_TOOLS)
+RUNTIME_REPAIR_MCP_TOOLS = list(AGENT_FULL_CONTROL_MCP_TOOLS)
 MCP_TOOL_SCOPES = {
     "service_draft": SERVICE_DRAFT_MCP_TOOLS,
     "compose_template": COMPOSE_TEMPLATE_MCP_TOOLS,
@@ -189,9 +336,8 @@ def _trim(value, limit=20000):
 def _provider_label(provider_type):
     return {
         "codex": "Codex 로그인",
-        "openai": "OpenAI",
-        "gemini": "Gemini",
-        "ollama": "Ollama",
+        "claude_code": "Claude Code",
+        "hermes": "헤르메스 에이전트",
     }.get(provider_type, provider_type or "AI")
 
 
@@ -261,18 +407,323 @@ class CodexRuntime:
     def __init__(self):
         self._device_login = None
         self._device_login_lock = threading.Lock()
+        self._claude_login = None
+        self._claude_login_lock = threading.Lock()
 
-    def mcp_tools_for_scope(self, scope, allow_container_actions=False, allow_ssh_command=True):
-        tools = list(MCP_TOOL_SCOPES.get(str(scope or ""), SERVICE_DRAFT_MCP_TOOLS))
+    def mcp_tools_for_scope(self, scope, allow_container_actions=True, allow_ssh_command=True):
+        tools = list(MCP_TOOL_SCOPES.get(str(scope or ""), AGENT_FULL_CONTROL_MCP_TOOLS))
         result = []
         for tool in tools:
-            if tool == "container_action" and not allow_container_actions:
+            if tool == "container_action" and allow_container_actions is False:
                 continue
-            if tool == "ssh_command" and not allow_ssh_command:
+            if tool == "ssh_command" and allow_ssh_command is False:
                 continue
             if tool in MCP_TOOL_ALLOWLIST and tool not in result:
                 result.append(tool)
         return result or ["infra_context"]
+
+    def agent_types(self):
+        return list(AGENT_ORDER)
+
+    def _agent_npm_package(self, agent_type, env=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        run_env = os.environ if env is None else env
+        defaults = AGENT_DEFAULTS[agent_type]
+        return str(
+            run_env.get(defaults.get("npm_package_env") or "")
+            or defaults.get("npm_package")
+            or ""
+        ).strip()
+
+    def _agent_install_method(self, agent_type):
+        agent_type = self._normalize_agent_type(agent_type)
+        return str(AGENT_DEFAULTS[agent_type].get("install_method") or "npm").strip() or "npm"
+
+    def _agent_install_url(self, agent_type, env=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        run_env = os.environ if env is None else env
+        defaults = AGENT_DEFAULTS[agent_type]
+        return str(
+            run_env.get(defaults.get("install_url_env") or "")
+            or defaults.get("install_url")
+            or ""
+        ).strip()
+
+    def _agent_install_channel(self, agent_type, env=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        run_env = os.environ if env is None else env
+        defaults = AGENT_DEFAULTS[agent_type]
+        return str(
+            run_env.get(defaults.get("install_channel_env") or "")
+            or defaults.get("install_channel")
+            or ""
+        ).strip()
+
+    def agent_status(self, agent_type, config=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        if agent_type == "codex":
+            return self.status(config)
+        config = self._normalize_agent_config(agent_type, config or {})
+        executable = self._agent_executable(agent_type, config)
+        available = bool(executable and _is_executable_file(executable))
+        version = self._version_for(executable) if available else ""
+        login = {
+            "status": "ok" if available else "missing",
+            "logged_in": available,
+            "message": "Agent CLI 실행 파일을 찾았습니다." if available else "Agent CLI 실행 파일을 찾을 수 없습니다.",
+            "exit_code": 0 if available else None,
+            "checked_at": _utcnow(),
+        }
+        if agent_type == "claude_code":
+            login = self._claude_auth_status(executable, config) if available else {
+                "status": "missing",
+                "logged_in": False,
+                "message": "Claude Code CLI 실행 파일을 찾을 수 없습니다.",
+                "exit_code": None,
+                "checked_at": _utcnow(),
+            }
+        hermes_config = self.hermes_config_status(config) if agent_type == "hermes" else None
+        return {
+            "checked_at": _utcnow(),
+            "type": agent_type,
+            "label": _provider_label(agent_type),
+            "enabled": config["enabled"],
+            "model": config["model"],
+            "home": config["home"],
+            "command_template": config["command_template"],
+            "active": {
+                "executable": executable or "",
+                "source": "system",
+                "version": version,
+                "available": available,
+            },
+            "login": login,
+            **({"hermes_config": hermes_config} if hermes_config is not None else {}),
+        }
+
+    def test_agent(self, agent_type, config=None, prompt=None, env=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        if agent_type == "codex":
+            return self.test_login(config, prompt=prompt, env=env)
+        config = self._normalize_agent_config(agent_type, config or {})
+        provider = {
+            "type": agent_type,
+            "label": _provider_label(agent_type),
+            "model": config["model"],
+            "executable": config["executable"],
+            "home": config["home"],
+            "command_template": config["command_template"],
+            "timeout_seconds": CODEX_TEST_TIMEOUT_SECONDS,
+        }
+        if agent_type == "hermes":
+            provider.update(
+                {
+                    "provider": config.get("provider") or "openrouter",
+                    "api_key_env": config.get("api_key_env") or self._default_hermes_api_key_env(config.get("provider")),
+                    "terminal_backend": config.get("terminal_backend") or "local",
+                    "terminal_cwd": config.get("terminal_cwd") or str(WORKSPACE_ROOT),
+                    "terminal_timeout": int(config.get("terminal_timeout") or 180),
+                }
+            )
+        system = (
+            "Return one compact JSON object. Do not use markdown fences. "
+            "The object must include ok=true, engine, agent, and model."
+        )
+        context = {
+            "kind": "agent_execution_test",
+            "agent": agent_type,
+            "operator_prompt": prompt
+            or "Confirm this Docker Infra agent execution path with a short JSON response.",
+        }
+        result = self.complete_json(provider, system, context, env=env)
+        return {
+            "ok": True,
+            "checked_at": _utcnow(),
+            "text": result.get("text") or "",
+            "metadata": result.get("metadata") or {},
+            "status": self.agent_status(agent_type, config),
+        }
+
+    def agent_model_catalog(self, agent_type, config=None, env=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        if agent_type == "codex":
+            config = self._normalize_codex_config(config or {})
+        else:
+            config = self._normalize_agent_config(agent_type, config or {})
+        provider = self._model_catalog_provider(agent_type, config)
+        source = MODEL_CATALOG_SOURCES.get(provider) or MODEL_CATALOG_SOURCES["openai"]
+        items = []
+        error = ""
+        fetched = False
+        try:
+            if provider == "openrouter":
+                items = self._openrouter_model_items(source["url"])
+            else:
+                text = self._fetch_model_catalog_text(source["url"])
+                items = self._model_items_from_text(provider, text, source["label"])
+            fetched = bool(items)
+        except Exception as exc:
+            error = str(exc)
+            items = []
+        if not items:
+            items = self._fallback_model_items(provider, source["label"])
+        items = self._ensure_selected_model_item(items, config.get("model"), source["label"])
+        return {
+            "checked_at": _utcnow(),
+            "agent": agent_type,
+            "provider": provider,
+            "source": source,
+            "items": items,
+            "fetched": fetched,
+            "fallback": not fetched,
+            "error": error,
+        }
+
+    def _model_catalog_provider(self, agent_type, config):
+        if agent_type == "claude_code":
+            return "anthropic"
+        if agent_type == "hermes":
+            provider = str((config or {}).get("provider") or "openrouter").strip().lower()
+            aliases = {
+                "openai-api": "openai",
+                "openai": "openai",
+                "google": "gemini",
+                "gemini": "gemini",
+                "anthropic": "anthropic",
+                "claude": "anthropic",
+                "openrouter": "openrouter",
+                "xai": "xai",
+                "deepseek": "deepseek",
+                "novita": "novita",
+            }
+            return aliases.get(provider, "openrouter")
+        return "openai"
+
+    def _fetch_model_catalog_text(self, url):
+        request = urlrequest.Request(
+            url,
+            headers={
+                "User-Agent": "DockerInfra/1.0 model-catalog",
+                "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+            },
+        )
+        with urlrequest.urlopen(request, timeout=AGENT_MODEL_CATALOG_TIMEOUT_SECONDS) as response:
+            return response.read(1024 * 1024).decode("utf-8", "replace")
+
+    def _openrouter_model_items(self, url):
+        text = self._fetch_model_catalog_text(url)
+        payload = json.loads(text)
+        rows = payload.get("data") if isinstance(payload, dict) else []
+        items = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            model_id = str(row.get("id") or "").strip()
+            if not model_id:
+                continue
+            name = str(row.get("name") or model_id).strip()
+            description = str(row.get("description") or "").strip()
+            context = row.get("context_length")
+            if context and not description:
+                description = "context %s" % context
+            items.append(self._model_item(model_id, name, description, "OpenRouter"))
+        return sorted(items, key=lambda item: item["label"].lower())[:500]
+
+    def _model_items_from_text(self, provider, text, badge):
+        ids = self._extract_model_ids(provider, text)
+        return [self._model_item(model_id, self._model_label(model_id), "", badge) for model_id in ids]
+
+    def _extract_model_ids(self, provider, text):
+        normalized = str(text or "")
+        ids = set()
+        if provider == "openai":
+            patterns = [
+                r"\bgpt-[a-z0-9][a-z0-9.\-]*(?:-[a-z0-9.\-]+)*\b",
+                r"\bcodex-mini-latest\b",
+                r"\bo[134](?:-[a-z0-9.\-]+)?\b",
+            ]
+        elif provider == "anthropic":
+            patterns = [
+                r"\bclaude-(?:opus|sonnet|haiku)-[a-z0-9.\-]+\b",
+                r"\b(?:sonnet|opus|haiku|opusplan)\b",
+            ]
+        elif provider == "gemini":
+            patterns = [r"\bgemini-[0-9][a-z0-9.\-]*\b"]
+        elif provider == "xai":
+            patterns = [r"\bgrok-[a-z0-9.\-]+\b"]
+        elif provider == "deepseek":
+            patterns = [r"\bdeepseek-(?:chat|reasoner|v[0-9][a-z0-9.\-]*|[a-z0-9.\-]+)\b"]
+        elif provider == "novita":
+            patterns = [r"\b[a-z0-9_.-]+/[a-z0-9_.:\-]+\b"]
+        else:
+            patterns = []
+        for pattern in patterns:
+            for match in re.findall(pattern, normalized, re.I):
+                model_id = str(match or "").strip().lower()
+                if self._model_id_allowed(provider, model_id):
+                    ids.add(model_id)
+        if provider == "anthropic":
+            ids.update(["sonnet", "opus", "haiku", "opusplan"])
+        return sorted(ids, key=lambda value: (self._model_sort_group(provider, value), value))[:500]
+
+    def _model_id_allowed(self, provider, model_id):
+        if not model_id or len(model_id) > 120:
+            return False
+        if provider == "openai":
+            if model_id.startswith("gpt-") or model_id == "codex-mini-latest":
+                return True
+            return model_id in {"o1", "o1-pro", "o3", "o3-pro", "o4-mini"}
+        if provider == "anthropic":
+            return model_id in {"sonnet", "opus", "haiku", "opusplan"} or bool(re.match(r"^claude-(opus|sonnet|haiku)-", model_id))
+        if provider == "gemini":
+            return "deprecated" not in model_id
+        if provider == "deepseek":
+            return model_id not in {"deepseek-ai", "deepseek-api", "deepseek-integration"}
+        if provider == "novita":
+            return not model_id.startswith(("_next/", "logo/", "css/"))
+        return True
+
+    def _model_sort_group(self, provider, model_id):
+        fallback_values = [value for value, _ in MODEL_CATALOG_FALLBACKS.get(provider, [])]
+        if model_id in fallback_values:
+            return fallback_values.index(model_id)
+        return 1000
+
+    def _fallback_model_items(self, provider, badge):
+        return [
+            self._model_item(model_id, label, "공식 출처를 다시 확인할 수 없을 때 쓰는 기본 후보입니다.", badge)
+            for model_id, label in MODEL_CATALOG_FALLBACKS.get(provider, MODEL_CATALOG_FALLBACKS["openai"])
+        ]
+
+    def _ensure_selected_model_item(self, items, selected_model, badge):
+        selected = str(selected_model or "").strip()
+        if not selected:
+            return items
+        if any(str(item.get("value") or "") == selected for item in items):
+            return items
+        return [
+            self._model_item(selected, "%s (현재 설정)" % selected, "현재 저장된 모델입니다.", badge, current=True),
+            *items,
+        ]
+
+    def _model_item(self, model_id, label, description, badge, current=False):
+        return {
+            "value": model_id,
+            "label": label or model_id,
+            "description": description or "",
+            "badge": "현재" if current else badge,
+            "badgeClass": (
+                "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300"
+                if current else
+                "border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300"
+            ),
+        }
+
+    def _model_label(self, model_id):
+        text = str(model_id or "").strip()
+        if "/" in text:
+            return text
+        return " ".join(part.upper() if part in {"gpt", "api"} else part.capitalize() for part in re.split(r"[-_]", text) if part)
 
     def status(self, config=None):
         config = self._normalize_codex_config(config or {})
@@ -325,14 +776,54 @@ class CodexRuntime:
             "status": self.status(config),
         }
 
-    def cli_update_status(self, config=None, env=None):
-        config = self._normalize_codex_config(config or {})
-        codex_status = self.status(config)
-        npm = self._npm_status(env=env)
-        latest_version = self._npm_latest_version(npm.get("executable"), env=env)
-        active = codex_status.get("active") or {}
+    def agent_update_status(self, agent_type, config=None, env=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        if agent_type == "codex":
+            config = self._normalize_codex_config(config or {})
+            agent_status = self.status(config)
+        else:
+            config = self._normalize_agent_config(agent_type, config or {})
+            agent_status = self.agent_status(agent_type, config)
+        active = agent_status.get("active") or {}
         current_raw = active.get("version") or ""
         current_version = self._version_number(current_raw)
+        install_method = self._agent_install_method(agent_type)
+        if install_method == "native":
+            defaults = AGENT_DEFAULTS[agent_type]
+            binary = str(defaults.get("binary") or agent_type).strip()
+            install_url = self._agent_install_url(agent_type, env=env)
+            install_channel = self._agent_install_channel(agent_type, env=env)
+            upgrade_policy = str(defaults.get("upgrade_policy") or "manual").strip().lower()
+            if upgrade_policy not in {"manual", "automatic"}:
+                upgrade_policy = "manual"
+            update = {
+                "checked_at": _utcnow(),
+                "agent": agent_type,
+                "label": _provider_label(agent_type),
+                "install_method": "script",
+                "upgrade_policy": upgrade_policy,
+                "package_name": "%s 설치 스크립트" % _provider_label(agent_type),
+                "current_version": current_version,
+                "current_version_raw": current_raw,
+                "latest_version": "",
+                "update_available": not bool(current_version),
+                "script": {
+                    "available": True,
+                    "install_url": install_url,
+                    "channel": install_channel,
+                    "auto_updates": upgrade_policy == "automatic",
+                },
+                "agent_status": agent_status,
+                "commands": {
+                    "check": "%s --version" % binary,
+                    "install": self.agent_install_script(agent_type, env=env),
+                    "upgrade": self.agent_upgrade_script(agent_type, env=env),
+                },
+            }
+            return update
+        npm = self._npm_status(env=env)
+        package_name = self._agent_npm_package(agent_type, env=env)
+        latest_version = self._npm_latest_version(package_name, npm.get("executable"), env=env)
         update_available = bool(
             latest_version
             and (
@@ -340,34 +831,58 @@ class CodexRuntime:
                 or self._compare_versions(current_version, latest_version) < 0
             )
         )
-        return {
+        update = {
             "checked_at": _utcnow(),
-            "package_name": CODEX_NPM_PACKAGE,
+            "agent": agent_type,
+            "label": _provider_label(agent_type),
+            "install_method": "npm",
+            "upgrade_policy": "manual",
+            "package_name": package_name,
             "current_version": current_version,
             "current_version_raw": current_raw,
             "latest_version": latest_version,
             "update_available": update_available,
             "npm": npm,
-            "codex_status": codex_status,
+            "agent_status": agent_status,
             "commands": {
-                "check": f"npm view {CODEX_NPM_PACKAGE} version --json",
-                "upgrade": f"npm install -g {CODEX_NPM_PACKAGE}@latest",
+                "check": f"npm view {package_name} version --json",
+                "install": self.agent_install_script(agent_type, env=env),
+                "upgrade": f"npm install -g {shlex.quote(package_name)}@latest",
             },
         }
+        if agent_type == "codex":
+            update["codex_status"] = agent_status
+        return update
+
+    def cli_update_status(self, config=None, env=None):
+        return self.agent_update_status("codex", config or {}, env=env)
 
     def upgrade_cli_async(self, config=None, env=None):
         config = self._normalize_codex_config(config or {})
-        update = self.cli_update_status(config, env=env)
+        try:
+            update = self.cli_update_status(config, env=env)
+        except CodexRuntimeError:
+            update = {
+                "checked_at": _utcnow(),
+                "package_name": CODEX_NPM_PACKAGE,
+                "current_version": "",
+                "current_version_raw": "",
+                "latest_version": "",
+                "update_available": True,
+                "npm": self._npm_status(env=env),
+                "codex_status": self.status(config),
+                "commands": {"install": self.agent_install_script("codex")},
+            }
         operation = operations.create(
             "codex.cli.upgrade",
             target_type="system",
             target_id="codex-cli",
-            message="Codex CLI 업그레이드를 시작합니다.",
+            message="Codex CLI 설치/업데이트 스크립트를 시작합니다.",
             requested_payload={
                 "package_name": CODEX_NPM_PACKAGE,
                 "current_version": update.get("current_version"),
                 "latest_version": update.get("latest_version"),
-                "command": update.get("commands", {}).get("upgrade"),
+                "command": update.get("commands", {}).get("install") or update.get("commands", {}).get("upgrade"),
             },
             metadata={"background": True, "package_name": CODEX_NPM_PACKAGE},
             env=env,
@@ -382,28 +897,182 @@ class CodexRuntime:
         threading.Thread(target=worker, daemon=True).start()
         return {"operation": operation, "update": update}
 
-    def _run_cli_upgrade_operation(self, operation_id, config, before, env=None):
-        npm_executable = ((before or {}).get("npm") or {}).get("executable")
-        if not npm_executable or not _is_executable_file(npm_executable):
-            raise CodexRuntimeError(
-                503,
-                "npm 실행 파일을 찾을 수 없습니다.",
-                "CODEX_NPM_EXECUTABLE_NOT_FOUND",
-                {"npm": before.get("npm") if isinstance(before, dict) else {}},
-            )
+    def install_agent_async(self, agent_type, config=None, env=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        if agent_type == "codex":
+            config = self._normalize_codex_config(config or {})
+        else:
+            config = self._normalize_agent_config(agent_type, config or {})
+        before = self.agent_status(agent_type, config)
+        before_update = None
+        try:
+            before_update = self.agent_update_status(agent_type, config, env=env)
+        except Exception:
+            before_update = None
+        script = self.agent_install_script(agent_type, env=env)
+        action = "install"
+        if (
+            self._agent_install_method(agent_type) == "native"
+            and (before_update or {}).get("current_version")
+            and str((before_update or {}).get("upgrade_policy") or "manual") == "manual"
+        ):
+            script = self.agent_upgrade_script(agent_type, env=env)
+            action = "upgrade"
+        operation = operations.create(
+            "ai.agent.install",
+            target_type="system",
+            target_id=agent_type,
+            message="%s 설치/업데이트 스크립트를 시작합니다." % _provider_label(agent_type),
+            requested_payload={
+                "agent": agent_type,
+                "label": _provider_label(agent_type),
+                "action": action,
+                "script": script,
+                "update": before_update,
+            },
+            metadata={"background": True, "agent": agent_type, "label": _provider_label(agent_type)},
+            env=env,
+        )
 
+        def worker():
+            try:
+                self._run_agent_install_operation(operation["id"], agent_type, config, before, before_update, script, env=env)
+            except Exception as exc:
+                self._finish_agent_install_failure(operation["id"], exc, env=env)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"operation": operation, "status": before, "update": before_update, "script": script, "action": action}
+
+    def agent_install_script(self, agent_type, env=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        run_env = os.environ if env is None else env
+        defaults = AGENT_DEFAULTS[agent_type]
+        override = str(run_env.get(defaults.get("install_script_env") or "") or "").strip()
+        if override:
+            return override
+        if self._agent_install_method(agent_type) == "native":
+            install_url = self._agent_install_url(agent_type, env=env)
+            install_channel = self._agent_install_channel(agent_type, env=env)
+            binary = str(defaults.get("binary") or agent_type).strip()
+            cleanup_package = str(defaults.get("cleanup_npm_package") or "").strip()
+            cleanup_lines = []
+            if cleanup_package:
+                cleanup_lines = [
+                    f"if command -v npm >/dev/null 2>&1 && npm list -g --depth=0 {shlex.quote(cleanup_package)} >/dev/null 2>&1; then",
+                    f'  printf "cleaning previous {_provider_label(agent_type)} install\\n"',
+                    f"  npm uninstall -g {shlex.quote(cleanup_package)} >/dev/null",
+                    "  hash -r || true",
+                    "fi",
+                ]
+            if not install_url:
+                raise CodexRuntimeError(
+                    400,
+                    "%s 설치 스크립트 URL이 설정되지 않았습니다." % _provider_label(agent_type),
+                    "AI_AGENT_INSTALL_URL_REQUIRED",
+                    {"agent": agent_type},
+                )
+            return "\n".join(
+                [
+                    "set -Eeuo pipefail",
+                    "export DEBIAN_FRONTEND=noninteractive",
+                    'export HOME="${HOME:-/root}"',
+                    'export PATH="$HOME/.local/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"',
+                    "if ! command -v curl >/dev/null 2>&1; then",
+                    "  apt-get update",
+                    "  apt-get install -y --no-install-recommends ca-certificates curl",
+                    "fi",
+                    *cleanup_lines,
+                    f"install_url={shlex.quote(install_url)}",
+                    f"install_channel={shlex.quote(install_channel)}",
+                    'installer="$(mktemp)"',
+                    'cleanup() { rm -f "$installer"; }',
+                    "trap cleanup EXIT",
+                    'curl -fsSL "$install_url" -o "$installer"',
+                    'if [ -n "$install_channel" ]; then',
+                    '  bash "$installer" "$install_channel"',
+                    "else",
+                    '  bash "$installer"',
+                    "fi",
+                    f'agent_bin="$(command -v {shlex.quote(binary)} || true)"',
+                    f'if [ -z "$agent_bin" ] && [ -x "$HOME/.local/bin/{shlex.quote(binary)}" ]; then agent_bin="$HOME/.local/bin/{shlex.quote(binary)}"; fi',
+                    f'if [ -z "$agent_bin" ] && [ -x "/root/.local/bin/{shlex.quote(binary)}" ]; then agent_bin="/root/.local/bin/{shlex.quote(binary)}"; fi',
+                    'test -n "$agent_bin"',
+                    '"$agent_bin" --version',
+                    'printf "installed executable: %s\\n" "$agent_bin"',
+                ]
+            )
+        package = str(run_env.get(defaults.get("npm_package_env") or "") or defaults.get("npm_package") or "").strip()
+        binary = str(defaults.get("binary") or agent_type).strip()
+        if not package:
+            raise CodexRuntimeError(
+                400,
+                "%s 설치 패키지가 설정되지 않았습니다." % _provider_label(agent_type),
+                "AI_AGENT_INSTALL_PACKAGE_REQUIRED",
+                {"agent": agent_type},
+            )
+        binary_check = f"command -v {shlex.quote(binary)}"
+        if agent_type == "hermes":
+            binary_check = "command -v hermes-agent || command -v hermes"
+        return "\n".join(
+            [
+                "set -Eeuo pipefail",
+                "export DEBIAN_FRONTEND=noninteractive",
+                "if ! command -v npm >/dev/null 2>&1; then",
+                "  apt-get update",
+                "  apt-get install -y --no-install-recommends ca-certificates curl gnupg",
+                "  setup_script=\"$(mktemp)\"",
+                f"  curl -fsSL \"${{NODE_SOURCE_SETUP_URL:-{NODE_SOURCE_SETUP_URL}}}\" -o \"$setup_script\"",
+                "  bash \"$setup_script\"",
+                "  rm -f \"$setup_script\"",
+                "  apt-get install -y --no-install-recommends nodejs",
+                "fi",
+                "node --version",
+                "npm --version",
+                f"npm install -g {shlex.quote(package)}@latest",
+                f"agent_bin=\"$({binary_check})\"",
+                "test -n \"$agent_bin\"",
+                "\"$agent_bin\" --version || true",
+                "printf 'installed executable: %s\\n' \"$agent_bin\"",
+            ]
+        )
+
+    def agent_upgrade_script(self, agent_type, env=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        if agent_type == "codex":
+            return self.agent_install_script("codex", env=env)
+        defaults = AGENT_DEFAULTS[agent_type]
+        upgrade_command = str(defaults.get("upgrade_command") or "").strip()
+        if self._agent_install_method(agent_type) != "native" or not upgrade_command:
+            return self.agent_install_script(agent_type, env=env)
+        binary = str(defaults.get("binary") or agent_type).strip()
+        return "\n".join(
+            [
+                "set -Eeuo pipefail",
+                'export HOME="${HOME:-/root}"',
+                'export PATH="$HOME/.local/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"',
+                f'agent_bin="$(command -v {shlex.quote(binary)} || true)"',
+                f'if [ -z "$agent_bin" ] && [ -x "$HOME/.local/bin/{shlex.quote(binary)}" ]; then agent_bin="$HOME/.local/bin/{shlex.quote(binary)}"; fi',
+                f'if [ -z "$agent_bin" ] && [ -x "/root/.local/bin/{shlex.quote(binary)}" ]; then agent_bin="/root/.local/bin/{shlex.quote(binary)}"; fi',
+                'test -n "$agent_bin"',
+                f"{upgrade_command}",
+                '"$agent_bin" --version',
+                'printf "updated executable: %s\\n" "$agent_bin"',
+            ]
+        )
+
+    def _run_cli_upgrade_operation(self, operation_id, config, before, env=None):
         current = before.get("current_version") or "미설치"
         latest = before.get("latest_version") or "확인 실패"
         self._append_cli_upgrade_output(
             operation_id,
-            f"공식 Codex CLI npm 패키지: {CODEX_NPM_PACKAGE}\n현재 버전: {current}\n최신 버전: {latest}\n",
+            f"공식 Codex CLI npm 패키지: {CODEX_NPM_PACKAGE}\n현재 버전: {current}\n최신 버전: {latest}\n설치 방식: 시스템 설정 설치 스크립트\n",
             env=env,
         )
-        command = [npm_executable, "install", "-g", f"{CODEX_NPM_PACKAGE}@latest"]
+        command = ["bash", "-lc", self.agent_install_script("codex", env=env)]
         result = self._run_logged_command(
             operation_id,
             command,
-            timeout=CODEX_NPM_INSTALL_TIMEOUT_SECONDS,
+            timeout=AGENT_INSTALL_TIMEOUT_SECONDS,
             env=env,
         )
         after_status = self.status(config)
@@ -433,22 +1102,83 @@ class CodexRuntime:
             "after": after,
         }
         if result.get("exit_code") != 0:
-            message = self._npm_failure_message(result)
+            message = self._agent_install_failure_message("codex", result)
             operations.transition(operation_id, "failed", message=message, result_payload=result_payload, env=env)
             return
         operations.transition(
             operation_id,
             "succeeded",
-            message="Codex CLI 업그레이드를 완료했습니다.",
+            message="Codex CLI 설치/업데이트를 완료했습니다.",
             result_payload=result_payload,
             env=env,
         )
+
+    def _run_agent_install_operation(self, operation_id, agent_type, config, before, before_update, script, env=None):
+        self._append_cli_upgrade_output(
+            operation_id,
+            "%s 설치/업데이트 스크립트\n" % _provider_label(agent_type),
+            env=env,
+        )
+        result = self._run_logged_command(
+            operation_id,
+            ["bash", "-lc", script],
+            timeout=AGENT_INSTALL_TIMEOUT_SECONDS,
+            env=env,
+        )
+        after = self.agent_status(agent_type, config)
+        after_update = None
+        try:
+            after_update = self.agent_update_status(agent_type, config, env=env)
+        except Exception:
+            after_update = None
+        result_payload = {
+            "ok": result.get("exit_code") == 0,
+            "agent": agent_type,
+            "label": _provider_label(agent_type),
+            "exit_code": result.get("exit_code"),
+            "timed_out": bool(result.get("timed_out")),
+            "before": before,
+            "after": after,
+            "before_update": before_update,
+            "after_update": after_update,
+        }
+        if result.get("exit_code") != 0:
+            operations.transition(
+                operation_id,
+                "failed",
+                message=self._agent_install_failure_message(agent_type, result),
+                result_payload=result_payload,
+                env=env,
+            )
+            return
+        operations.transition(
+            operation_id,
+            "succeeded",
+            message="%s 설치/업데이트를 완료했습니다." % _provider_label(agent_type),
+            result_payload=result_payload,
+            env=env,
+        )
+
+    def _finish_agent_install_failure(self, operation_id, exc, env=None):
+        message = getattr(exc, "message", str(exc))
+        result_payload = {
+            "ok": False,
+            "error_code": getattr(exc, "error_code", "AI_AGENT_INSTALL_FAILED"),
+        }
+        details = getattr(exc, "details", None)
+        if isinstance(details, dict):
+            result_payload.update(details)
+        try:
+            operations.append_output(operation_id, message + "\n", stream="stderr", env=env)
+            operations.transition(operation_id, "failed", message=message, result_payload=result_payload, env=env)
+        except Exception:
+            pass
 
     def _finish_cli_upgrade_failure(self, operation_id, exc, env=None):
         message = getattr(exc, "message", str(exc))
         result_payload = {
             "ok": False,
-            "error_code": getattr(exc, "error_code", "CODEX_CLI_UPGRADE_FAILED"),
+            "error_code": getattr(exc, "error_code", "CODEX_CLI_INSTALL_FAILED"),
         }
         details = getattr(exc, "details", None)
         if isinstance(details, dict):
@@ -497,6 +1227,7 @@ class CodexRuntime:
                     stdout=slave_fd,
                     stderr=slave_fd,
                     close_fds=True,
+                    cwd=str(WORKSPACE_ROOT),
                     env=self._codex_env(config),
                 )
             except Exception as exc:
@@ -566,7 +1297,141 @@ class CodexRuntime:
             public = self._device_login_public(session) if session else None
         return {"device_login": public, "codex_status": self.status(config)}
 
+    def start_claude_login(self, config=None):
+        config = self._normalize_agent_config("claude_code", config or {})
+        executable = self._claude_login_executable(config)
+        command = [executable, "auth", "login"]
+        deduplicated_public = None
+        with self._claude_login_lock:
+            current = self._claude_login
+            if current and self._claude_login_running(current):
+                deduplicated_public = self._claude_login_public(current)
+            if deduplicated_public is None:
+                self._claude_login = None
+        if deduplicated_public is not None:
+            return {"claude_login": deduplicated_public, "agent_status": self.agent_status("claude_code", config), "deduplicated": True}
+
+        with self._claude_login_lock:
+            session = {
+                "id": str(uuid.uuid4()),
+                "status": "starting",
+                "started_at": _utcnow(),
+                "finished_at": None,
+                "verification_uri": "",
+                "message": "Claude Code 브라우저 로그인을 시작합니다.",
+                "output": [],
+                "exit_code": None,
+                "command": "claude auth login",
+                "requires_code": False,
+            }
+            master_fd = None
+            slave_fd = None
+            try:
+                master_fd, slave_fd = pty.openpty()
+                process = subprocess.Popen(
+                    command,
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    close_fds=True,
+                    cwd=str(WORKSPACE_ROOT),
+                    env=self._agent_env({"type": "claude_code", "home": config.get("home")}),
+                )
+            except Exception as exc:
+                for fd in [master_fd, slave_fd]:
+                    if fd is not None:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                raise CodexRuntimeError(
+                    502,
+                    "Claude Code 브라우저 로그인을 시작할 수 없습니다: %s" % exc,
+                    "CLAUDE_LOGIN_START_FAILED",
+                    {"command": command},
+                )
+            finally:
+                if slave_fd is not None:
+                    try:
+                        os.close(slave_fd)
+                    except OSError:
+                        pass
+            session["process"] = process
+            session["pty_master_fd"] = master_fd
+            self._claude_login = session
+            threading.Thread(target=self._read_claude_login_output, args=(session,), daemon=True).start()
+
+        deadline = time.time() + CLAUDE_LOGIN_START_TIMEOUT_SECONDS
+        while time.time() < deadline:
+            with self._claude_login_lock:
+                current = self._claude_login_public(self._claude_login) if self._claude_login else {}
+            if current.get("verification_uri") or current.get("status") in {"failed", "succeeded", "waiting_for_code"}:
+                break
+            time.sleep(0.1)
+        return self.claude_login_status(config)
+
+    def claude_login_status(self, config=None):
+        config = self._normalize_agent_config("claude_code", config or {})
+        with self._claude_login_lock:
+            session = self._claude_login
+            if session:
+                self._refresh_claude_login_locked(session)
+                public = self._claude_login_public(session)
+            else:
+                public = None
+        agent_status = self.agent_status("claude_code", config)
+        if public and (agent_status.get("login") or {}).get("logged_in") and public.get("status") in {"starting", "waiting_for_user", "waiting_for_code", "verifying"}:
+            with self._claude_login_lock:
+                session = self._claude_login
+                if session and session.get("id") == public.get("id"):
+                    session["status"] = "succeeded"
+                    session["message"] = "Claude Code 로그인이 완료되었습니다."
+                    session["finished_at"] = session.get("finished_at") or _utcnow()
+                    public = self._claude_login_public(session)
+        return {"claude_login": public, "agent_status": agent_status}
+
+    def submit_claude_login_code(self, code, config=None):
+        config = self._normalize_agent_config("claude_code", config or {})
+        value = str(code or "").strip()
+        if not value:
+            raise CodexRuntimeError(400, "Claude Code 로그인 코드를 입력하세요.", "CLAUDE_LOGIN_CODE_REQUIRED")
+        with self._claude_login_lock:
+            session = self._claude_login
+            if not session or not self._claude_login_running(session):
+                raise CodexRuntimeError(409, "진행 중인 Claude Code 브라우저 로그인이 없습니다.", "CLAUDE_LOGIN_NOT_RUNNING")
+            master_fd = session.get("pty_master_fd")
+            if master_fd is None:
+                raise CodexRuntimeError(409, "Claude Code 로그인 입력 채널을 찾을 수 없습니다.", "CLAUDE_LOGIN_INPUT_UNAVAILABLE")
+            try:
+                os.write(master_fd, (value + "\n").encode("utf-8"))
+            except Exception as exc:
+                raise CodexRuntimeError(502, "Claude Code 로그인 코드를 전달할 수 없습니다: %s" % exc, "CLAUDE_LOGIN_CODE_SUBMIT_FAILED")
+            session["status"] = "verifying"
+            session["message"] = "Claude Code 로그인 코드를 확인하고 있습니다."
+            session["submitted_code"] = True
+            public = self._claude_login_public(session)
+        return {"claude_login": public, "agent_status": self.agent_status("claude_code", config)}
+
+    def cancel_claude_login(self, config=None):
+        config = self._normalize_agent_config("claude_code", config or {})
+        with self._claude_login_lock:
+            session = self._claude_login
+            if session and self._claude_login_running(session):
+                try:
+                    session["process"].terminate()
+                except Exception:
+                    pass
+                session["status"] = "canceled"
+                session["message"] = "Claude Code 브라우저 로그인을 취소했습니다."
+                session["finished_at"] = _utcnow()
+            public = self._claude_login_public(session) if session else None
+        return {"claude_login": public, "agent_status": self.agent_status("claude_code", config)}
+
     def _device_login_running(self, session):
+        process = (session or {}).get("process")
+        return bool(process and process.poll() is None)
+
+    def _claude_login_running(self, session):
         process = (session or {}).get("process")
         return bool(process and process.poll() is None)
 
@@ -641,13 +1506,21 @@ class CodexRuntime:
             url_match = re.search(r"https://\S+", text)
             if url_match:
                 session["verification_uri"] = url_match.group(0).rstrip(".,)")
-            code_match = re.search(r"\b[A-Z0-9]{4,}-[A-Z0-9]{4,}\b", text)
+            code_match = re.search(r"\b[A-Z0-9]{4,}-[A-Z0-9]{4,}\b", text, re.I)
+            if not code_match:
+                code_match = re.search(r"(?:user\s*code|device\s*code|code)\s*[:=]?\s*([A-Z0-9]{6,12})\b", text, re.I)
+            if not code_match and session.get("verification_uri"):
+                code_match = re.search(r"(?:user_code|code)=([A-Z0-9-]{4,20})", session.get("verification_uri"), re.I)
             if code_match:
-                session["user_code"] = code_match.group(0)
+                session["user_code"] = (code_match.group(1) if code_match.lastindex else code_match.group(0)).upper()
             if session.get("user_code") or session.get("verification_uri"):
                 if session.get("status") == "starting":
                     session["status"] = "waiting_for_user"
                 session["message"] = "브라우저에서 Codex device 로그인을 완료해주세요."
+            lowered = text.lower()
+            if "logged in" in lowered or "login successful" in lowered or "authenticated" in lowered:
+                session["status"] = "succeeded"
+                session["message"] = "Codex 로그인이 완료되었습니다."
 
     def _refresh_device_login_locked(self, session):
         if not session:
@@ -682,20 +1555,246 @@ class CodexRuntime:
             "output": (session.get("output") or [])[-20:],
         }
 
+    def _read_claude_login_output(self, session):
+        process = session.get("process")
+        if not process:
+            return
+        master_fd = session.get("pty_master_fd")
+        if master_fd is not None:
+            self._read_claude_login_pty(session, process, master_fd)
+        elif process.stdout:
+            self._read_claude_login_pipe(session, process)
+        exit_code = process.wait()
+        with self._claude_login_lock:
+            if self._claude_login and self._claude_login.get("id") == session.get("id"):
+                session["exit_code"] = exit_code
+                session["finished_at"] = _utcnow()
+                if session.get("status") != "canceled":
+                    session["status"] = "succeeded" if exit_code == 0 else "failed"
+                    session["message"] = "Claude Code 로그인이 완료되었습니다." if exit_code == 0 else "Claude Code 브라우저 로그인이 종료되었습니다."
+
+    def _read_claude_login_pipe(self, session, process):
+        try:
+            for line in process.stdout:
+                self._append_claude_login_output(session, line)
+        except Exception as exc:
+            self._append_claude_login_output(session, "Claude Code 로그인 출력 수집 오류: %s" % exc)
+
+    def _read_claude_login_pty(self, session, process, master_fd):
+        buffer = ""
+        try:
+            while True:
+                timeout = 0 if process.poll() is not None else 0.2
+                ready, _, _ = select.select([master_fd], [], [], timeout)
+                if not ready:
+                    if process.poll() is not None:
+                        break
+                    continue
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except OSError as exc:
+                    if exc.errno in {errno.EIO, errno.EBADF}:
+                        break
+                    raise
+                if not chunk:
+                    break
+                buffer += chunk.decode("utf-8", "replace")
+                lines = buffer.replace("\r", "\n").split("\n")
+                buffer = lines.pop() or ""
+                for line in lines:
+                    self._append_claude_login_output(session, line)
+        except Exception as exc:
+            self._append_claude_login_output(session, "Claude Code 로그인 출력 수집 오류: %s" % exc)
+        finally:
+            if buffer.strip():
+                self._append_claude_login_output(session, buffer)
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+
+    def _append_claude_login_output(self, session, line):
+        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(line or "")).strip()
+        if not text:
+            return
+        with self._claude_login_lock:
+            if self._claude_login and self._claude_login.get("id") != session.get("id"):
+                return
+            output = session.setdefault("output", [])
+            output.append(text)
+            session["output"] = output[-80:]
+            url_match = re.search(r"https://\S+", text)
+            if url_match:
+                session["verification_uri"] = url_match.group(0).rstrip(".,)")
+            lowered = text.lower()
+            if "paste code" in lowered or "code here" in lowered:
+                session["requires_code"] = True
+                if session.get("status") in {"starting", "waiting_for_user"}:
+                    session["status"] = "waiting_for_code"
+                session["message"] = "브라우저에서 인증한 뒤 표시되는 코드를 입력하세요."
+            elif session.get("verification_uri") and session.get("status") == "starting":
+                session["status"] = "waiting_for_user"
+                session["message"] = "브라우저에서 Claude Code 로그인을 진행하세요."
+            if "successfully" in lowered and "installed" not in lowered:
+                session["status"] = "succeeded"
+                session["message"] = "Claude Code 로그인이 완료되었습니다."
+            if "logged in" in lowered or "login successful" in lowered or "authenticated" in lowered:
+                session["status"] = "succeeded"
+                session["message"] = "Claude Code 로그인이 완료되었습니다."
+
+    def _refresh_claude_login_locked(self, session):
+        if not session:
+            return
+        process = session.get("process")
+        if not process:
+            return
+        exit_code = process.poll()
+        if exit_code is None:
+            return
+        session["exit_code"] = exit_code
+        if not session.get("finished_at"):
+            session["finished_at"] = _utcnow()
+        if session.get("status") in {"starting", "waiting_for_user", "waiting_for_code", "verifying"}:
+            session["status"] = "succeeded" if exit_code == 0 else "failed"
+            session["message"] = "Claude Code 로그인이 완료되었습니다." if exit_code == 0 else "Claude Code 브라우저 로그인이 종료되었습니다."
+
+    def _claude_login_public(self, session):
+        if not session:
+            return None
+        return {
+            "id": session.get("id"),
+            "status": session.get("status"),
+            "started_at": session.get("started_at"),
+            "finished_at": session.get("finished_at"),
+            "verification_uri": session.get("verification_uri") or "",
+            "requires_code": bool(session.get("requires_code")),
+            "submitted_code": bool(session.get("submitted_code")),
+            "message": session.get("message") or "",
+            "exit_code": session.get("exit_code"),
+            "command": session.get("command") or "claude auth login",
+            "output": (session.get("output") or [])[-20:],
+        }
+
     def _normalize_codex_config(self, config):
         config = dict(config or {})
         model = str(config.get("model") or CODEX_LOGIN_DEFAULT_MODEL).strip() or CODEX_LOGIN_DEFAULT_MODEL
         reasoning_effort = str(config.get("reasoning_effort") or CODEX_LOGIN_DEFAULT_REASONING_EFFORT).strip().lower()
         if reasoning_effort not in CODEX_REASONING_EFFORTS:
             reasoning_effort = CODEX_LOGIN_DEFAULT_REASONING_EFFORT
-        codex_home = str(config.get("codex_home") or "").strip()
         return {
             "enabled": self._as_bool(config.get("enabled")),
             "cli_mode": "system",
             "model": model,
             "reasoning_effort": reasoning_effort,
-            "codex_home": codex_home,
+            "codex_home": "",
         }
+
+    def _normalize_agent_type(self, agent_type):
+        agent_type = str(agent_type or "").strip().lower().replace("-", "_")
+        aliases = {
+            "claude": "claude_code",
+            "claudecode": "claude_code",
+            "claude_code": "claude_code",
+            "hermes_agent": "hermes",
+            "hermes": "hermes",
+            "codex": "codex",
+        }
+        agent_type = aliases.get(agent_type, agent_type)
+        if agent_type not in AGENT_TYPES:
+            raise CodexRuntimeError(400, "지원하지 않는 AI Agent입니다.", "AI_AGENT_NOT_SUPPORTED")
+        return agent_type
+
+    def _normalize_agent_config(self, agent_type, config):
+        agent_type = self._normalize_agent_type(agent_type)
+        if agent_type == "codex":
+            normalized = self._normalize_codex_config(config or {})
+            normalized.update({"type": "codex", "home": normalized.get("codex_home") or "", "executable": ""})
+            return normalized
+        config = dict(config or {})
+        defaults = AGENT_DEFAULTS[agent_type]
+        model = str(config.get("model") or defaults["model"]).strip() or defaults["model"]
+        normalized = {
+            "type": agent_type,
+            "enabled": self._as_bool(config.get("enabled")),
+            "model": model,
+            "executable": "",
+            "home": str(config.get("home") or self._default_agent_home(agent_type)),
+            "command_template": defaults.get("default_command_template", ""),
+        }
+        if agent_type == "hermes":
+            provider = str(config.get("provider") or "openrouter").strip() or "openrouter"
+            api_key_env = str(config.get("api_key_env") or self._default_hermes_api_key_env(provider)).strip().upper()
+            terminal_backend = str(config.get("terminal_backend") or "local").strip().lower() or "local"
+            if terminal_backend not in {"local", "docker", "ssh", "modal", "daytona", "singularity"}:
+                terminal_backend = "local"
+            terminal_timeout = self._safe_int(config.get("terminal_timeout"), 180, 10, 7200)
+            normalized.update(
+                {
+                    "provider": provider,
+                    "api_key_env": api_key_env,
+                    "terminal_backend": terminal_backend,
+                    "terminal_cwd": str(config.get("terminal_cwd") or WORKSPACE_ROOT),
+                    "terminal_timeout": terminal_timeout,
+                }
+            )
+        return normalized
+
+    def _safe_int(self, value, default, minimum=None, maximum=None):
+        try:
+            number = int(value)
+        except Exception:
+            number = int(default)
+        if minimum is not None:
+            number = max(int(minimum), number)
+        if maximum is not None:
+            number = min(int(maximum), number)
+        return number
+
+    def _default_hermes_api_key_env(self, provider):
+        key_map = {
+            "openrouter": "OPENROUTER_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai-api": "OPENAI_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "gemini": "GOOGLE_API_KEY",
+            "google": "GOOGLE_API_KEY",
+            "xai": "XAI_API_KEY",
+            "deepseek": "DEEPSEEK_API_KEY",
+            "novita": "NOVITA_API_KEY",
+        }
+        return key_map.get(str(provider or "").strip().lower(), "OPENROUTER_API_KEY")
+
+    def _hermes_api_key_env_names(self, provider, api_key_env=None):
+        names = []
+        for name in [api_key_env, self._default_hermes_api_key_env(provider)]:
+            name = str(name or "").strip().upper()
+            if name and name not in names:
+                names.append(name)
+        if str(provider or "").strip().lower() in {"gemini", "google"}:
+            for name in ["GOOGLE_API_KEY", "GEMINI_API_KEY"]:
+                if name not in names:
+                    names.append(name)
+        return names
+
+    def _hermes_api_key_configured(self, env_path, provider, api_key_env):
+        for key in self._hermes_api_key_env_names(provider, api_key_env):
+            if self._env_file_has_key(env_path, key) or os.environ.get(key):
+                return True
+        return False
+
+    def _default_agent_home(self, agent_type):
+        agent_type = self._normalize_agent_type(agent_type)
+        if agent_type == "codex":
+            return ""
+        env_keys = {
+            "claude_code": ["DOCKER_INFRA_CLAUDE_CODE_HOME", "CLAUDE_HOME"],
+            "hermes": ["DOCKER_INFRA_HERMES_AGENT_HOME", "HERMES_HOME"],
+        }.get(agent_type, [])
+        for env_key in env_keys:
+            configured = str(os.environ.get(env_key) or "").strip()
+            if configured:
+                return str(Path(configured).expanduser())
+        return str(AGENT_RUNTIME_HOME_ROOT / agent_type)
 
     def _as_bool(self, value):
         if value is None:
@@ -718,6 +1817,37 @@ class CodexRuntime:
             if _is_executable_file(candidate):
                 return str(candidate)
         return ""
+
+    def _agent_executable(self, agent_type, config=None):
+        agent_type = self._normalize_agent_type(agent_type)
+        config = self._normalize_agent_config(agent_type, config or {})
+        if agent_type == "codex":
+            return self._system_codex_executable()
+        explicit = os.environ.get(self._agent_env_bin_key(agent_type))
+        if explicit:
+            candidate = Path(explicit).expanduser()
+            if _is_executable_file(candidate):
+                return str(candidate)
+        path_name = str(AGENT_DEFAULTS[agent_type].get("binary") or ("claude" if agent_type == "claude_code" else "hermes-agent"))
+        path_executable = shutil.which(path_name, path=_augmented_path())
+        if path_executable and _is_executable_file(path_executable):
+            return path_executable
+        if agent_type == "hermes":
+            fallback = shutil.which("hermes", path=_augmented_path())
+            if fallback and _is_executable_file(fallback):
+                return fallback
+        candidates = SYSTEM_CLAUDE_EXECUTABLE_CANDIDATES if agent_type == "claude_code" else SYSTEM_HERMES_EXECUTABLE_CANDIDATES
+        for candidate_path in candidates:
+            candidate = Path(candidate_path).expanduser()
+            if _is_executable_file(candidate):
+                return str(candidate)
+        return ""
+
+    def _agent_env_bin_key(self, agent_type):
+        return {
+            "claude_code": "DOCKER_INFRA_CLAUDE_CODE_BIN",
+            "hermes": "DOCKER_INFRA_HERMES_AGENT_BIN",
+        }.get(agent_type, "DOCKER_INFRA_SYSTEM_CODEX_BIN")
 
     def _npm_executable(self):
         explicit = os.environ.get("DOCKER_INFRA_NPM_BIN")
@@ -748,7 +1878,8 @@ class CodexRuntime:
             "version": version,
         }
 
-    def _npm_latest_version(self, npm_executable=None, env=None):
+    def _npm_latest_version(self, package_name=CODEX_NPM_PACKAGE, npm_executable=None, env=None):
+        package_name = str(package_name or CODEX_NPM_PACKAGE).strip()
         executable = npm_executable or self._npm_executable()
         if not executable or not _is_executable_file(executable):
             raise CodexRuntimeError(
@@ -758,14 +1889,14 @@ class CodexRuntime:
                 {"npm_executable": executable or ""},
             )
         result = self._command_result(
-            [executable, "view", CODEX_NPM_PACKAGE, "version", "--json"],
+            [executable, "view", package_name, "version", "--json"],
             env=env,
             timeout=CODEX_NPM_VIEW_TIMEOUT_SECONDS,
         )
         if result.get("exit_code") != 0:
             raise CodexRuntimeError(
                 502,
-                "npm에서 Codex CLI 최신 버전을 확인할 수 없습니다.",
+                "npm에서 %s 최신 버전을 확인할 수 없습니다." % package_name,
                 "CODEX_NPM_VIEW_FAILED",
                 {"npm": self._safe_command_result(result)},
             )
@@ -790,6 +1921,151 @@ class CodexRuntime:
             "CODEX_LOGIN_EXECUTABLE_NOT_FOUND",
             {"path_codex": executable},
         )
+
+    def _claude_login_executable(self, config):
+        config = self._normalize_agent_config("claude_code", config or {})
+        executable = self._agent_executable("claude_code", config)
+        if executable and _is_executable_file(executable):
+            return executable
+        raise CodexRuntimeError(
+            503,
+            "Claude Code CLI를 찾을 수 없습니다. 먼저 설치 스크립트를 실행하세요.",
+            "CLAUDE_LOGIN_EXECUTABLE_NOT_FOUND",
+            {"path_claude": executable},
+        )
+
+    def _claude_auth_status(self, executable, config):
+        if not executable or not _is_executable_file(executable):
+            return {
+                "status": "missing",
+                "logged_in": False,
+                "message": "Claude Code CLI 실행 파일을 찾을 수 없습니다.",
+                "exit_code": None,
+                "checked_at": _utcnow(),
+            }
+        run_env = self._agent_env({"type": "claude_code", "home": (config or {}).get("home")})
+        result = self._command_result([executable, "auth", "status", "--text"], env=run_env, timeout=CODEX_STATUS_TIMEOUT_SECONDS)
+        output = ((result.get("stdout") or "") + "\n" + (result.get("stderr") or result.get("error") or "")).strip()
+        lowered = output.lower()
+        logged_in = result.get("exit_code") == 0 and "not logged in" not in lowered
+        if logged_in:
+            status = "ok"
+            message = output.splitlines()[0] if output else "Claude Code 로그인이 확인되었습니다."
+        elif "not logged in" in lowered:
+            status = "unauthenticated"
+            message = output.splitlines()[0] if output else "Claude Code 로그인이 필요합니다."
+        elif result.get("timeout"):
+            status = "error"
+            message = "Claude Code 로그인 상태 확인 시간이 초과되었습니다."
+        else:
+            status = "error"
+            message = output.splitlines()[0] if output else "Claude Code 로그인 상태를 확인할 수 없습니다."
+        return {
+            "status": status,
+            "logged_in": logged_in,
+            "message": message,
+            "exit_code": result.get("exit_code"),
+            "checked_at": _utcnow(),
+        }
+
+    def hermes_config_status(self, config=None):
+        config = self._normalize_agent_config("hermes", config or {})
+        home = Path(config.get("home") or self._default_agent_home("hermes")).expanduser()
+        env_path = home / ".env"
+        config_path = home / "config.yaml"
+        api_key_env = str(config.get("api_key_env") or "").strip().upper()
+        api_key_configured = self._hermes_api_key_configured(env_path, config.get("provider"), api_key_env)
+        return {
+            "home": str(home),
+            "config_path": str(config_path),
+            "env_path": str(env_path),
+            "provider": config.get("provider") or "",
+            "model": config.get("model") or "",
+            "api_key_env": api_key_env,
+            "api_key_configured": api_key_configured,
+            "terminal_backend": config.get("terminal_backend") or "local",
+            "terminal_cwd": config.get("terminal_cwd") or str(WORKSPACE_ROOT),
+            "terminal_timeout": int(config.get("terminal_timeout") or 180),
+        }
+
+    def apply_hermes_settings(self, config=None, secret_value=None):
+        config = self._normalize_agent_config("hermes", config or {})
+        status = self.hermes_config_status(config)
+        home = Path(status["home"]).expanduser()
+        home.mkdir(parents=True, exist_ok=True)
+        config_path = Path(status["config_path"])
+        env_path = Path(status["env_path"])
+        self._write_hermes_config(config_path, config)
+        api_key_env = str(config.get("api_key_env") or self._default_hermes_api_key_env(config.get("provider"))).strip().upper()
+        if api_key_env and str(secret_value or "").strip():
+            for key in self._hermes_api_key_env_names(config.get("provider"), api_key_env):
+                self._upsert_env_file_value(env_path, key, str(secret_value).strip())
+        self._upsert_env_file_value(env_path, "HERMES_INFERENCE_PROVIDER", config.get("provider") or "openrouter")
+        self._upsert_env_file_value(env_path, "HERMES_INFERENCE_MODEL", config.get("model") or AGENT_DEFAULTS["hermes"]["model"])
+        self._upsert_env_file_value(env_path, "TERMINAL_ENV", config.get("terminal_backend") or "local")
+        self._upsert_env_file_value(env_path, "TERMINAL_CWD", config.get("terminal_cwd") or str(WORKSPACE_ROOT))
+        self._upsert_env_file_value(env_path, "TERMINAL_TIMEOUT", str(int(config.get("terminal_timeout") or 180)))
+        return {
+            "applied": True,
+            "hermes_config": self.hermes_config_status(config),
+            "agent_status": self.agent_status("hermes", config),
+        }
+
+    def _write_hermes_config(self, config_path, config):
+        payload = self._read_hermes_config_file(config_path)
+        payload["model"] = {
+            **(payload.get("model") if isinstance(payload.get("model"), dict) else {}),
+            "provider": config.get("provider") or "openrouter",
+            "default": config.get("model") or AGENT_DEFAULTS["hermes"]["model"],
+        }
+        payload["terminal"] = {
+            **(payload.get("terminal") if isinstance(payload.get("terminal"), dict) else {}),
+            "backend": config.get("terminal_backend") or "local",
+            "cwd": config.get("terminal_cwd") or str(WORKSPACE_ROOT),
+            "timeout": int(config.get("terminal_timeout") or 180),
+        }
+        servers = payload.setdefault("mcp_servers", {})
+        servers["docker_infra"] = self._hermes_mcp_server_config("", AGENT_FULL_CONTROL_MCP_TOOLS)
+        self._write_hermes_config_file(config_path, payload)
+
+    def _env_file_has_key(self, env_path, key):
+        try:
+            for line in Path(env_path).read_text(encoding="utf-8").splitlines():
+                text = line.strip()
+                if not text or text.startswith("#") or "=" not in text:
+                    continue
+                name, value = text.split("=", 1)
+                if name.strip() == key and value.strip():
+                    return True
+        except FileNotFoundError:
+            return False
+        except Exception:
+            return False
+        return False
+
+    def _upsert_env_file_value(self, env_path, key, value):
+        env_path = Path(env_path)
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        lines = []
+        replaced = False
+        try:
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            lines = []
+        next_lines = []
+        for line in lines:
+            if line.strip().startswith(key + "="):
+                next_lines.append("%s=%s" % (key, shlex.quote(value)))
+                replaced = True
+            else:
+                next_lines.append(line)
+        if not replaced:
+            next_lines.append("%s=%s" % (key, shlex.quote(value)))
+        env_path.write_text("\n".join(next_lines).rstrip() + "\n", encoding="utf-8")
+        try:
+            os.chmod(env_path, 0o600)
+        except OSError:
+            pass
 
     def _safe_command_result(self, result):
         return {
@@ -872,7 +2148,7 @@ class CodexRuntime:
             timed_out = True
             process.kill()
             exit_code = process.wait()
-            timeout_message = f"npm install timed out after {timeout}s\n"
+            timeout_message = f"install command timed out after {timeout}s\n"
             chunks["stderr"].append(timeout_message)
             self._append_cli_upgrade_output(operation_id, timeout_message, stream="stderr", env=env)
 
@@ -937,6 +2213,16 @@ class CodexRuntime:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         return "Codex CLI 업그레이드 명령이 실패했습니다: " + (lines[-1] if lines else text)[:500]
 
+    def _agent_install_failure_message(self, agent_type, result):
+        label = _provider_label(agent_type)
+        if result.get("timed_out"):
+            return "%s 설치/업데이트 시간이 초과되었습니다." % label
+        text = (result.get("stderr") or result.get("stdout") or "").strip()
+        if not text:
+            return "%s 설치/업데이트 명령이 실패했습니다." % label
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        return "%s 설치/업데이트 명령이 실패했습니다: %s" % (label, (lines[-1] if lines else text)[:500])
+
     def _version_for(self, executable):
         if not executable:
             return ""
@@ -957,10 +2243,7 @@ class CodexRuntime:
 
     def _codex_env(self, config):
         run_env = _subprocess_env()
-        codex_home = str((config or {}).get("codex_home") or "").strip()
-        if codex_home:
-            run_env["CODEX_HOME"] = str(Path(codex_home).expanduser())
-        elif not run_env.get("CODEX_HOME"):
+        if not run_env.get("CODEX_HOME"):
             default_home = self._default_codex_home(run_env)
             if default_home:
                 run_env["CODEX_HOME"] = default_home
@@ -991,7 +2274,9 @@ class CodexRuntime:
         )
         output = ((result.get("stdout") or "") + "\n" + (result.get("stderr") or "")).strip()
         lowered = output.lower()
-        logged_in = result.get("exit_code") == 0 and "logged in" in lowered and "not logged" not in lowered
+        negative = any(token in lowered for token in ["not logged", "not authenticated", "not signed in", "no login"])
+        positive = any(token in lowered for token in ["logged in", "authenticated", "signed in", "login status: ok"])
+        logged_in = result.get("exit_code") == 0 and not negative and (positive or not output)
         return {
             "status": "ok" if logged_in else "not_logged_in",
             "logged_in": logged_in,
@@ -1003,6 +2288,7 @@ class CodexRuntime:
     def complete_json(self, provider, system, context, env=None):
         provider = self._normalize_provider(provider or {})
         request_context = context if isinstance(context, dict) else {}
+        session_info = self._request_session(provider, request_context)
         mcp_enabled_tools = self._enabled_mcp_tools(request_context)
         prompt_context = self._prompt_context(request_context, mcp_enabled_tools)
         CODEX_RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
@@ -1010,17 +2296,15 @@ class CodexRuntime:
             runtime_home_path = Path(runtime_home)
             mcp_context_path = runtime_home_path / "docker-infra-mcp-context.json"
             mcp_request_context = dict(request_context)
+            mcp_request_context["session"] = session_info
             mcp_request_context["mcp_enabled_tools"] = mcp_enabled_tools
             mcp_request_context["ai_request_summary"] = prompt_context
             mcp_context = self._mcp_context(env=env, request_context=mcp_request_context)
             last_message_path = runtime_home_path / "last-message.txt"
-            if provider["type"] == "codex":
-                mcp_context_path.write_text(
-                    json.dumps(mcp_context, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-            else:
-                prompt_context = self._direct_api_prompt_context(prompt_context, mcp_context)
+            mcp_context_path.write_text(
+                json.dumps(mcp_context, ensure_ascii=False),
+                encoding="utf-8",
+            )
             prompt = self._prompt(system, prompt_context, provider, mcp_enabled_tools)
             if provider["type"] == "codex":
                 result = self._run_codex(
@@ -1030,13 +2314,23 @@ class CodexRuntime:
                     prompt,
                     mcp_context_path,
                     mcp_enabled_tools,
+                    session_info,
                 )
                 engine = "codex"
                 cli_mode = provider.get("cli_mode") or "system"
             else:
-                result = self._run_direct_api(provider, prompt)
-                engine = "direct_api"
-                cli_mode = "api"
+                result = self._run_agent(
+                    provider,
+                    runtime_home_path,
+                    last_message_path,
+                    prompt,
+                    mcp_context_path,
+                    mcp_enabled_tools,
+                    session_info,
+                )
+                engine = "agent"
+                cli_mode = "agent"
+            result_session = result.get("session") if isinstance(result.get("session"), dict) else session_info
             metadata = {
                 "engine": engine,
                 "provider": provider["type"],
@@ -1046,20 +2340,44 @@ class CodexRuntime:
                 "reasoning_effort": provider.get("reasoning_effort") or "",
                 "cli_mode": cli_mode,
                 "executable": result.get("executable") or "",
-                "api_endpoint": result.get("api_endpoint") or "",
                 "codex_exit_code": result["exit_code"],
+                "session": result_session,
+                "session_id": result_session.get("session_id") or "",
+                "provider_session_id": result_session.get("provider_session_id") or "",
+                "session_resumed": bool(result_session.get("resume")),
             }
             return {"text": result["text"], "metadata": metadata}
 
+    def _request_session(self, provider, request_context):
+        request_context = request_context if isinstance(request_context, dict) else {}
+        session = request_context.get("session") if isinstance(request_context.get("session"), dict) else {}
+        session_id = self._normalize_session_id(session.get("session_id") or request_context.get("session_id"))
+        provider_session_id = self._normalize_session_id(session.get("provider_session_id"))
+        return {
+            "session_id": session_id,
+            "provider_session_id": provider_session_id,
+            "agent_type": provider.get("type") or "",
+            "resume": bool(provider_session_id and session.get("resume")),
+            "title": self._clean_session_title(session.get("title") or request_context.get("message")),
+        }
+
+    def _normalize_session_id(self, value):
+        text = str(value or "").strip()[:160]
+        if not text:
+            return ""
+        return re.sub(r"[^A-Za-z0-9_.:-]", "", text)[:160]
+
+    def _clean_session_title(self, value):
+        text = re.sub(r"\s+", " ", str(value or "").strip())
+        return text[:160] or "AI Agent 세션"
+
     def _normalize_provider(self, provider):
         provider = dict(provider or {})
-        provider_type = provider.get("type")
-        if provider_type not in {"codex", "openai", "gemini", "ollama"}:
-            raise CodexRuntimeError(400, "Codex에서 지원하지 않는 AI provider입니다.", "CODEX_PROVIDER_NOT_SUPPORTED")
+        provider_type = self._normalize_agent_type(provider.get("type"))
 
         model = provider.get("model")
         if not model:
-            raise CodexRuntimeError(400, "Codex 실행에 사용할 모델이 없습니다.", "CODEX_MODEL_REQUIRED")
+            raise CodexRuntimeError(400, "AI Agent 실행에 사용할 모델이 없습니다.", "AI_AGENT_MODEL_REQUIRED")
 
         if provider_type == "codex":
             config = self._normalize_codex_config(provider)
@@ -1077,60 +2395,40 @@ class CodexRuntime:
             )
             return provider
 
-        if provider_type == "openai":
-            token = provider.get("token") or ""
-            if not token:
-                raise CodexRuntimeError(400, "OpenAI API Token이 필요합니다.", "CODEX_PROVIDER_TOKEN_REQUIRED")
-            provider.update(
-                {
-                    "provider_id": "docker-infra-openai",
-                    "provider_name": "Docker Infra OpenAI",
-                    "model": str(model),
-                    "base_url": self._openai_base_url(provider.get("base_url") or "https://api.openai.com/v1"),
-                    "env_key": "OPENAI_API_KEY",
-                    "env_value": token,
-                }
+        config = self._normalize_agent_config(provider_type, provider)
+        executable = self._agent_executable(provider_type, config)
+        if not executable:
+            raise CodexRuntimeError(
+                503,
+                "%s 실행 파일을 찾을 수 없습니다." % _provider_label(provider_type),
+                "AI_AGENT_EXECUTABLE_NOT_FOUND",
+                {"agent": provider_type, "env_key": self._agent_env_bin_key(provider_type)},
             )
-            return provider
-
-        if provider_type == "gemini":
-            token = provider.get("token") or ""
-            if not token:
-                raise CodexRuntimeError(400, "Gemini API Token이 필요합니다.", "CODEX_PROVIDER_TOKEN_REQUIRED")
-            api_version = provider.get("api_version") or "v1beta"
-            provider.update(
-                {
-                    "provider_id": "docker-infra-gemini",
-                    "provider_name": "Gemini",
-                    "model": str(model).replace("models/", "", 1),
-                    "api_version": api_version.strip("/"),
-                    "base_url": "https://generativelanguage.googleapis.com/%s" % api_version.strip("/"),
-                    "env_key": "GEMINI_API_KEY",
-                    "env_value": token,
-                }
-            )
-            return provider
-
         provider.update(
             {
-                "provider_id": "docker-infra-ollama",
-                "provider_name": "Ollama",
-                "model": str(model),
-                "base_url": self._ollama_base_url(provider.get("base_url") or "http://127.0.0.1:11434"),
+                "type": provider_type,
+                "provider_id": "%s-agent" % provider_type.replace("_", "-"),
+                "provider_name": _provider_label(provider_type),
+                "model": config["model"],
+                "executable": executable,
+                "home": config["home"],
+                "command_template": config["command_template"],
+                **(
+                    {
+                        "provider": config.get("provider") or "openrouter",
+                        "api_key_env": config.get("api_key_env") or self._default_hermes_api_key_env(config.get("provider")),
+                        "terminal_backend": config.get("terminal_backend") or "local",
+                        "terminal_cwd": config.get("terminal_cwd") or str(WORKSPACE_ROOT),
+                        "terminal_timeout": int(config.get("terminal_timeout") or 180),
+                    }
+                    if provider_type == "hermes"
+                    else {}
+                ),
                 "env_key": None,
                 "env_value": None,
             }
         )
         return provider
-
-    def _openai_base_url(self, value):
-        return str(value or "https://api.openai.com/v1").rstrip("/")
-
-    def _ollama_base_url(self, value):
-        base_url = str(value or "http://127.0.0.1:11434").rstrip("/")
-        if not base_url.endswith("/v1"):
-            base_url = base_url + "/v1"
-        return base_url
 
     def _enabled_mcp_tools(self, request_context):
         request_context = request_context if isinstance(request_context, dict) else {}
@@ -1143,14 +2441,11 @@ class CodexRuntime:
             or []
         )
         if not isinstance(requested, list) or not requested:
-            if request_context.get("runtime_diagnostics") or request_context.get("runtime_status"):
-                requested = RUNTIME_INSPECTION_MCP_TOOLS
-            else:
-                requested = SERVICE_DRAFT_MCP_TOOLS
+            requested = AGENT_FULL_CONTROL_MCP_TOOLS
 
         terminal_actions = request_context.get("terminal_actions") if isinstance(request_context.get("terminal_actions"), dict) else {}
-        allow_container_actions = bool(terminal_actions.get("allow_container_actions"))
-        allow_ssh_command = bool(guidance.get("allow_ssh_command") or permission.get("allow_ssh_command"))
+        allow_container_actions = terminal_actions.get("allow_container_actions") is not False
+        allow_ssh_command = guidance.get("allow_ssh_command") is not False and permission.get("allow_ssh_command") is not False
         enabled = []
         for tool in requested:
             tool = str(tool or "").strip()
@@ -1177,38 +2472,10 @@ class CodexRuntime:
             "reason": "large Docker Infra runtime data is kept out of the prompt to avoid context-window overflow",
             "mcp_tool": "docker_infra.infra_context",
             "enabled_mcp_tools": enabled_tools or ["infra_context"],
-            "instruction": "Use docker_infra.infra_context for registered servers, DDNS endpoints, runtime values, and this request summary before making infra claims.",
+            "permission_mode": MCP_PERMISSION_MODE,
+            "instruction": "Use docker_infra.infra_context for registered servers, DDNS endpoints, runtime values, the detailed MCP contract, and this request summary before making infra claims.",
         }
         return self._fit_prompt_context(compact)
-
-    def _direct_api_prompt_context(self, prompt_context, mcp_context):
-        prompt_context = dict(prompt_context if isinstance(prompt_context, dict) else {})
-        prompt_context["context_delivery"] = {
-            "prompt": "embedded_direct_api",
-            "reason": "OpenAI, Gemini, and Ollama providers are called directly without a Codex CLI or MCP session",
-            "enabled_mcp_tools": [],
-            "instruction": "Use only the embedded Docker Infra context in this request. Do not claim that MCP tools were called.",
-        }
-        embedded_runtime_context = self._truncate_context_value(
-            {
-                "nodes": (mcp_context or {}).get("nodes") or [],
-                "placement": (mcp_context or {}).get("placement"),
-                "domain_zones": (mcp_context or {}).get("domain_zones") or [],
-                "ddns_endpoints": (mcp_context or {}).get("ddns_endpoints") or [],
-                "allowed_probe_hosts": (mcp_context or {}).get("allowed_probe_hosts") or [],
-                "runtime_values": (mcp_context or {}).get("runtime_values") or {},
-            },
-            depth=1,
-            string_limit=2500,
-            list_limit=16,
-        )
-        current_context = prompt_context.get("docker_infra_context")
-        if isinstance(current_context, dict):
-            prompt_context["docker_infra_context"] = dict(current_context)
-            prompt_context["docker_infra_context"]["embedded_runtime_context"] = embedded_runtime_context
-        else:
-            prompt_context["docker_infra_context"] = embedded_runtime_context
-        return self._fit_prompt_context(prompt_context)
 
     def _semantic_prompt_context(self, context):
         context = context if isinstance(context, dict) else {}
@@ -1549,6 +2816,7 @@ class CodexRuntime:
             "ai_request_summary": request_context.get("ai_request_summary") or {},
             "request_context_keys": sorted([str(key) for key in request_context.keys() if not self._is_sensitive_context_key(key)]),
             "mcp_enabled_tools": request_context.get("mcp_enabled_tools") or [],
+            "mcp_permission_mode": MCP_PERMISSION_MODE,
             "allowed_probe_hosts": self._allowed_probe_hosts(request_context, rows),
             "terminal_actions": request_context.get("terminal_actions") or {},
             "runtime_values": {
@@ -1598,26 +2866,20 @@ class CodexRuntime:
                 "model": provider.get("model"),
             },
         }
-        if provider.get("type") == "codex":
-            execution_note = "You are running inside Docker Infra through the logged-in Codex CLI session.\n"
-            tool_note = (
-                "Use only the docker_infra MCP tools explicitly enabled for this request. "
-                f"Enabled docker_infra MCP tools: {enabled_label}.\n"
-                "The request context embedded below is compacted; do not assume omitted runtime logs are unavailable. "
-                "Call docker_infra.infra_context for Docker Infra's registered servers, DDNS endpoints, runtime values, and request summary when needed.\n"
-                "If another MCP tool is unavailable or not exposed in this session, do not report that as an operator-facing error; "
-                "fall back to the enabled tools and provided Docker Infra context.\n\n"
-            )
-        else:
-            execution_note = "You are running inside Docker Infra through a direct provider API call.\n"
-            tool_note = (
-                "No Codex CLI or MCP tools are available in this execution path. "
-                "Use only the embedded Docker Infra context below, and do not claim that external tools were called.\n\n"
-            )
+        execution_note = "You are running inside Docker Infra through the %s agent CLI.\n" % _provider_label(provider.get("type"))
+        tool_note = (
+            "Use the docker_infra MCP tools enabled for this request. "
+            f"Enabled docker_infra MCP tools: {enabled_label}.\n"
+            "Docker Infra MCP permission mode is agent full control except critical destruction: do not delete Docker Infra itself, stop/remove its control services or containers, shut down/reboot the OS, wipe disks, or recursively delete OS-critical paths.\n"
+            "The request context embedded below is compacted; do not assume omitted runtime logs are unavailable. "
+            "Call docker_infra.infra_context for Docker Infra's registered servers, DDNS endpoints, runtime values, detailed MCP contract, and request summary when needed.\n"
+            "If another MCP tool is unavailable or not exposed in this session, do not report that as an operator-facing error; "
+            "fall back to the enabled tools and provided Docker Infra context.\n\n"
+        )
         return (
             execution_note
             + "Return only one JSON object that satisfies the system and context below. "
-            "Do not edit files, do not include markdown fences, and do not describe the answer outside JSON.\n"
+            "Do not include markdown fences and do not describe the answer outside JSON.\n"
             + tool_note
             + "<docker_infra_ai_request>\n"
             f"{json.dumps(payload, ensure_ascii=False, sort_keys=True)}\n"
@@ -1636,6 +2898,7 @@ class CodexRuntime:
             "mcp_servers.docker_infra.env.DOCKER_INFRA_ROOT": str(WORKSPACE_ROOT),
             "mcp_servers.docker_infra.env.DOCKER_INFRA_MCP_CONTEXT_FILE": str(mcp_context_path),
             "mcp_servers.docker_infra.env.DOCKER_INFRA_MCP_TIMEOUT_SECONDS": "30",
+            "mcp_servers.docker_infra.env.DOCKER_INFRA_MCP_PERMISSION_MODE": MCP_PERMISSION_MODE,
         }
         args = []
         for key, value in overrides.items():
@@ -1646,242 +2909,277 @@ class CodexRuntime:
             args.extend(["-c", f"{key}={encoded}"])
         return args
 
-    def _run_direct_api(self, provider, prompt):
-        provider_type = provider["type"]
-        if provider_type == "openai":
-            return self._complete_openai_api(provider, prompt)
-        if provider_type == "gemini":
-            return self._complete_gemini_api(provider, prompt)
-        if provider_type == "ollama":
-            return self._complete_ollama_api(provider, prompt)
-        raise CodexRuntimeError(400, "직접 API 호출을 지원하지 않는 provider입니다.", "AI_API_PROVIDER_NOT_SUPPORTED")
-
-    def _complete_openai_api(self, provider, prompt):
-        headers = {
-            "Authorization": "Bearer %s" % provider["env_value"],
-        }
-        responses_url = self._join_url(provider["base_url"], "responses")
-        responses_payload = {
-            "model": provider["model"],
-            "input": prompt,
-            "text": {"format": {"type": "json_object"}},
-        }
-        try:
-            response = self._http_post_json(responses_url, responses_payload, headers, provider, "OPENAI_API_REQUEST_FAILED")
-            text = self._extract_openai_responses_text(response)
-            if text:
-                return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": responses_url}
-        except CodexRuntimeError as exc:
-            if exc.status_code not in {400, 404, 422}:
-                raise
-
-        chat_url = self._join_url(provider["base_url"], "chat/completions")
-        chat_payload = {
-            "model": provider["model"],
-            "messages": [
-                {"role": "system", "content": "Return only one JSON object. Do not include markdown fences."},
-                {"role": "user", "content": prompt},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.2,
-        }
-        response = self._http_post_json(chat_url, chat_payload, headers, provider, "OPENAI_API_REQUEST_FAILED")
-        text = self._extract_chat_completion_text(response)
-        if not text:
-            raise CodexRuntimeError(502, "OpenAI API 응답이 비어 있습니다.", "OPENAI_EMPTY_RESPONSE")
-        return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": chat_url}
-
-    def _complete_gemini_api(self, provider, prompt):
-        model = urllib.parse.quote(str(provider["model"]).replace("models/", "", 1), safe="")
-        api_version = str(provider.get("api_version") or "v1beta").strip("/")
-        url = "https://generativelanguage.googleapis.com/%s/models/%s:generateContent?key=%s" % (
-            api_version,
-            model,
-            urllib.parse.quote(provider["env_value"], safe=""),
-        )
-        payload = {
-            "systemInstruction": {
-                "parts": [{"text": "Return only one JSON object. Do not include markdown fences."}],
-            },
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": prompt}],
+    def _agent_mcp_config(self, mcp_context_path, enabled_tools):
+        return {
+            "mcpServers": {
+                "docker_infra": {
+                    "command": _python_executable(),
+                    "args": [str(MCP_SCRIPT)],
+                    "env": {
+                        "DOCKER_INFRA_ROOT": str(WORKSPACE_ROOT),
+                        "DOCKER_INFRA_MCP_CONTEXT_FILE": str(mcp_context_path),
+                        "DOCKER_INFRA_MCP_TIMEOUT_SECONDS": "30",
+                        "DOCKER_INFRA_MCP_PERMISSION_MODE": MCP_PERMISSION_MODE,
+                    },
+                    "enabled_tools": enabled_tools,
                 }
-            ],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "temperature": 0.2,
+            }
+        }
+
+    def _hermes_mcp_server_config(self, mcp_context_path, enabled_tools):
+        return {
+            "command": _python_executable(),
+            "args": [str(MCP_SCRIPT)],
+            "env": {
+                "DOCKER_INFRA_ROOT": str(WORKSPACE_ROOT),
+                "DOCKER_INFRA_MCP_CONTEXT_FILE": str(mcp_context_path),
+                "DOCKER_INFRA_MCP_TIMEOUT_SECONDS": "30",
+                "DOCKER_INFRA_MCP_PERMISSION_MODE": MCP_PERMISSION_MODE,
             },
+            "tools": {"include": list(enabled_tools or [])},
         }
-        response = self._http_post_json(url, payload, {}, provider, "GEMINI_API_REQUEST_FAILED")
-        text = self._extract_gemini_text(response)
-        if not text:
-            raise CodexRuntimeError(502, "Gemini API 응답이 비어 있습니다.", "GEMINI_EMPTY_RESPONSE")
-        safe_url = url.split("?key=", 1)[0]
-        return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": safe_url}
 
-    def _complete_ollama_api(self, provider, prompt):
-        native_url = self._join_url(self._ollama_native_base_url(provider["base_url"]), "api/chat")
-        native_payload = {
-            "model": provider["model"],
-            "messages": [
-                {"role": "system", "content": "Return only one JSON object. Do not include markdown fences."},
-                {"role": "user", "content": prompt},
-            ],
-            "format": "json",
-            "stream": False,
-            "options": {"temperature": 0.2},
+    def _read_hermes_config_file(self, config_path):
+        try:
+            data = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except Exception:
+            return {}
+
+    def _write_hermes_config_file(self, config_path, data):
+        config_path = Path(config_path)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=False) + "\n", encoding="utf-8")
+        try:
+            os.chmod(config_path, 0o600)
+        except OSError:
+            pass
+
+    def _write_hermes_runtime_mcp_config(self, provider, mcp_context_path, enabled_tools):
+        home = Path(provider.get("home") or self._default_agent_home("hermes")).expanduser()
+        config_path = home / "config.yaml"
+        data = self._read_hermes_config_file(config_path)
+        servers = data.setdefault("mcp_servers", {})
+        servers["docker_infra"] = self._hermes_mcp_server_config(mcp_context_path, enabled_tools)
+        self._write_hermes_config_file(config_path, data)
+
+    def _render_agent_command(self, provider, mcp_config_path, mcp_context_path, last_message_path, prompt="", session_info=None):
+        template = provider.get("command_template") or AGENT_DEFAULTS[provider["type"]].get("default_command_template")
+        session_args = self._agent_session_args(provider, session_info)
+        values = {
+            "executable": shlex.quote(provider["executable"]),
+            "provider": shlex.quote(str(provider.get("provider") or provider.get("type") or "")),
+            "model": shlex.quote(str(provider.get("model") or "")),
+            "prompt": shlex.quote(str(prompt or "")),
+            "mcp_config": shlex.quote(str(mcp_config_path)),
+            "mcp_context": shlex.quote(str(mcp_context_path)),
+            "workspace": shlex.quote(str(WORKSPACE_ROOT)),
+            "last_message": shlex.quote(str(last_message_path)),
+            "session_id": shlex.quote(str((session_info or {}).get("session_id") or "")),
+            "provider_session_id": shlex.quote(str((session_info or {}).get("provider_session_id") or "")),
+            "session_args": " ".join(shlex.quote(arg) for arg in session_args),
         }
         try:
-            response = self._http_post_json(native_url, native_payload, {}, provider, "OLLAMA_API_REQUEST_FAILED")
-            message = response.get("message") if isinstance(response.get("message"), dict) else {}
-            text = message.get("content") or response.get("response") or ""
-            if text:
-                return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": native_url}
-        except CodexRuntimeError as exc:
-            if exc.status_code not in {400, 404, 405}:
-                raise
-
-        chat_url = self._join_url(provider["base_url"], "chat/completions")
-        chat_payload = {
-            "model": provider["model"],
-            "messages": [
-                {"role": "system", "content": "Return only one JSON object. Do not include markdown fences."},
-                {"role": "user", "content": prompt},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.2,
-        }
-        response = self._http_post_json(chat_url, chat_payload, {}, provider, "OLLAMA_API_REQUEST_FAILED")
-        text = self._extract_chat_completion_text(response)
-        if not text:
-            raise CodexRuntimeError(502, "Ollama API 응답이 비어 있습니다.", "OLLAMA_EMPTY_RESPONSE")
-        return {"text": text, "exit_code": 0, "executable": "", "api_endpoint": chat_url}
-
-    def _http_post_json(self, url, payload, headers, provider, error_code):
-        request_headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "docker-infra-ai/1.0",
-        }
-        request_headers.update(headers or {})
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(url, data=body, headers=request_headers, method="POST")
-        timeout = int(provider.get("timeout_seconds") or CODEX_TIMEOUT_SECONDS)
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                response_body = response.read().decode("utf-8", "replace")
-        except urllib.error.HTTPError as exc:
-            response_body = exc.read().decode("utf-8", "replace")
-            raise CodexRuntimeError(
-                exc.code,
-                "%s API 호출이 실패했습니다." % _provider_label(provider["type"]),
-                error_code,
-                {
-                    "status": exc.code,
-                    "reason": getattr(exc, "reason", ""),
-                    "response": _trim(response_body, 4000),
-                    "url": self._redact_url(url),
-                },
-            )
-        except urllib.error.URLError as exc:
-            raise CodexRuntimeError(
-                502,
-                "%s API에 연결할 수 없습니다: %s" % (_provider_label(provider["type"]), getattr(exc, "reason", exc)),
-                error_code,
-                {"url": self._redact_url(url)},
-            )
-        except TimeoutError:
-            raise CodexRuntimeError(
-                504,
-                "%s API 호출 시간이 초과되었습니다." % _provider_label(provider["type"]),
-                error_code,
-                {"url": self._redact_url(url)},
-            )
-        try:
-            return json.loads(response_body or "{}")
+            rendered = template.format(**values)
         except Exception as exc:
             raise CodexRuntimeError(
-                502,
-                "%s API 응답을 JSON으로 해석할 수 없습니다: %s" % (_provider_label(provider["type"]), exc),
-                error_code,
-                {"response": _trim(response_body, 4000), "url": self._redact_url(url)},
+                400,
+                "Agent 실행 명령 템플릿을 해석할 수 없습니다: %s" % exc,
+                "AI_AGENT_COMMAND_TEMPLATE_INVALID",
+                {"agent": provider.get("type")},
+            )
+        return shlex.split(rendered)
+
+    def _agent_session_args(self, provider, session_info=None):
+        session_info = session_info if isinstance(session_info, dict) else {}
+        if (provider or {}).get("type") != "claude_code":
+            return []
+        provider_session_id = self._normalize_session_id(session_info.get("provider_session_id"))
+        session_id = self._normalize_session_id(session_info.get("session_id"))
+        if provider_session_id and session_info.get("resume"):
+            return ["--resume", provider_session_id]
+        if session_id and self._is_uuid(session_id):
+            return ["--session-id", session_id]
+        return []
+
+    def _is_uuid(self, value):
+        try:
+            uuid.UUID(str(value or ""))
+            return True
+        except Exception:
+            return False
+
+    def _agent_env(self, provider):
+        run_env = _subprocess_env()
+        home = str(provider.get("home") or "").strip()
+        if home:
+            try:
+                Path(home).expanduser().mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+        if provider.get("type") == "claude_code" and home:
+            run_env["CLAUDE_CONFIG_DIR"] = str(Path(home).expanduser())
+        if provider.get("type") == "hermes" and home:
+            hermes_home = Path(home).expanduser()
+            run_env["HERMES_HOME"] = str(hermes_home)
+            run_env.update(self._read_env_file_values(hermes_home / ".env"))
+            run_env["HERMES_INFERENCE_PROVIDER"] = str(provider.get("provider") or "openrouter")
+            run_env["HERMES_INFERENCE_MODEL"] = str(provider.get("model") or "")
+            run_env["TERMINAL_ENV"] = str(provider.get("terminal_backend") or "local")
+            run_env["TERMINAL_CWD"] = str(provider.get("terminal_cwd") or WORKSPACE_ROOT)
+            run_env["TERMINAL_TIMEOUT"] = str(int(provider.get("terminal_timeout") or 180))
+            if run_env.get("GEMINI_API_KEY") and not run_env.get("GOOGLE_API_KEY"):
+                run_env["GOOGLE_API_KEY"] = run_env["GEMINI_API_KEY"]
+            if run_env.get("GOOGLE_API_KEY") and not run_env.get("GEMINI_API_KEY"):
+                run_env["GEMINI_API_KEY"] = run_env["GOOGLE_API_KEY"]
+        run_env["NO_COLOR"] = "1"
+        return run_env
+
+    def _read_env_file_values(self, env_path):
+        values = {}
+        try:
+            lines = Path(env_path).read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return values
+        except Exception:
+            return values
+        for line in lines:
+            text = line.strip()
+            if not text or text.startswith("#") or "=" not in text:
+                continue
+            key, value = text.split("=", 1)
+            key = key.strip()
+            if not key:
+                continue
+            try:
+                parsed = shlex.split(value, posix=True)
+                values[key] = parsed[0] if parsed else ""
+            except Exception:
+                values[key] = value.strip().strip("\"'")
+        return values
+
+    def _agent_output_text(self, stdout, last_message_path):
+        text = last_message_path.read_text(encoding="utf-8").strip() if last_message_path.exists() else ""
+        if text:
+            return text
+        event_text = self._last_json_event_output(stdout)
+        if event_text:
+            return event_text
+        raw = str(stdout or "").strip()
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return raw
+        if isinstance(parsed, dict):
+            for key in ["text", "message", "result", "response", "content"]:
+                value = parsed.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            if isinstance(parsed.get("content"), list):
+                chunks = []
+                for item in parsed.get("content") or []:
+                    if isinstance(item, dict):
+                        chunks.append(str(item.get("text") or item.get("content") or ""))
+                    elif item:
+                        chunks.append(str(item))
+                return "".join(chunks).strip()
+        return raw
+
+    def _run_agent(self, provider, runtime_home, last_message_path, prompt, mcp_context_path, enabled_tools, session_info=None):
+        mcp_config_path = runtime_home / "docker-infra-agent-mcp.json"
+        mcp_config_path.write_text(
+            json.dumps(self._agent_mcp_config(mcp_context_path, enabled_tools), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        if provider.get("type") == "hermes":
+            self._write_hermes_runtime_mcp_config(provider, mcp_context_path, enabled_tools)
+        command = self._render_agent_command(
+            provider,
+            mcp_config_path,
+            mcp_context_path,
+            last_message_path,
+            prompt=prompt,
+            session_info=session_info,
+        )
+        template = provider.get("command_template") or AGENT_DEFAULTS[provider["type"]].get("default_command_template")
+        session_args = self._agent_session_args(provider, session_info)
+        if session_args and "{session_args}" not in template and "--session-id" not in command and "--resume" not in command:
+            command.extend(session_args)
+        try:
+            completed = subprocess.run(
+                command,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=int(provider.get("timeout_seconds") or CODEX_TIMEOUT_SECONDS),
+                check=False,
+                cwd=str(WORKSPACE_ROOT),
+                env=self._agent_env(provider),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise CodexRuntimeError(
+                504,
+                "%s 실행 시간이 초과되었습니다." % _provider_label(provider["type"]),
+                "AI_AGENT_EXEC_TIMEOUT",
+                {"stdout": _trim(exc.stdout), "stderr": _trim(exc.stderr), "command": command},
             )
 
-    def _extract_openai_responses_text(self, response):
-        if response.get("output_text"):
-            return str(response.get("output_text")).strip()
-        chunks = []
-        for item in response.get("output") or []:
-            if not isinstance(item, dict):
-                continue
-            for content in item.get("content") or []:
-                if not isinstance(content, dict):
-                    continue
-                text = content.get("text") or content.get("output_text")
-                if text:
-                    chunks.append(str(text))
-        return "".join(chunks).strip()
+        text = self._agent_output_text(completed.stdout, last_message_path)
+        if completed.returncode != 0:
+            raise CodexRuntimeError(
+                502,
+                "%s 실행이 실패했습니다." % _provider_label(provider["type"]),
+                "AI_AGENT_EXEC_FAILED",
+                {
+                    "exit_code": completed.returncode,
+                    "stdout": _trim(completed.stdout),
+                    "stderr": _trim(completed.stderr),
+                    "command": command,
+                },
+            )
+        if not text:
+            raise CodexRuntimeError(
+                502,
+                "%s 최종 응답이 비어 있습니다." % _provider_label(provider["type"]),
+                "AI_AGENT_EMPTY_RESPONSE",
+                {"stdout": _trim(completed.stdout), "stderr": _trim(completed.stderr), "command": command},
+            )
+        result_session = dict(session_info or {})
+        if provider.get("type") == "claude_code":
+            result_session["provider_session_id"] = (
+                result_session.get("provider_session_id")
+                or (result_session.get("session_id") if self._is_uuid(result_session.get("session_id")) else "")
+            )
+        return {"text": text, "exit_code": completed.returncode, "executable": provider["executable"], "session": result_session}
 
-    def _extract_chat_completion_text(self, response):
-        choices = response.get("choices") if isinstance(response.get("choices"), list) else []
-        if not choices:
-            return ""
-        message = choices[0].get("message") if isinstance(choices[0], dict) else {}
-        content = message.get("content") if isinstance(message, dict) else ""
-        if isinstance(content, list):
-            chunks = []
-            for item in content:
-                if isinstance(item, dict):
-                    chunks.append(str(item.get("text") or item.get("content") or ""))
-                elif item:
-                    chunks.append(str(item))
-            return "".join(chunks).strip()
-        return str(content or "").strip()
-
-    def _extract_gemini_text(self, response):
-        chunks = []
-        for candidate in response.get("candidates") or []:
-            content = candidate.get("content") if isinstance(candidate, dict) else {}
-            for part in (content.get("parts") if isinstance(content, dict) else []) or []:
-                if isinstance(part, dict) and part.get("text"):
-                    chunks.append(str(part.get("text")))
-        return "".join(chunks).strip()
-
-    def _join_url(self, base_url, path):
-        return "%s/%s" % (str(base_url or "").rstrip("/"), str(path or "").lstrip("/"))
-
-    def _ollama_native_base_url(self, base_url):
-        base_url = str(base_url or "http://127.0.0.1:11434").rstrip("/")
-        if base_url.endswith("/v1"):
-            return base_url[:-3]
-        return base_url
-
-    def _redact_url(self, url):
-        return str(url or "").split("?key=", 1)[0]
-
-    def _run_codex(self, provider, runtime_home, last_message_path, prompt, mcp_context_path, enabled_tools):
+    def _run_codex(self, provider, runtime_home, last_message_path, prompt, mcp_context_path, enabled_tools, session_info=None):
         executable = self._codex_login_executable(provider)
         config_args = self._codex_login_config_args(provider, mcp_context_path, enabled_tools)
-        command = [
-            executable,
-            "exec",
-            "--json",
-            "--ephemeral",
-            "--skip-git-repo-check",
-            "--ignore-user-config",
+        session_info = session_info if isinstance(session_info, dict) else {}
+        provider_session_id = self._normalize_session_id(session_info.get("provider_session_id"))
+        resume_session = bool(provider_session_id and session_info.get("resume"))
+        global_args = [
             "--sandbox",
-            "read-only",
-            *config_args,
+            "danger-full-access",
             "-C",
             str(WORKSPACE_ROOT),
+        ]
+        exec_args = [
+            "--json",
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            *config_args,
             "-m",
             provider["model"],
             "--output-last-message",
             str(last_message_path),
-            "-",
         ]
+        if resume_session:
+            command = [executable, *global_args, "exec", "resume", *exec_args, provider_session_id, "-"]
+        else:
+            command = [executable, *global_args, "exec", *exec_args, "-"]
         run_env = self._codex_env(provider)
         run_env["NO_COLOR"] = "1"
         try:
@@ -1924,7 +3222,51 @@ class CodexRuntime:
                 "CODEX_EMPTY_RESPONSE",
                 {"stdout": _trim(completed.stdout), "stderr": _trim(completed.stderr), "command": command},
             )
-        return {"text": text, "exit_code": completed.returncode, "executable": executable}
+        result_session = dict(session_info or {})
+        extracted_session_id = self._json_event_session_id(completed.stdout)
+        result_session["provider_session_id"] = extracted_session_id or provider_session_id
+        result_session["resume"] = resume_session
+        return {"text": text, "exit_code": completed.returncode, "executable": executable, "session": result_session}
+
+    def _json_event_session_id(self, stdout):
+        result = ""
+        for line in (stdout or "").splitlines():
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            candidate = self._session_id_from_event(event)
+            if candidate:
+                result = candidate
+        return result
+
+    def _session_id_from_event(self, value):
+        if isinstance(value, dict):
+            for key in ["session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"]:
+                candidate = self._normalize_session_id(value.get(key))
+                if candidate:
+                    return candidate
+            for key in ["session", "conversation", "thread"]:
+                nested = value.get(key)
+                if isinstance(nested, dict):
+                    candidate = self._normalize_session_id(nested.get("id") or nested.get("session_id"))
+                    if candidate:
+                        return candidate
+            event_type = str(value.get("type") or "")
+            if event_type.startswith(("session.", "conversation.", "thread.")):
+                candidate = self._normalize_session_id(value.get("id"))
+                if candidate:
+                    return candidate
+            for nested in value.values():
+                candidate = self._session_id_from_event(nested)
+                if candidate:
+                    return candidate
+        if isinstance(value, list):
+            for item in value:
+                candidate = self._session_id_from_event(item)
+                if candidate:
+                    return candidate
+        return ""
 
     def _last_json_event_output(self, stdout):
         result = ""

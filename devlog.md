@@ -307,3 +307,47 @@
 | 2026-05-22 | 001 | 서비스 컨테이너 웹 터미널 exec 기능 추가 | [상세](devlog/2026-05-22/001-service-container-terminal-exec.md) |
 | 2026-05-27 | 001 | Compose/Nginx 탭 서비스 예외 응답 보강 | [상세](devlog/2026-05-27/001-compose-nginx-service-error-response.md) |
 | 2026-05-27 | 002 | Compose healthcheck 필수 검증 제거 | [상세](devlog/2026-05-27/002-compose-healthcheck-optional.md) |
+| 2026-05-28 | 001 | 최신 기능 반영 installer WIZ bundle payload 갱신 | [상세](devlog/2026-05-28/001-installer-wiz-bundle-refresh.md) |
+| 2026-05-28 | 002 | 원격 서버 최신 Docker Infra 재설치 | [상세](devlog/2026-05-28/002-remote-server-reinstall.md) |
+| 2026-05-28 | 003 | AI 기능 Agent 기반 재정리 | [상세](devlog/2026-05-28/003-ai-agent-runtime-refactor.md) |
+| 2026-05-28 | 004 | Docker Infra MCP Agent 권한 계약 상세화 | [상세](devlog/2026-05-28/004-mcp-agent-permission-contract.md) |
+| 2026-05-28 | 005 | AI Agent CLI 설치를 시스템 설정 실행 방식으로 전환 | [상세](devlog/2026-05-28/005-agent-cli-system-settings-install.md) |
+| 2026-05-28 | 006 | AI Agent 설정 화면 단순화 | [상세](devlog/2026-05-28/006-ai-agent-settings-simplification.md) |
+| 2026-05-29 | 001 | Codex 설정 문단형 UI와 업그레이드 셸 수정 | [상세](devlog/2026-05-29/001-codex-settings-ui-upgrade-shell.md) |
+| 2026-05-29 | 002 | AI Agent 설정 버튼 좌측 정렬 | [상세](devlog/2026-05-29/002-ai-agent-button-left-alignment.md) |
+| 2026-05-29 | 003 | AI Agent 설정 저장 버튼과 진행 로그 UI 정리 | [상세](devlog/2026-05-29/003-ai-agent-save-button-log-ui.md) |
+| 2026-05-29 | 004 | AI Agent 버전 확인 저장과 공통 업그레이드 버튼 추가 | [상세](devlog/2026-05-29/004-ai-agent-update-cache-common-buttons.md) |
+| 2026-05-29 | 005 | Claude Code Agent 네이티브 설치 전환 | [상세](devlog/2026-05-29/005-claude-code-native-install.md) |
+| 2026-05-29 | 006 | Claude Code 설치 스크립트 문구 롤백과 기존 설치 정리 | [상세](devlog/2026-05-29/006-claude-code-install-script-wording.md) |
+| 2026-05-29 | 007 | Hermes Agent 설치 스크립트 방식 전환 | [상세](devlog/2026-05-29/007-hermes-agent-install-script.md) |
+| 2026-05-29 | 008 | Agent 설치 스크립트 완료 상태 갱신 지연 수정 | [상세](devlog/2026-05-29/008-agent-install-doctor-hang.md) |
+| 2026-05-29 | 009 | Claude/Hermes 설치 후 액션 정책과 웹 설정 보강 | [상세](devlog/2026-05-29/009-agent-login-upgrade-hermes-settings.md) |
+| 2026-05-29 | 010 | Claude 자동 업데이트 UI와 Hermes API Key 설정 단순화 | [상세](devlog/2026-05-29/010-agent-settings-ui-simplification.md) |
+| 2026-05-29 | 011 | AI Agent 모델 목록 공식 출처 연동과 검색 Select 적용 | [상세](devlog/2026-05-29/011-agent-model-catalog-search-select.md) |
+| 2026-05-29 | 012 | 다중 AI Agent 기본 선택 설정 추가 | [상세](devlog/2026-05-29/012-ai-agent-default-selection.md) |
+| 2026-05-29 | 013 | 전역 AI Agent 플로팅 채팅 추가 | [상세](devlog/2026-05-29/013-ai-agent-floating-chat.md) |
+| 2026-05-29 | 014 | AI Agent 다단 도킹 패널과 Hermes 런타임 설정 보강 | [상세](devlog/2026-05-29/014-ai-agent-dock-hermes-runtime.md) |
+| 2026-05-29 | 015 | AI Agent 스트리밍 채팅 UI 정리 | [상세](devlog/2026-05-29/015-ai-agent-streaming-chat-ui.md) |
+| 2026-05-29 | 016 | AI Agent 스트림 멈춤과 빈 응답 표시 보강 | [상세](devlog/2026-05-29/016-ai-agent-stream-timeout-empty-response.md) |
+| 2026-05-29 | 017 | AI Agent 패널 리사이즈와 Hermes 빈 응답 재시도 보강 | [상세](devlog/2026-05-29/017-ai-agent-resize-context-hermes-retry.md) |
+| 2026-05-29 | 016 | 주요 화면 상세 상태 URL 라우팅 명시화 | [상세](devlog/2026-05-29/016-explicit-detail-routing.md) |
+| 2026-05-29 | 018 | AI Agent 채팅 응답 Markdown 렌더링 적용 | [상세](devlog/2026-05-29/018-ai-agent-markdown-rendering.md) |
+| 2026-05-29 | 019 | AI Agent Markdown 테이블과 후속 동작 버튼 추가 | [상세](devlog/2026-05-29/019-ai-agent-table-suggested-actions.md) |
+| 2026-06-01 | 001 | AI Agent 사이드바 채팅 구조와 응답/동작 정책 개선 | [상세](devlog/2026-06-01/001-ai-agent-sidebar-response-action-policy.md) |
+| 2026-06-01 | 002 | AI Agent 히스토리 저장·다운로드·삭제 관리 추가 | [상세](devlog/2026-06-01/002-ai-agent-history-management.md) |
+| 2026-06-01 | 003 | AI Agent 버튼 즉시 표시와 로딩 상태 패널 추가 | [상세](devlog/2026-06-01/003-ai-agent-loading-toggle.md) |
+| 2026-06-01 | 004 | AI Agent 응답 시간과 히스토리 상세 표시 개선 | [상세](devlog/2026-06-01/004-ai-agent-duration-history-detail.md) |
+| 2026-06-01 | 005 | AI Agent Markdown 렌더링과 히스토리 상세 복사 UX 개선 | [상세](devlog/2026-06-01/005-ai-agent-markdown-history-copy.md) |
+| 2026-06-01 | 006 | AI Agent 화면 제어 액션과 서버 상태 매크로 생성 명령 연결 | [상세](devlog/2026-06-01/006-ai-agent-page-control-macro-action.md) |
+| 2026-06-01 | 007 | Swagger 기반 AI Agent 메뉴별 API 작업 카탈로그와 실행 액션 연결 | [상세](devlog/2026-06-01/007-ai-agent-openapi-operation-catalog.md) |
+| 2026-06-01 | 008 | AI Agent 렌더 루프 방지와 코드블럭/히스토리 상세 사이드바 개선 | [상세](devlog/2026-06-01/008-ai-agent-render-code-history-detail.md) |
+| 2026-06-01 | 009 | AI Agent 동적 코드블럭 스타일 적용과 히스토리 다음 동작 설명 제거 | [상세](devlog/2026-06-01/009-ai-agent-deep-codeblock-action-description.md) |
+| 2026-06-01 | 010 | AI Agent 코드블럭 강조선 제거와 히스토리 페이지네이션 추가 | [상세](devlog/2026-06-01/010-ai-agent-history-pagination-codeblock-border.md) |
+| 2026-06-01 | 011 | AI Agent 도킹 중 서버 화면 레이아웃과 상세 탭 라우팅 재사용 개선 | [상세](devlog/2026-06-01/011-layout-route-reuse.md) |
+| 2026-06-01 | 012 | AI Agent TODO 기반 순차 실행과 마스터 노드 매크로 실행 연결 | [상세](devlog/2026-06-01/012-ai-agent-todo-sequential-macro-run.md) |
+| 2026-06-01 | 013 | AI Agent 세션 기반 대화 지속과 히스토리 그룹화 추가 | [상세](devlog/2026-06-01/013-ai-agent-session-continuation.md) |
+| 2026-06-01 | 014 | AI Agent TODO 패널과 계획 후 TODO별 실행 흐름 분리 | [상세](devlog/2026-06-01/014-ai-agent-todo-panel-planned-flow.md) |
+| 2026-06-01 | 015 | AI Agent stream/fallback 히스토리 중복 기록 방지 | [상세](devlog/2026-06-01/015-ai-agent-history-request-id-dedupe.md) |
+| 2026-06-01 | 016 | AI Agent 스트림 응답 대기 시간 10분 확장 | [상세](devlog/2026-06-01/016-ai-agent-stream-timeout-10min.md) |
+| 2026-06-01 | 017 | AI Agent TODO 목록 표시 간소화와 우측 잘림 보정 | [상세](devlog/2026-06-01/017-ai-agent-todo-list-cleanup.md) |
+| 2026-06-01 | 018 | AI Agent 히스토리 세션 이어서 대화와 선택 중 렌더 지연 | [상세](devlog/2026-06-01/018-ai-agent-history-continue-selection-render.md) |

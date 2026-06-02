@@ -75,6 +75,11 @@ export class Component implements OnInit {
 
     constructor(public service: Service) { }
 
+    private serviceDetailRoute(serviceId: string) {
+        const encodedId = this.service.encodeRouteSegment(serviceId);
+        return encodedId ? `/services/${encodedId}` : '/services';
+    }
+
     public async ngOnInit() {
         await this.service.init();
         this.syncManualComposeEditorTheme();
@@ -1350,7 +1355,7 @@ export class Component implements OnInit {
                     return;
                 }
             }
-            this.service.href(`/services?service_id=${encodeURIComponent(this.createdServiceId)}`);
+            this.service.href(this.serviceDetailRoute(this.createdServiceId));
             return;
         }
         for (const item of [1, 2, 3] as StepId[]) {
@@ -1379,11 +1384,11 @@ export class Component implements OnInit {
             this.busy.set(false);
             if (![200, 202].includes(deployResult.code)) {
                 await this.alert(deployResult.data?.message || '서비스 배포에 실패했습니다.');
-                this.service.href(`/services?service_id=${encodeURIComponent(serviceId)}`);
+                this.service.href(this.serviceDetailRoute(serviceId));
                 return;
             }
             await this.alert('서비스를 저장했고 배포는 백그라운드에서 시작했습니다. 서비스 화면에서 Docker 작업과 이미지 pull 대기 상태를 확인할 수 있습니다.', 'success');
-            this.service.href(`/services?service_id=${encodeURIComponent(serviceId)}`);
+            this.service.href(this.serviceDetailRoute(serviceId));
             return;
         }
         this.busy.set(false);

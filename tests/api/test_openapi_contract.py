@@ -32,6 +32,9 @@ class OpenApiContractTest(unittest.TestCase):
         self.assertIn("/api/auth/login", document["paths"])
         self.assertIn("/api/auth/logout", document["paths"])
         self.assertIn("/api/auth/session", document["paths"])
+        self.assertIn("/api/ai-agent/status", document["paths"])
+        self.assertIn("/api/ai-agent/capabilities", document["paths"])
+        self.assertIn("/api/ai-agent/chat", document["paths"])
         self.assertNotIn("/api/jobs", document["paths"])
         self.assertIn("/api/nodes", document["paths"])
         self.assertIn("/api/nodes/{node_id}/join", document["paths"])
@@ -41,6 +44,8 @@ class OpenApiContractTest(unittest.TestCase):
         self.assertIn("/wiz/api/page.dashboard/overview", document["paths"])
         self.assertIn("/wiz/api/page.access/login", document["paths"])
         self.assertIn("HealthResponse", document["components"]["schemas"])
+        self.assertIn("AIAgentCapabilitiesResponse", document["components"]["schemas"])
+        self.assertIn("x-ai-agent", document)
         self.assertNotIn("email", json.dumps(document))
         self.assertIn("<redacted>", json.dumps(document))
 
@@ -85,6 +90,10 @@ class OpenApiContractTest(unittest.TestCase):
             "ComposeValidationResult",
             "ComposeValidationResponse",
             "ComposeValidationErrorResponse",
+            "AIAgentCapabilityOperation",
+            "AIAgentCapabilitiesResponse",
+            "AIAgentChatRequest",
+            "AIAgentChatResponse",
         ]:
             self.assertIn(name, schemas)
 
@@ -106,6 +115,30 @@ class OpenApiContractTest(unittest.TestCase):
         self.assertNotIn("plain", json.dumps(schemas["SecretMaskedValue"]).lower())
         self.assertIn("********", json.dumps(schemas["SecretMaskedValue"]))
         self.assertNotIn("user_id", json.dumps(schemas["LoginRequest"]).lower())
+
+    def test_ai_agent_openapi_catalog_covers_main_menus(self):
+        document = self.load_document()
+        catalog = document["x-ai-agent"]
+        operations = catalog["operations"]
+        menus = {item["menu"] for item in operations}
+
+        for menu in ["dashboard", "services", "servers", "domains", "images", "macros", "operations", "templates", "system"]:
+            self.assertIn(menu, menus)
+
+        operation_ids = {item["operationId"] for item in operations}
+        for operation_id in [
+            "dashboard.summary",
+            "services.load",
+            "servers.load",
+            "domains.load",
+            "images.load",
+            "macros.save",
+            "templates.preview",
+            "system.agent_status",
+        ]:
+            self.assertIn(operation_id, operation_ids)
+        self.assertEqual(catalog["swaggerUrl"], "/swagger")
+        self.assertEqual(catalog["openapiUrl"], "/openapi.json")
 
     def test_static_response_examples_match_declared_schemas(self):
         document = self.load_document()

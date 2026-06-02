@@ -3,6 +3,9 @@ def _ai_settings_payload(ai_settings):
     try:
         codex_runtime = wiz.model("struct/codex_runtime")
         payload["codex_status"] = codex_runtime.status((payload.get("config") or {}).get("codex") or {})
+        payload["agent_statuses"] = payload.get("agent_statuses") or {}
+        for agent in ["codex", "claude_code", "hermes"]:
+            payload["agent_statuses"][agent] = codex_runtime.agent_status(agent, (payload.get("config") or {}).get(agent) or {})
     except Exception as exc:
         payload["codex_status"] = {
             "checked_at": None,
@@ -320,6 +323,203 @@ def save_ai_section():
     wiz.response.status(code, **payload)
 
 
+def save_ai_default_agent():
+    ai_settings = wiz.model("struct/ai_settings")
+    code = 200
+    payload = {}
+    try:
+        ai_settings.save_default_agent(wiz.request.query())
+        payload = {"ai_settings": _ai_settings_payload(ai_settings)}
+    except ai_settings.AISettingsError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def _current_agent_config(ai_settings, body, agent):
+    current = ai_settings._normalize_config(ai_settings._saved_config())
+    agent_payload = body.get(agent) if isinstance(body.get(agent), dict) else body
+    return {**(current.get(agent) or {}), **(agent_payload or {})}
+
+
+def _normalize_agent_key(body):
+    agent = str(body.get("agent") or body.get("provider") or "").strip().lower().replace("-", "_")
+    if agent in {"claude", "claudecode"}:
+        agent = "claude_code"
+    if agent == "hermes_agent":
+        agent = "hermes"
+    return agent
+
+
+def _persist_agent_update(ai_settings, agent, update):
+    if not isinstance(update, dict) or not update:
+        return None
+    return ai_settings.save_agent_update(agent, update)
+
+
+def ai_agent_status():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    body = wiz.request.query()
+    agent = _normalize_agent_key(body)
+    code = 200
+    payload = {}
+    try:
+        config = _current_agent_config(ai_settings, body, agent)
+        payload = {"agent_status": codex_runtime.agent_status(agent, config)}
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_agent_model_catalog():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    body = wiz.request.query()
+    agent = _normalize_agent_key(body)
+    code = 200
+    payload = {}
+    try:
+        config = _current_agent_config(ai_settings, body, agent)
+        payload = {"catalog": codex_runtime.agent_model_catalog(agent, config)}
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_agent_update_check():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    body = wiz.request.query()
+    agent = _normalize_agent_key(body)
+    code = 200
+    payload = {}
+    try:
+        config = _current_agent_config(ai_settings, body, agent)
+        update = codex_runtime.agent_update_status(agent, config)
+        payload = {"update": _persist_agent_update(ai_settings, agent, update)}
+    except ai_settings.AISettingsError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_agent_test():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    body = wiz.request.query()
+    agent = _normalize_agent_key(body)
+    code = 200
+    payload = {}
+    try:
+        config = _current_agent_config(ai_settings, body, agent)
+        payload = {"result": codex_runtime.test_agent(agent, config, prompt=body.get("prompt"))}
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_agent_install():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    body = wiz.request.query()
+    agent = _normalize_agent_key(body)
+    code = 200
+    payload = {}
+    try:
+        config = _current_agent_config(ai_settings, body, agent)
+        payload = codex_runtime.install_agent_async(agent, config)
+        if payload.get("update"):
+            payload["update"] = _persist_agent_update(ai_settings, agent, payload.get("update"))
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_agent_install_status():
+    ai_settings = wiz.model("struct/ai_settings")
+    operations = wiz.model("struct/operations")
+    body = wiz.request.query()
+    operation_id = body.get("operation_id")
+    if not operation_id:
+        wiz.response.status(400, message="operation_id는 필수입니다.", error_code="OPERATION_ID_REQUIRED")
+        return
+    code = 200
+    payload = {}
+    try:
+        operation = operations.detail(operation_id)
+        payload = {"operation": operation}
+        if operation.get("status") in {"succeeded", "failed", "canceled"}:
+            result_payload = operation.get("result_payload") or {}
+            agent = result_payload.get("agent") or operation.get("target_id")
+            update = result_payload.get("after_update")
+            if agent and isinstance(update, dict):
+                payload["update"] = _persist_agent_update(ai_settings, agent, update)
+    except operations.OperationError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except ai_settings.AISettingsError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_hermes_apply_settings():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    body = wiz.request.query()
+    code = 200
+    payload = {}
+    try:
+        current = ai_settings._normalize_config(ai_settings._saved_config())
+        hermes_payload = body.get("hermes") if isinstance(body.get("hermes"), dict) else body
+        config = {**(current.get("hermes") or {}), **(hermes_payload or {})}
+        secret_value = body.get("api_key") or (hermes_payload or {}).get("api_key")
+        apply_result = codex_runtime.apply_hermes_settings(config, secret_value=secret_value)
+        safe_config = dict(config)
+        safe_config.pop("api_key", None)
+        ai_settings.save_section({"section": "hermes", "hermes": safe_config})
+        payload = {"result": apply_result, "ai_settings": _ai_settings_payload(ai_settings)}
+    except ai_settings.AISettingsError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
 def ai_codex_status():
     ai_settings = wiz.model("struct/ai_settings")
     codex_runtime = wiz.model("struct/codex_runtime")
@@ -370,7 +570,11 @@ def ai_codex_cli_update_check():
         current = ai_settings._normalize_config(ai_settings._saved_config())
         codex_config = body.get("codex") if isinstance(body.get("codex"), dict) else body
         codex_config = {**(current.get("codex") or {}), **(codex_config or {})}
-        payload = {"update": codex_runtime.cli_update_status(codex_config)}
+        update = codex_runtime.cli_update_status(codex_config)
+        payload = {"update": _persist_agent_update(ai_settings, "codex", update)}
+    except ai_settings.AISettingsError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except codex_runtime.CodexRuntimeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
@@ -391,6 +595,11 @@ def ai_codex_cli_upgrade():
         codex_config = body.get("codex") if isinstance(body.get("codex"), dict) else body
         codex_config = {**(current.get("codex") or {}), **(codex_config or {})}
         payload = codex_runtime.upgrade_cli_async(codex_config)
+        if payload.get("update"):
+            payload["update"] = _persist_agent_update(ai_settings, "codex", payload.get("update"))
+    except ai_settings.AISettingsError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except codex_runtime.CodexRuntimeError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
@@ -401,6 +610,7 @@ def ai_codex_cli_upgrade():
 
 
 def ai_codex_cli_upgrade_status():
+    ai_settings = wiz.model("struct/ai_settings")
     operations = wiz.model("struct/operations")
     body = wiz.request.query()
     operation_id = body.get("operation_id")
@@ -410,8 +620,16 @@ def ai_codex_cli_upgrade_status():
     code = 200
     payload = {}
     try:
-        payload = {"operation": operations.detail(operation_id)}
+        operation = operations.detail(operation_id)
+        payload = {"operation": operation}
+        if operation.get("status") in {"succeeded", "failed", "canceled"}:
+            update = (operation.get("result_payload") or {}).get("after")
+            if isinstance(update, dict):
+                payload["update"] = _persist_agent_update(ai_settings, "codex", update)
     except operations.OperationError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except ai_settings.AISettingsError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except RuntimeError as exc:
@@ -480,32 +698,80 @@ def ai_codex_device_login_cancel():
     wiz.response.status(code, **payload)
 
 
-def ai_models():
+def ai_claude_code_login_start():
     ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
     code = 200
     payload = {}
     try:
-        payload = {"result": ai_settings.list_models(wiz.request.query())}
-    except ai_settings.AISettingsError as exc:
+        body = wiz.request.query()
+        current = ai_settings._normalize_config(ai_settings._saved_config())
+        claude_config = body.get("claude_code") if isinstance(body.get("claude_code"), dict) else body
+        claude_config = {**(current.get("claude_code") or {}), **(claude_config or {})}
+        payload = codex_runtime.start_claude_login(claude_config)
+    except codex_runtime.CodexRuntimeError as exc:
         code = exc.status_code
-        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
     except RuntimeError as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
     wiz.response.status(code, **payload)
 
 
-def ai_resources():
+def ai_claude_code_login_status():
     ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
     code = 200
     payload = {}
     try:
         body = wiz.request.query()
-        body["probe"] = True
-        payload = {"resources": ai_settings.resources(body)}
-    except ai_settings.AISettingsError as exc:
+        current = ai_settings._normalize_config(ai_settings._saved_config())
+        claude_config = body.get("claude_code") if isinstance(body.get("claude_code"), dict) else body
+        claude_config = {**(current.get("claude_code") or {}), **(claude_config or {})}
+        payload = codex_runtime.claude_login_status(claude_config)
+    except codex_runtime.CodexRuntimeError as exc:
         code = exc.status_code
-        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_claude_code_login_submit():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    code = 200
+    payload = {}
+    try:
+        body = wiz.request.query()
+        current = ai_settings._normalize_config(ai_settings._saved_config())
+        claude_config = body.get("claude_code") if isinstance(body.get("claude_code"), dict) else body
+        claude_config = {**(current.get("claude_code") or {}), **(claude_config or {})}
+        payload = codex_runtime.submit_claude_login_code(body.get("code"), claude_config)
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def ai_claude_code_login_cancel():
+    ai_settings = wiz.model("struct/ai_settings")
+    codex_runtime = wiz.model("struct/codex_runtime")
+    code = 200
+    payload = {}
+    try:
+        body = wiz.request.query()
+        current = ai_settings._normalize_config(ai_settings._saved_config())
+        claude_config = body.get("claude_code") if isinstance(body.get("claude_code"), dict) else body
+        claude_config = {**(current.get("claude_code") or {}), **(claude_config or {})}
+        payload = codex_runtime.cancel_claude_login(claude_config)
+    except codex_runtime.CodexRuntimeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.details}
     except RuntimeError as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}

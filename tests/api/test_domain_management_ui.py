@@ -56,7 +56,7 @@ class DomainManagementUiStaticContractTest(unittest.TestCase):
         self.assertIn("serviceDetailHref(item)", template)
         self.assertIn("fa-arrow-right", template)
         self.assertIn("상세", template)
-        self.assertIn("/services?service_id=", view)
+        self.assertIn("/services/${this.service.encodeRouteSegment(serviceId)}", view)
 
     def test_ddns_management_server_is_separate_from_cloudflare_zone_flow(self):
         template = DOMAINS_TEMPLATE.read_text(encoding="utf-8")

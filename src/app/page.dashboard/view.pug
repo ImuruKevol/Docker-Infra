@@ -95,7 +95,7 @@ main(class="space-y-6 px-5 py-5")
                         i(class="fa-solid fa-spinner fa-spin")
                         span 서비스 목록을 불러오는 중입니다.
                     div(*ngIf="cardError('services')", class="px-4 py-3 text-sm text-rose-700 dark:text-rose-300") {{cardError('services')}}
-                    a(*ngFor="let item of serviceRows()", [routerLink]="['/services']", [queryParams]="{ service_id: item.id }", class="block px-4 py-3 transition hover:bg-zinc-50 dark:hover:bg-zinc-800")
+                    a(*ngFor="let item of serviceRows()", [routerLink]="['/services', item.id]", class="block px-4 py-3 transition hover:bg-zinc-50 dark:hover:bg-zinc-800")
                         div(class="flex items-start justify-between gap-3")
                             div(class="min-w-0 flex-1")
                                 p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{item.name}}

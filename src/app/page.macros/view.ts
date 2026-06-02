@@ -22,6 +22,7 @@ export class Component implements OnInit, OnDestroy {
         roundedSelection: false,
     };
     private themeObserver: MutationObserver | null = null;
+    private agentCommandHandler: ((event: Event) => void) | null = null;
 
     constructor(public service: Service) { }
 
@@ -29,11 +30,15 @@ export class Component implements OnInit, OnDestroy {
         await this.service.init();
         this.syncMacroEditorTheme();
         this.startThemeObserver();
-        await this.load();
+        this.startAgentCommandListener();
+        const macroId = this.routeMacroId();
+        if (macroId) this.selectedMacroId.set(macroId);
+        await this.load(true);
     }
 
     public ngOnDestroy() {
         this.stopThemeObserver();
+        this.stopAgentCommandListener();
     }
 
     @HostListener('document:keydown', ['$event'])
@@ -151,6 +156,107 @@ export class Component implements OnInit, OnDestroy {
         this.themeObserver = null;
     }
 
+    private startAgentCommandListener() {
+        if (this.agentCommandHandler || typeof window === 'undefined') return;
+        this.agentCommandHandler = (event: Event) => {
+            void this.handleAgentCommand(event as CustomEvent);
+        };
+        window.addEventListener('docker-infra-agent-action', this.agentCommandHandler);
+    }
+
+    private stopAgentCommandListener() {
+        if (!this.agentCommandHandler || typeof window === 'undefined') return;
+        window.removeEventListener('docker-infra-agent-action', this.agentCommandHandler);
+        this.agentCommandHandler = null;
+    }
+
+    private async handleAgentCommand(event: CustomEvent) {
+        const detail = event?.detail || {};
+        if (detail.target !== 'macro.create_global') return;
+        const requestId = String(detail.request_id || '');
+        try {
+            await this.waitForMacroLoad();
+            const macro = await this.createGlobalMacroFromAgent(detail.payload || {});
+            this.publishAgentCommandResult(requestId, { ok: true, macro });
+        } catch (error: any) {
+            this.publishAgentCommandResult(requestId, {
+                ok: false,
+                message: error?.message || '매크로를 생성하지 못했습니다.',
+            });
+        }
+    }
+
+    private async createGlobalMacroFromAgent(payload: any) {
+        const name = String(payload?.name || '').trim();
+        const script = String(payload?.script || '').trim();
+        if (!name) throw new Error('Agent 매크로 이름이 비어 있습니다.');
+        if (!script) throw new Error('Agent 매크로 스크립트가 비어 있습니다.');
+
+        const updateExisting = payload?.update_existing !== false;
+        const existing = updateExisting
+            ? this.macros().find((item: any) => String(item?.name || '').trim().toLowerCase() === name.toLowerCase())
+            : null;
+        this.macroForm = {
+            id: existing?.id || '',
+            name,
+            description: String(payload?.description || existing?.description || '').trim(),
+            script,
+            enabled: payload?.enabled !== false,
+            existing_files: [...(existing?.files || [])],
+            files: [],
+        };
+        this.syncMacroEditorTheme();
+        this.modalOpen.set(true);
+        await this.service.render();
+        await this.sleep(120);
+
+        this.busy.set(true);
+        let result: any = null;
+        try {
+            result = await this.saveMacroRequest({
+                id: this.macroForm?.id || undefined,
+                name,
+                description: this.macroForm?.description || '',
+                script: this.macroForm?.script || '',
+                enabled: this.macroForm?.enabled !== false,
+            });
+        } finally {
+            this.busy.set(false);
+        }
+        const { code, data } = result || {};
+        if (code !== 200) {
+            throw new Error(data?.message || '매크로를 저장할 수 없습니다.');
+        }
+        this.modalOpen.set(false);
+        this.selectedMacroId.set(data?.macro?.id || '');
+        this.resetMacroForm();
+        await this.load();
+        await this.service.render();
+        return data?.macro || null;
+    }
+
+    private async waitForMacroLoad() {
+        for (let index = 0; index < 40; index++) {
+            if (!this.loading()) return;
+            await this.sleep(100);
+        }
+    }
+
+    private publishAgentCommandResult(requestId: string, detail: any) {
+        if (!requestId || typeof window === 'undefined') return;
+        window.dispatchEvent(new CustomEvent('docker-infra-agent-action-result', {
+            detail: {
+                request_id: requestId,
+                target: 'macro.create_global',
+                ...detail,
+            },
+        }));
+    }
+
+    private sleep(ms: number) {
+        return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, ms || 0)));
+    }
+
     public async alert(message: string, status: string = 'error') {
         return await this.service.modal.show({
             title: "",
@@ -162,7 +268,21 @@ export class Component implements OnInit, OnDestroy {
         });
     }
 
-    public async load() {
+    private routeMacroId() {
+        return this.service.routeSegment('macro_id') || this.service.queryParam('macro_id') || this.service.queryParam('selected_macro_id');
+    }
+
+    private macroDetailRoute(macroId: string = this.selectedMacroId()) {
+        const encodedId = this.service.encodeRouteSegment(macroId);
+        return encodedId ? `/macros/${encodedId}` : '/macros';
+    }
+
+    private async syncMacroRoute(macroId: string = this.selectedMacroId(), replace: boolean = false) {
+        const target = this.macroDetailRoute(macroId);
+        if (this.service.currentPath() !== target) await this.service.routeTo(target, replace);
+    }
+
+    public async load(replaceRoute: boolean = false) {
         this.loading.set(true);
         this.error.set('');
         await this.service.render();
@@ -171,9 +291,10 @@ export class Component implements OnInit, OnDestroy {
             const macros = data.macros || [];
             this.macros.set(macros);
             this.summary.set(data.summary || { total: macros.length, enabled: 0, disabled: 0 });
-            if (!this.selectedMacroId() && macros.length) {
-                this.selectedMacroId.set(macros[0].id);
-            }
+            const selectedId = this.selectedMacroId();
+            const next = macros.find((item: any) => item.id === selectedId) || macros[0] || null;
+            this.selectedMacroId.set(next?.id || '');
+            await this.syncMacroRoute(next?.id || '', replaceRoute);
         } else {
             this.error.set(data?.message || '전역 매크로를 불러올 수 없습니다.');
         }
@@ -195,8 +316,9 @@ export class Component implements OnInit, OnDestroy {
         return this.macros().find((item: any) => item.id === selectedId) || null;
     }
 
-    public selectMacro(macroId: string) {
+    public async selectMacro(macroId: string) {
         this.selectedMacroId.set(macroId);
+        await this.syncMacroRoute(macroId);
     }
 
     public openAddMacro() {

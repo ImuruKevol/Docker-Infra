@@ -41,7 +41,7 @@ sudo /opt/docker-infra/installer/install.sh --step cleanup
 | `env` | `/etc/docker-infra/docker-infra.env` 생성과 `/var/lib/docker-infra` runtime directory 준비 |
 | `postgres` | PostgreSQL role, database, schema 생성과 password 설정 |
 | `python` | payload의 `requirements.txt`로 Python/WIZ runtime dependency 설치 |
-| `node` | NodeSource LTS setup으로 Node.js/npm 설치 후 공식 `@openai/codex` global 설치 |
+| `node` | NodeSource LTS setup으로 Node.js/npm runtime만 설치 |
 | `bundle` | payload의 `wiz-bundle.tar.zst`를 검증하고 `/opt/docker-infra/wiz`로 배포 |
 | `migrate` | 배포된 bundle의 DB migration 적용 |
 | `service` | `wiz.docker-infra.service` systemd unit 등록, env drop-in 추가, WIZ service 시작 |
@@ -49,6 +49,8 @@ sudo /opt/docker-infra/installer/install.sh --step cleanup
 | `nginx` | Docker Infra 앱 reverse proxy를 nginx에 등록 |
 | `verify` | PostgreSQL, WIZ service, setup 완료 상태 확인 |
 | `cleanup` | installer API daemon, installer nginx site, HTML/payload, 임시 setup 파일 제거 |
+
+Codex, Claude Code, 헤르메스 Agent CLI는 installer 기본 설치에 포함하지 않습니다. 운영 설치 후 관리자가 시스템 설정의 AI Agent 탭에서 각 Agent 설치/업데이트 스크립트를 실행합니다.
 
 ### Payload 갱신
 
@@ -132,7 +134,7 @@ sudo /opt/docker-infra/installer/install.sh --step cleanup
 | `env` | Creates `/etc/docker-infra/docker-infra.env` and prepares `/var/lib/docker-infra` runtime directories |
 | `postgres` | Creates the PostgreSQL role, database, schema, and role password |
 | `python` | Installs Python/WIZ runtime dependencies from payload `requirements.txt` |
-| `node` | Installs Node.js/npm from NodeSource LTS and the official `@openai/codex` global package |
+| `node` | Installs only the Node.js/npm runtime from NodeSource LTS |
 | `bundle` | Verifies `wiz-bundle.tar.zst` and deploys it into `/opt/docker-infra/wiz` |
 | `migrate` | Applies DB migrations from the deployed bundle |
 | `service` | Registers `wiz.docker-infra.service`, adds the env drop-in, and starts the WIZ service |
@@ -140,6 +142,8 @@ sudo /opt/docker-infra/installer/install.sh --step cleanup
 | `nginx` | Configures the nginx reverse proxy for Docker Infra |
 | `verify` | Checks PostgreSQL, WIZ service, and setup completion status |
 | `cleanup` | Removes the installer API daemon, installer nginx site, HTML/payload, and temporary setup file |
+
+Codex, Claude Code, and Hermes Agent CLIs are not part of the default installer flow. After installation, an administrator runs each Agent install/update script from the System settings AI Agent tab.
 
 ### Refreshing the Payload
 

@@ -1,0 +1,8 @@
+{
+    "id": "api-ai-agent",
+    "title": "AI Agent API",
+    "route": "/api/ai-agent/<path:path>",
+    "category": "ai",
+    "viewuri": "",
+    "controller": "user"
+}

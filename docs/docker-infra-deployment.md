@@ -5,7 +5,7 @@
 
 ## 설치 방식
 
-운영 배포는 개발용 PostgreSQL 컨테이너를 사용하지 않는다. `preinstall.sh`로 nginx와 설치 화면을 먼저 띄우고, 설치 화면 또는 `install.sh`로 host PostgreSQL, OS 패키지, PIP 패키지, Node.js LTS/npm, 공식 `@openai/codex`, WIZ bundle, systemd service, 관리자 비밀번호와 초기 시스템 설정을 순서대로 구성한다.
+운영 배포는 개발용 PostgreSQL 컨테이너를 사용하지 않는다. `preinstall.sh`로 nginx와 설치 화면을 먼저 띄우고, 설치 화면 또는 `install.sh`로 host PostgreSQL, OS 패키지, PIP 패키지, Node.js LTS/npm runtime, WIZ bundle, systemd service, 관리자 비밀번호와 초기 시스템 설정을 순서대로 구성한다. Codex, Claude Code, 헤르메스 Agent CLI는 기본 설치에 포함하지 않고, 설치 완료 후 관리자가 시스템 설정에서 설치/업데이트 스크립트를 실행한다.
 
 `project/main/installer/`는 단독 반출 가능한 설치 단위다. `payload/`에는 WIZ bundle archive, Python requirements, checksum 파일이 포함되며, 운영 host는 개발 workspace 없이 이 디렉터리만으로 설치를 진행한다. 설치 중 payload를 사용하기 전 `sha256sum -c`로 무결성을 확인한다.
 
@@ -37,7 +37,7 @@ sudo /opt/docker-infra/installer/install.sh --step all
 | `env` | `/etc/docker-infra/docker-infra.env` 생성, `/var/lib/docker-infra` runtime directory 준비 |
 | `postgres` | `docker_infra` role/database/schema 생성 및 password 설정 |
 | `python` | `requirements.txt`의 WIZ/Python runtime dependency 설치 |
-| `node` | NodeSource LTS setup으로 Node.js/npm 설치 후 공식 `@openai/codex` npm package를 global 설치 |
+| `node` | NodeSource LTS setup으로 Node.js/npm runtime만 설치 |
 | `bundle` | installer payload의 WIZ bundle archive에서 `bundle/config`, `bundle/public`, `bundle/plugin`, `bundle/project/main/bundle`만 `/opt/docker-infra/wiz`로 배포 |
 | `migrate` | `src/model/db/migration.py`의 migration을 적용해 운영 DB 테이블을 준비 |
 | `service` | `wiz.docker-infra.service`를 등록하고 `EnvironmentFile=/etc/docker-infra/docker-infra.env` drop-in을 추가 |
@@ -69,13 +69,19 @@ sudo /opt/docker-infra/installer/cleanup.sh --scope all
 - `DOCKER_INFRA_DB_*`: host PostgreSQL 접속 정보
 - `DOCKER_INFRA_SECRET_KEY`: session/암호화용 secret
 - `DOCKER_INFRA_DATA_DIR`, `DOCKER_INFRA_SSH_KEY_DIR`, `DOCKER_INFRA_BACKUP_HARBOR_DATA_DIR`: 운영 데이터 저장 경로
-- `DOCKER_INFRA_SYSTEM_CODEX_BIN`: npm으로 설치한 공식 `@openai/codex` CLI 경로
+- `DOCKER_INFRA_SYSTEM_CODEX_BIN`: 시스템 설정 설치 스크립트 또는 관리자가 설치한 Codex CLI 경로
+- `DOCKER_INFRA_CLAUDE_CODE_BIN`: Claude Code CLI 경로
+- `DOCKER_INFRA_HERMES_AGENT_BIN`: 헤르메스 에이전트 CLI 경로
+- `DOCKER_INFRA_CODEX_INSTALL_SCRIPT`, `DOCKER_INFRA_CLAUDE_CODE_INSTALL_SCRIPT`, `DOCKER_INFRA_HERMES_AGENT_INSTALL_SCRIPT`: 시스템 설정에서 실행할 Agent별 설치 스크립트 override
+- `DOCKER_INFRA_CLAUDE_CODE_INSTALL_URL`, `DOCKER_INFRA_CLAUDE_CODE_INSTALL_CHANNEL`: Claude Code 설치 스크립트 URL과 release channel override
+- `DOCKER_INFRA_HERMES_AGENT_INSTALL_URL`, `DOCKER_INFRA_HERMES_AGENT_INSTALL_CHANNEL`: Hermes Agent 설치 스크립트 URL과 release channel override
 - `CODEX_HOME`: Codex 로그인 세션 저장 경로
+- `CLAUDE_HOME`, `HERMES_HOME`: 각 Agent CLI의 Docker Infra 고정 세션/설정 저장 경로
 - `DOCKER_INFRA_DDNS_PUBLIC_IP_URLS`: DDNS 갱신 시 공인 IP를 조회할 HTTP endpoint 목록
 - `DOCKER_INFRA_DDNS_STATE_FILE`: NetworkManager dispatcher가 마지막으로 DDNS API에 보낸 IP를 저장하는 파일
 - `DOCKER_INFRA_DDNS_DISPATCHER_*`: Ubuntu 24.04 NetworkManager dispatcher 설치 경로와 자동 설치 여부
 
-공식 `@openai/codex`는 npm global package로 설치해 일반 `codex` CLI를 제공한다. OpenAI/Gemini/Ollama API 토큰 기반 실행은 Docker Infra가 각 provider API를 직접 호출한다.
+Agent CLI는 installer가 자동 설치하지 않는다. 관리자는 시스템 설정의 AI Agent 탭에서 Codex, Claude Code, 헤르메스 설치/업데이트 스크립트를 실행하고 모델만 선택한다. 실행 파일 탐색, Agent HOME, 명령 템플릿은 Docker Infra 기본값으로 고정한다. AI 실행은 Agent CLI와 Docker Infra MCP 기반으로만 수행하며 Docker Infra는 LLM provider API를 직접 호출하지 않는다. MCP 권한은 `agent_full_control_except_critical_destruction` 기준으로 운영되며, Agent는 등록 서버를 넓게 제어할 수 있지만 Docker Infra 자체 삭제, control service/container 제거, OS shutdown/reboot/wipe/format, OS critical path 재귀 삭제는 차단된다.
 
 ## 최초 관리자 비밀번호
 
@@ -91,7 +97,7 @@ sudo /opt/docker-infra/installer/cleanup.sh --scope all
 - installer는 운영 DB password와 secret key를 `/etc/docker-infra/docker-infra.env`에 `0640` 권한으로 저장하고, 이 파일을 GitHub 업로드 대상으로 보지 않는다.
 - PostgreSQL role password 설정은 password 원문이 shell debug log나 process argument에 남지 않도록 표준 입력으로 SQL을 전달한다.
 - installer HTML의 관리자 password payload는 `initial-setup.json`에 `0600` 권한으로 임시 저장하고 `setup` 성공 후 삭제한다.
-- SSH private key, API token, DDNS key, Cloudflare token, AI provider token 원문은 API 응답, operation log, audit log, installer log, devlog에 기록하지 않는다.
+- SSH private key, API token, DDNS key, Cloudflare token, AI Agent 세션/설정 secret 원문은 API 응답, operation log, audit log, installer log, devlog에 기록하지 않는다.
 
 ## DDNS 공인 IP 갱신
 

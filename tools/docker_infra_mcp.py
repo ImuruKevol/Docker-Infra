@@ -15,10 +15,33 @@ from pathlib import Path
 
 MAX_CAPTURE_CHARS = 20000
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("DOCKER_INFRA_MCP_TIMEOUT_SECONDS") or "30")
-DESTRUCTIVE_RE = re.compile(
-    r"(\brm\s+-[^\n;|&]*r|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\bmkfs\b|\bdd\s+if=|\bdocker\s+(stop|restart|kill|pause|unpause|rm)\b|\bdocker\s+service\s+rm\b|\bdocker\s+stack\s+rm\b|\bdocker\s+volume\s+rm\b|\bdocker\s+system\s+prune\b)",
+MCP_CONTRACT_URI = "docker-infra://mcp/contract"
+PERMISSION_MODE = "agent_full_control_except_critical_destruction"
+CRITICAL_SYSTEM_RE = re.compile(
+    r"(\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\bmkfs(?:\.[\w-]+)?\b|\bwipefs\b|\bfdisk\b|\bparted\b|\bdd\b[^\n;|&]*\bof=)",
     re.I,
 )
+RM_RECURSIVE_RE = re.compile(r"\brm\s+(?P<flags>-[^\n;|&\s]*r[^\n;|&\s]*)\s+(?P<targets>[^\n;|&]+)", re.I)
+SELF_RESOURCE_RE = re.compile(r"(docker[-_]?infra|/root/docker-infra|/etc/docker-infra|/var/lib/docker-infra)", re.I)
+DOCKER_SELF_RE = re.compile(
+    r"\bdocker\b[^\n;|&]*(?:\b(stop|restart|kill|rm|down)\b|\bservice\s+rm\b|\bstack\s+rm\b)[^\n;|&]*(docker[-_]?infra|season[-_]?wiz|\bwiz\b)",
+    re.I,
+)
+SYSTEMCTL_SELF_RE = re.compile(r"\bsystemctl\s+(stop|disable|mask)\s+(docker[-_]?infra|wiz|season-wiz)\b", re.I)
+OS_CRITICAL_RM_PATHS = {
+    "/",
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/lib",
+    "/lib64",
+    "/proc",
+    "/sbin",
+    "/sys",
+    "/usr",
+    "/var/lib/docker",
+}
 CONTAINER_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{3,128}$")
 
 
@@ -59,6 +82,7 @@ def public_context():
         "workspace_root": CONTEXT.get("workspace_root"),
         "project_root": CONTEXT.get("project_root"),
         "runtime_values": CONTEXT.get("runtime_values") or {},
+        "mcp_contract": mcp_contract(),
         "placement": CONTEXT.get("placement"),
         "domain_zones": CONTEXT.get("domain_zones") or [],
         "ddns_endpoints": CONTEXT.get("ddns_endpoints") or [],
@@ -69,6 +93,97 @@ def public_context():
         "allowed_probe_hosts": CONTEXT.get("allowed_probe_hosts") or [],
         "servers": [public_node(node) for node in CONTEXT.get("nodes") or []],
     }
+
+
+def _normalized_absolute_path(value):
+    text = str(value or "").strip().strip("'\"")
+    if not text or text.startswith("-"):
+        return ""
+    try:
+        return str(Path(text).expanduser().resolve(strict=False))
+    except Exception:
+        return text
+
+
+def protected_docker_infra_exact_paths():
+    roots = [
+        CONTEXT.get("workspace_root"),
+        CONTEXT.get("project_root"),
+        "/root/docker-infra",
+        "/root/docker-infra/project/main",
+    ]
+    return sorted({_normalized_absolute_path(item) for item in roots if _normalized_absolute_path(item)})
+
+
+def protected_docker_infra_paths():
+    roots = [*protected_docker_infra_exact_paths(), "/etc/docker-infra", "/var/lib/docker-infra"]
+    core_children = []
+    for root in roots:
+        normalized = _normalized_absolute_path(root)
+        if not normalized:
+            continue
+        core_children.append(normalized)
+        if normalized.endswith("/project/main"):
+            core_children.extend(
+                [
+                    f"{normalized}/src",
+                    f"{normalized}/config",
+                    f"{normalized}/tools",
+                ]
+            )
+    return sorted({item for item in core_children if item})
+
+
+def _is_path_or_child(path, root):
+    if not path or not root:
+        return False
+    if path == root:
+        return True
+    return path.startswith(root.rstrip("/") + "/")
+
+
+def critical_rm_target(target):
+    path = _normalized_absolute_path(target)
+    if not path:
+        return ""
+    if path in {"/", "/*"}:
+        return "root filesystem"
+    for root in OS_CRITICAL_RM_PATHS:
+        if root == "/" and path != "/":
+            continue
+        if _is_path_or_child(path, root):
+            return f"OS critical path {root}"
+    for root in protected_docker_infra_exact_paths():
+        if path == root:
+            return f"Docker Infra protected path {root}"
+    for root in protected_docker_infra_paths():
+        if root in protected_docker_infra_exact_paths():
+            continue
+        if _is_path_or_child(path, root):
+            return f"Docker Infra protected path {root}"
+    if SELF_RESOURCE_RE.search(path):
+        return "Docker Infra protected resource"
+    return ""
+
+
+def critical_command_violation(command):
+    command = str(command or "")
+    if CRITICAL_SYSTEM_RE.search(command):
+        return "OS critical command"
+    if SYSTEMCTL_SELF_RE.search(command):
+        return "Docker Infra control service operation"
+    if DOCKER_SELF_RE.search(command):
+        return "Docker Infra control container or stack operation"
+    for match in RM_RECURSIVE_RE.finditer(command):
+        try:
+            parts = shlex.split(match.group("targets"))
+        except Exception:
+            parts = match.group("targets").split()
+        for target in parts:
+            reason = critical_rm_target(target)
+            if reason:
+                return reason
+    return ""
 
 
 def node_by_id(node_id):
@@ -120,10 +235,9 @@ def shell_result(command, timeout_seconds=None):
 
 
 def assert_safe_command(command):
-    if os.environ.get("DOCKER_INFRA_MCP_ALLOW_DESTRUCTIVE") == "1":
-        return
-    if DESTRUCTIVE_RE.search(command or ""):
-        raise ValueError("destructive ssh command is blocked by Docker Infra MCP policy")
+    reason = critical_command_violation(command)
+    if reason:
+        raise ValueError("critical command is blocked by Docker Infra MCP policy: %s" % reason)
 
 
 def normalize_host(value):
@@ -293,7 +407,7 @@ def tool_container_logs(arguments):
 
 
 def tool_container_action(arguments):
-    if not bool((CONTEXT.get("terminal_actions") or {}).get("allow_container_actions")):
+    if (CONTEXT.get("terminal_actions") or {}).get("allow_container_actions") is False:
         raise ValueError("container terminal actions are not allowed for this AI request")
     arguments = arguments or {}
     node = node_by_id(arguments.get("node_id"))
@@ -305,6 +419,13 @@ def tool_container_action(arguments):
         raise ValueError("container_id is invalid")
     timeout = max(5, min(int(arguments.get("timeout_seconds") or 45), 180))
     quoted = shlex.quote(container_id)
+    inspect = run_on_node(
+        node,
+        "docker inspect --format '{{.Name}} {{json .Config.Labels}} {{json .Mounts}}' %s 2>/dev/null || true" % quoted,
+        timeout_seconds=10,
+    )
+    if SELF_RESOURCE_RE.search((inspect.get("stdout") or "") + "\n" + container_id):
+        raise ValueError("Docker Infra control containers are protected by MCP policy")
     if action == "stop":
         command = f"docker stop {quoted}"
     elif action == "restart":
@@ -707,7 +828,7 @@ TOOLS = {
         "handler": tool_server_collect,
     },
     "ssh_command": {
-        "description": "Run a non-destructive SSH command on a registered server using the stored Docker Infra SSH key.",
+        "description": "Run an operator-level SSH command on a registered server using the stored Docker Infra SSH key. Only Docker Infra self-destruction and OS-critical commands are blocked.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -722,11 +843,189 @@ TOOLS = {
 }
 
 
+TOOL_POLICIES = {
+    "infra_context": {
+        "category": "context",
+        "capability": "Docker Infra topology, runtime values, placement, DDNS endpoints, request summary, and MCP policy.",
+        "side_effects": "none",
+        "permission": "always allowed",
+        "critical_guards": [],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    "docker_search": {
+        "category": "image",
+        "capability": "Search Docker Hub image candidates through the local Docker CLI.",
+        "side_effects": "network read",
+        "permission": "allowed; no mutation",
+        "critical_guards": [],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    "docker_image_check": {
+        "category": "image",
+        "capability": "Inspect local images and remote manifests for exact image references.",
+        "side_effects": "local/network read",
+        "permission": "allowed; no mutation",
+        "critical_guards": [],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    "server_list": {
+        "category": "inventory",
+        "capability": "List registered Docker Infra servers exposed to this Agent run.",
+        "side_effects": "none",
+        "permission": "always allowed",
+        "critical_guards": [],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    "server_port_check": {
+        "category": "server",
+        "capability": "Check whether one or more ports can be bound on a registered server.",
+        "side_effects": "short-lived bind test on target server",
+        "permission": "allowed on registered servers",
+        "critical_guards": [],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    "container_logs": {
+        "category": "runtime",
+        "capability": "Read recent Docker logs from a container on a registered server.",
+        "side_effects": "none",
+        "permission": "allowed on registered servers",
+        "critical_guards": [],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    "container_action": {
+        "category": "runtime",
+        "capability": "Stop, restart, or remove a non-Docker-Infra container on a registered server.",
+        "side_effects": "container runtime mutation",
+        "permission": "allowed by default unless terminal_actions.allow_container_actions=false",
+        "critical_guards": ["Docker Infra control containers are protected."],
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    },
+    "service_stack_status": {
+        "category": "runtime",
+        "capability": "Read Docker stack services and task state from the local swarm manager.",
+        "side_effects": "none",
+        "permission": "allowed",
+        "critical_guards": [],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    "dns_lookup": {
+        "category": "network",
+        "capability": "Resolve allowed service domains and registered node hosts.",
+        "side_effects": "network read",
+        "permission": "allowed only for allowed_probe_hosts and registered node hosts",
+        "critical_guards": ["arbitrary host probing is blocked by allowed_probe_hosts."],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    "tcp_connect_check": {
+        "category": "network",
+        "capability": "Check TCP reachability for allowed service domains, IPs, and node hosts.",
+        "side_effects": "network read",
+        "permission": "allowed only for allowed_probe_hosts and registered node hosts",
+        "critical_guards": ["arbitrary host probing is blocked by allowed_probe_hosts."],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    "http_probe": {
+        "category": "network",
+        "capability": "Fetch an allowed service URL and return status, redirect, and a short body snippet.",
+        "side_effects": "network read",
+        "permission": "allowed only for allowed_probe_hosts and registered node hosts",
+        "critical_guards": ["arbitrary URL probing is blocked by allowed_probe_hosts."],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    "browser_probe": {
+        "category": "network",
+        "capability": "Fetch an allowed service URL with browser-like headers and summarize title/body text.",
+        "side_effects": "network read without JavaScript execution",
+        "permission": "allowed only for allowed_probe_hosts and registered node hosts",
+        "critical_guards": ["arbitrary URL probing is blocked by allowed_probe_hosts."],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    "server_collect": {
+        "category": "server",
+        "capability": "Collect system, Docker, and recent logs from a registered server.",
+        "side_effects": "diagnostic reads",
+        "permission": "allowed on registered servers",
+        "critical_guards": [],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    "ssh_command": {
+        "category": "server",
+        "capability": "Run an operator-level shell command on a registered server through stored Docker Infra SSH credentials.",
+        "side_effects": "depends on command; mutations are allowed unless they cross the critical guard",
+        "permission": "allowed by default; only OS-critical and Docker Infra self-destruction commands are blocked",
+        "critical_guards": [
+            "OS shutdown/reboot/poweroff/halt and disk format/partition/wipe commands are blocked.",
+            "Recursive deletion of OS critical paths is blocked.",
+            "Recursive deletion of Docker Infra protected roots is blocked.",
+            "Stopping/removing Docker Infra control services, containers, or stacks is blocked.",
+        ],
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    },
+}
+
+
+def mcp_contract():
+    return {
+        "server": "docker_infra",
+        "version": "2026-05-28.agent-full-control",
+        "permission_mode": PERMISSION_MODE,
+        "default_permission": "allow",
+        "guardrail": "Agents may use Docker Infra MCP for broad server control. The MCP server blocks only Docker Infra self-destruction and OS-critical operations.",
+        "blocked_action_families": [
+            "OS shutdown/reboot/poweroff/halt",
+            "disk format, partition, wipe, or dd write operations",
+            "recursive deletion of OS critical paths",
+            "recursive deletion of Docker Infra protected roots",
+            "stop/remove/disable Docker Infra control services, containers, or stacks",
+        ],
+        "protected_paths": protected_docker_infra_paths(),
+        "probe_policy": "network probes are limited to registered node hosts and allowed_probe_hosts from the request context",
+        "tool_count": len(TOOLS),
+        "tools": [
+            {
+                "name": name,
+                "description": TOOLS[name]["description"],
+                "inputSchema": TOOLS[name]["inputSchema"],
+                **{key: value for key, value in (TOOL_POLICIES.get(name) or {}).items() if key != "annotations"},
+            }
+            for name in TOOLS.keys()
+        ],
+    }
+
+
 def enabled_tool_names():
     configured = CONTEXT.get("mcp_enabled_tools")
     if not isinstance(configured, list) or not configured:
         return list(TOOLS.keys())
     return [name for name in configured if name in TOOLS]
+
+
+def resource_list():
+    return {
+        "resources": [
+            {
+                "uri": MCP_CONTRACT_URI,
+                "name": "Docker Infra MCP Agent Contract",
+                "description": "Detailed Docker Infra MCP tool, permission, and critical guard definition for Agent runtimes.",
+                "mimeType": "application/json",
+            }
+        ]
+    }
+
+
+def resource_read(params):
+    uri = (params or {}).get("uri")
+    if uri != MCP_CONTRACT_URI:
+        raise ValueError("unknown resource")
+    return {
+        "contents": [
+            {
+                "uri": MCP_CONTRACT_URI,
+                "mimeType": "application/json",
+                "text": json.dumps(mcp_contract(), ensure_ascii=False, indent=2),
+            }
+        ]
+    }
 
 
 def read_message():
@@ -782,6 +1081,7 @@ def tool_list():
                 "name": name,
                 "description": spec["description"],
                 "inputSchema": spec["inputSchema"],
+                "annotations": (TOOL_POLICIES.get(name) or {}).get("annotations", {}),
             }
             for name, spec in TOOLS.items()
             if name in enabled_tool_names()
@@ -825,7 +1125,9 @@ def handle(request):
     if method == "tools/call":
         return {"jsonrpc": "2.0", "id": request_id, "result": tool_call(request.get("params") or {})}
     if method == "resources/list":
-        return {"jsonrpc": "2.0", "id": request_id, "result": {"resources": []}}
+        return {"jsonrpc": "2.0", "id": request_id, "result": resource_list()}
+    if method == "resources/read":
+        return {"jsonrpc": "2.0", "id": request_id, "result": resource_read(request.get("params") or {})}
     if method == "resources/templates/list":
         return {"jsonrpc": "2.0", "id": request_id, "result": {"resourceTemplates": []}}
     if method == "prompts/list":

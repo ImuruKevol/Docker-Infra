@@ -7,7 +7,7 @@
 ## 원 요청
 
 ```text
-Error response from daemon: Get "http://220.82.71.78:5000/v2/": dial tcp 220.82.71.78:5000: connect: connection refused
+Error response from daemon: Get "http://---.---.---.---:5000/v2/": dial tcp ---.---.---.---:5000: connect: connection refused
 롤백 동작에서 위와 같은 에러 로그가 떴어.
 ```
 

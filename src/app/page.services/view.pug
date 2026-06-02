@@ -71,7 +71,7 @@ main(class="space-y-5 px-5 py-5")
                                 span(*ngIf="!primaryDomain()", class="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300")
                                     i(class="fa-solid fa-triangle-exclamation")
                                     span {{primaryDomainText()}}
-                                a(*ngIf="runtimeServerDetailNodeId()", [routerLink]="['/servers']", [queryParams]="runtimeServerDetailQueryParams()", class="inline-flex max-w-full items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950", [title]="runtimeServerDetailLinkTitle()", aria-label="서버 상세로 이동")
+                                a(*ngIf="runtimeServerDetailNodeId()", [routerLink]="runtimeServerDetailRoute()", class="inline-flex max-w-full items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950", [title]="runtimeServerDetailLinkTitle()", aria-label="서버 상세로 이동")
                                     i(class="fa-solid fa-server")
                                     span(class="max-w-[180px] truncate") {{runtimeServerSummaryText()}}
                                     i(class="fa-solid fa-arrow-up-right-from-square text-[11px]")

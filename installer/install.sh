@@ -19,7 +19,6 @@ NGINX_SITE_NAME="${NGINX_SITE_NAME:-docker-infra}"
 INSTALLER_SERVICE_NAME="${INSTALLER_SERVICE_NAME:-docker-infra-installer.service}"
 INSTALLER_NGINX_SITE="${INSTALLER_NGINX_SITE:-docker-infra-installer}"
 NODE_SOURCE_SETUP_URL="${NODE_SOURCE_SETUP_URL:-https://deb.nodesource.com/setup_lts.x}"
-OFFICIAL_CODEX_PACKAGE="${OFFICIAL_CODEX_PACKAGE:-@openai/codex}"
 
 if [[ -f "$INSTALLER_ENV_FILE" ]]; then
     set -a
@@ -202,7 +201,7 @@ fetch_setup_status() {
 }
 
 ensure_runtime_env() {
-    install -d -m 0750 "$ENV_DIR" "$LOG_DIR" "$DATA_ROOT" "$DATA_ROOT/data" "$DATA_ROOT/ssh" "$DATA_ROOT/backup-harbor" "$DATA_ROOT/codex-home"
+    install -d -m 0750 "$ENV_DIR" "$LOG_DIR" "$DATA_ROOT" "$DATA_ROOT/data" "$DATA_ROOT/ssh" "$DATA_ROOT/backup-harbor" "$DATA_ROOT/codex-home" "$DATA_ROOT/claude-home" "$DATA_ROOT/hermes-home"
     load_runtime_env
 
     local db_host="${DOCKER_INFRA_DB_HOST:-127.0.0.1}"
@@ -213,9 +212,8 @@ ensure_runtime_env() {
     local db_schema="${DOCKER_INFRA_DB_SCHEMA:-public}"
     local secret_key="${DOCKER_INFRA_SECRET_KEY:-$(random_secret)}"
     local official_codex_bin="${DOCKER_INFRA_SYSTEM_CODEX_BIN:-$(command -v codex || true)}"
-    if [[ -z "$official_codex_bin" ]]; then
-        official_codex_bin="/usr/local/bin/codex"
-    fi
+    local claude_code_bin="${DOCKER_INFRA_CLAUDE_CODE_BIN:-$(command -v claude || true)}"
+    local hermes_agent_bin="${DOCKER_INFRA_HERMES_AGENT_BIN:-$(command -v hermes-agent || command -v hermes || true)}"
     local env_tmp
     env_tmp="$(mktemp)"
 
@@ -234,7 +232,18 @@ ensure_runtime_env() {
         write_env_line "DOCKER_INFRA_BACKUP_HARBOR_HTTPS_PORT" "${DOCKER_INFRA_BACKUP_HARBOR_HTTPS_PORT:-5443}"
         write_env_line "DOCKER_INFRA_SESSION_COOKIE_SECURE" "${DOCKER_INFRA_SESSION_COOKIE_SECURE:-false}"
         write_env_line "DOCKER_INFRA_SYSTEM_CODEX_BIN" "$official_codex_bin"
+        write_env_line "DOCKER_INFRA_CLAUDE_CODE_BIN" "$claude_code_bin"
+        write_env_line "DOCKER_INFRA_HERMES_AGENT_BIN" "$hermes_agent_bin"
+        write_env_line "DOCKER_INFRA_CODEX_INSTALL_SCRIPT" "${DOCKER_INFRA_CODEX_INSTALL_SCRIPT:-}"
+        write_env_line "DOCKER_INFRA_CLAUDE_CODE_INSTALL_SCRIPT" "${DOCKER_INFRA_CLAUDE_CODE_INSTALL_SCRIPT:-}"
+        write_env_line "DOCKER_INFRA_CLAUDE_CODE_INSTALL_URL" "${DOCKER_INFRA_CLAUDE_CODE_INSTALL_URL:-https://claude.ai/install.sh}"
+        write_env_line "DOCKER_INFRA_CLAUDE_CODE_INSTALL_CHANNEL" "${DOCKER_INFRA_CLAUDE_CODE_INSTALL_CHANNEL:-latest}"
+        write_env_line "DOCKER_INFRA_HERMES_AGENT_INSTALL_SCRIPT" "${DOCKER_INFRA_HERMES_AGENT_INSTALL_SCRIPT:-}"
+        write_env_line "DOCKER_INFRA_HERMES_AGENT_INSTALL_URL" "${DOCKER_INFRA_HERMES_AGENT_INSTALL_URL:-https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh}"
+        write_env_line "DOCKER_INFRA_HERMES_AGENT_INSTALL_CHANNEL" "${DOCKER_INFRA_HERMES_AGENT_INSTALL_CHANNEL:-}"
         write_env_line "CODEX_HOME" "${CODEX_HOME:-$DATA_ROOT/codex-home}"
+        write_env_line "CLAUDE_HOME" "${CLAUDE_HOME:-$DATA_ROOT/claude-home}"
+        write_env_line "HERMES_HOME" "${HERMES_HOME:-$DATA_ROOT/hermes-home}"
     } >"$env_tmp"
 
     install -m 0640 "$env_tmp" "$ENV_FILE"
@@ -302,9 +311,9 @@ install_python_packages() {
     fi
 }
 
-install_nodejs_and_official_codex() {
+install_nodejs_runtime() {
     export DEBIAN_FRONTEND=noninteractive
-    log "installing Node.js LTS and npm"
+    log "installing Node.js LTS and npm runtime"
     apt-get update
     apt-get install -y --no-install-recommends ca-certificates curl gnupg
     local setup_script
@@ -318,15 +327,7 @@ install_nodejs_and_official_codex() {
     require_executable "$(command -v npm || true)"
     node --version >/dev/null
     npm --version >/dev/null
-    log "installing official Codex CLI package $OFFICIAL_CODEX_PACKAGE"
-    npm install -g "$OFFICIAL_CODEX_PACKAGE"
-    npm list -g "$OFFICIAL_CODEX_PACKAGE" --depth=0 >/dev/null
-    local official_bin
-    official_bin="$(command -v codex || true)"
-    require_executable "$official_bin"
-    "$official_bin" --version >/dev/null
-    set_env_value "DOCKER_INFRA_SYSTEM_CODEX_BIN" "$official_bin"
-    log "official Codex CLI installed at $official_bin"
+    log "Node.js and npm are ready. AI Agent CLIs are installed later from Docker Infra system settings."
 }
 
 build_and_deploy_bundle() {
@@ -575,7 +576,7 @@ run_all_steps() {
     ensure_runtime_env
     install_postgresql_database
     install_python_packages
-    install_nodejs_and_official_codex
+    install_nodejs_runtime
     build_and_deploy_bundle
     run_database_migrations
     register_wiz_service
@@ -594,7 +595,7 @@ Steps:
   env        Create /etc/docker-infra/docker-infra.env.
   postgres   Create PostgreSQL role, database, and schema.
   python     Install Python pip packages from requirements.txt.
-  node       Install Node.js LTS, npm, and official @openai/codex.
+  node       Install Node.js LTS and npm runtime only. AI Agent CLIs are installed from system settings.
   bundle     Deploy packaged WIZ bundle files, or build and deploy them.
   migrate    Apply Docker Infra database migrations.
   service    Register and start the WIZ systemd service.
@@ -625,7 +626,7 @@ main() {
         env) ensure_runtime_env ;;
         postgres) install_postgresql_database ;;
         python) install_python_packages ;;
-        node) install_nodejs_and_official_codex ;;
+        node) install_nodejs_runtime ;;
         bundle) build_and_deploy_bundle ;;
         migrate) run_database_migrations ;;
         service) register_wiz_service ;;

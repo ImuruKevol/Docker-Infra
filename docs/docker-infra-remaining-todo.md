@@ -192,7 +192,7 @@
 
 - [x] 템플릿/기본 구성 기능 제거
 - [x] AI 초안, Compose 직접 작성, 서버 Compose 가져오기를 서비스 생성 진입점으로 정리
-- [x] 서비스 AI에 전달할 입력, 권한 scope, MCP allowlist 설계 고정
+- [x] 서비스 AI에 전달할 입력, Agent full-control MCP 계약, critical guard 설계 고정
 - [x] 서비스 AI 생성 재시도 중복 방지를 위한 생성 세션/배포 operation/stack prune 기준 반영
 - [x] Compose 초안 적용 시 wizard form으로 자동 매핑
 - [x] `/templates` 화면, 메뉴, 모델, DB 테이블 제거

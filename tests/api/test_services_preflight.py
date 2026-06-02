@@ -34,6 +34,7 @@ TEMPLATES_MODEL = ROOT / "src" / "model" / "struct" / "templates.py"
 TEMPLATES_SEED_MODEL = ROOT / "src" / "model" / "struct" / "templates_seed.py"
 TEMPLATE_AI_MODEL = ROOT / "src" / "model" / "struct" / "template_ai.py"
 AI_ASSISTANT_MODEL = ROOT / "src" / "model" / "struct" / "ai_assistant.py"
+AI_SETTINGS_MODEL = ROOT / "src" / "model" / "struct" / "ai_settings.py"
 CODEX_RUNTIME_MODEL = ROOT / "src" / "model" / "struct" / "codex_runtime.py"
 DOCKER_INFRA_MCP = ROOT / "tools" / "docker_infra_mcp.py"
 PORTS_MODEL = ROOT / "src" / "model" / "struct" / "services_ports.py"
@@ -82,6 +83,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
             {"jsonrpc": "2.0", "id": 3, "method": "resources/list", "params": {}},
             {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "infra_context", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "resources/read", "params": {"uri": "docker-infra://mcp/contract"}},
         ]
         completed = subprocess.run(
             [sys.executable, str(DOCKER_INFRA_MCP)],
@@ -97,10 +99,25 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         by_id = {item.get("id"): item for item in responses}
         self.assertEqual(by_id[1]["result"]["serverInfo"]["name"], "docker-infra")
         self.assertEqual([tool["name"] for tool in by_id[2]["result"]["tools"]], ["infra_context"])
-        self.assertEqual(by_id[3]["result"]["resources"], [])
+        self.assertEqual(by_id[3]["result"]["resources"][0]["uri"], "docker-infra://mcp/contract")
         infra_context = json.loads(by_id[4]["result"]["content"][0]["text"])
         self.assertEqual(infra_context["ai_request_summary"]["mode"], "test")
         self.assertEqual(infra_context["request_context_keys"], ["mode"])
+        self.assertEqual(infra_context["mcp_contract"]["permission_mode"], "agent_full_control_except_critical_destruction")
+        contract = json.loads(by_id[5]["result"]["contents"][0]["text"])
+        self.assertEqual(contract["permission_mode"], "agent_full_control_except_critical_destruction")
+        self.assertIn("ssh_command", [tool["name"] for tool in contract["tools"]])
+
+    def test_docker_infra_mcp_critical_command_policy_is_narrow(self):
+        spec = importlib.util.spec_from_file_location("docker_infra_mcp_policy_test", DOCKER_INFRA_MCP)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.critical_command_violation("docker restart app_container"), "")
+        self.assertIn("OS critical command", module.critical_command_violation("reboot"))
+        self.assertIn(
+            "Docker Infra protected path",
+            module.critical_command_violation("rm -rf /root/docker-infra/project/main/src"),
+        )
 
     def test_service_create_preflight_contract_is_wired(self):
         api = CREATE_API.read_text(encoding="utf-8")
@@ -197,6 +214,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         template_ai = TEMPLATE_AI_MODEL.read_text(encoding="utf-8")
         wizard = WIZARD_MODEL.read_text(encoding="utf-8")
         assistant = AI_ASSISTANT_MODEL.read_text(encoding="utf-8")
+        ai_settings = AI_SETTINGS_MODEL.read_text(encoding="utf-8")
         codex_runtime = CODEX_RUNTIME_MODEL.read_text(encoding="utf-8")
         mcp = DOCKER_INFRA_MCP.read_text(encoding="utf-8")
         deploy = DEPLOY_MODEL.read_text(encoding="utf-8")
@@ -278,7 +296,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("payload = {\"contract\": template_ai.template_contract()}", templates_api)
         self.assertIn("def stream_template_ai():", templates_api)
         self.assertIn("COMPOSE_TEMPLATE_MCP_TOOLS", template_ai)
-        self.assertIn("\"can_run_ssh_command\": False", template_ai)
+        self.assertIn("\"can_run_ssh_command\": True", template_ai)
+        self.assertIn("\"permission_mode\": \"agent_full_control_except_critical_destruction\"", template_ai)
         self.assertIn("public useTemplate", templates_view)
         self.assertIn("activeEditorOptions", templates_view)
         self.assertIn("setActiveTab", templates_view)
@@ -322,7 +341,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("template_ai_policy", assistant)
         self.assertIn('"compose_template"', assistant)
         self.assertIn('"can_save_template": False', assistant)
-        self.assertIn('"forbidden_tool_families"', assistant)
+        self.assertIn('"blocked_action_families"', assistant)
         self.assertIn('"placeholder_format": "{{ variable_name }}"', assistant)
         self.assertIn("stream_template", assistant)
         self.assertIn("AI_TEMPLATE_README_REQUIRED", assistant)
@@ -378,7 +397,11 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("never remove all public domains just because the DDNS record is not registered yet", assistant)
         self.assertIn("AI 수정 호출 실패로 DDNS deterministic fallback", assistant)
         self.assertIn("기존 DDNS 등록 정보와 공인 IP가 같아 DDNS API 호출은 생략되었습니다.", assistant)
-        for token in ["has_enabled_models", "시스템 설정에서 사용 중인 AI 모델이 없습니다.", "선택한 Codex 모델을 사용하려면 Codex 로그인을 사용 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED"]:
+        for token in ["has_enabled_models", "시스템 설정에서 사용 중인 AI Agent가 없습니다."]:
+            self.assertIn(token, ai_settings)
+        for token in ["default_agent", "enabled_agent_count", "기본 AI Agent는 사용 중인 Agent 중에서 선택하세요."]:
+            self.assertIn(token, ai_settings)
+        for token in ["선택한 AI Agent를 사용하려면 시스템 설정에서 먼저 사용 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED", "default_agent = self._default_model_ref(config)"]:
             self.assertIn(token, assistant)
         for token in ["_runtime_issue_signals", "_client_failed_operations", "_merge_runtime_operations", "client_runtime_issues", "terminal_actions", "container_action", "operator_message", "service_status", "failed_operations", "stack_replicas", "containers_stopped", "stream_runtime_repair", "runtime_actions", "terminal_action_results", "_execute_runtime_actions", "start_runtime_verification", "_runtime_verification_worker", "_wait_runtime_ready", "_runtime_snapshot_blocked", "_runtime_snapshot_key", "AI_VERIFY_UNCHANGED_BLOCKED_ATTEMPTS", "동일한 상태 확인 로그", "다음 검증 시도", "verify_runtime", "service.ai.verify"]:
             self.assertIn(token, assistant)
@@ -392,9 +415,13 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
             self.assertIn(token, mcp)
         self.assertIn("default_tools_approval_mode", codex_runtime)
         self.assertIn("mcp_tools_for_scope", codex_runtime)
+        for token in ["MCP_PERMISSION_MODE", "AGENT_FULL_CONTROL_MCP_TOOLS", "agent_full_control_except_critical_destruction", "danger-full-access"]:
+            self.assertIn(token, codex_runtime)
         for token in ["_prompt_context", "_semantic_prompt_context", "PROMPT_CONTEXT_CHAR_BUDGET", "context_delivery", "ai_request_summary", "request_context_keys", "large Docker Infra runtime data is kept out of the prompt"]:
             self.assertIn(token, codex_runtime)
         for token in ["ai_request_summary", "request_context_keys", "compact AI request summary"]:
+            self.assertIn(token, mcp)
+        for token in ["mcp_contract", "critical_command_violation", "MCP_CONTRACT_URI", "agent_full_control_except_critical_destruction", "Docker Infra control containers are protected"]:
             self.assertIn(token, mcp)
         self.assertIn("create_session_id", wizard)
         self.assertIn("_existing_create_session", wizard)
@@ -403,8 +430,10 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         for token in ["_active_deploy_operation", "deduplicated"]:
             self.assertIn(token, deploy)
         self.assertIn("--prune", local_commands)
-        for token in ["_run_direct_api", "_complete_openai_api", "_complete_gemini_api", "_complete_ollama_api", "_direct_api_prompt_context", "embedded_direct_api"]:
+        for token in ["AGENT_TYPES", "claude_code", "hermes", "_run_agent", "_agent_mcp_config", "_render_agent_command", "docker_infra MCP"]:
             self.assertIn(token, codex_runtime)
+        for token in ["_run_direct_api", "_complete_openai_api", "_complete_gemini_api", "_complete_ollama_api", "_direct_api_prompt_context", "embedded_direct_api"]:
+            self.assertNotIn(token, codex_runtime)
         self.assertIn("domains", wizard)
         services_update = (ROOT / "src" / "model" / "struct" / "services_update.py").read_text(encoding="utf-8")
         self.assertIn("domains", services_update)
@@ -689,7 +718,7 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
 
         for token in ["runtimeServerSummaryText", "serviceIssue", "runtimeContainers", "runRuntimeContainerAction", "detailTabs", "serviceFlowPaths", "proxy_node_display_name", "registered_node_label", "runtimeServerLinks", "runtimeServerDetailQueryParams"]:
             self.assertIn(token, view)
-        for token in ["[routerLink]=\"['/servers']\"", "runtimeServerDetailNodeId", "fa-arrow-up-right-from-square"]:
+        for token in ['[routerLink]="runtimeServerDetailRoute()"', "runtimeServerDetailNodeId", "fa-arrow-up-right-from-square"]:
             self.assertIn(token, template)
         for token in ["URLSearchParams", "node_id", "selected_node_id"]:
             self.assertIn(token, servers_view)

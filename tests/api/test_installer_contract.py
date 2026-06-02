@@ -52,9 +52,15 @@ class InstallerContractTest(unittest.TestCase):
             "https://deb.nodesource.com/setup_lts.x",
             "bash \"$setup_script\"",
             "apt-get install -y --no-install-recommends nodejs",
-            "npm install -g \"$OFFICIAL_CODEX_PACKAGE\"",
-            "@openai/codex",
+            "install_nodejs_runtime",
+            "AI Agent CLIs are installed later from Docker Infra system settings.",
             "DOCKER_INFRA_SYSTEM_CODEX_BIN",
+            "DOCKER_INFRA_CLAUDE_CODE_BIN",
+            "DOCKER_INFRA_CLAUDE_CODE_INSTALL_URL",
+            "DOCKER_INFRA_CLAUDE_CODE_INSTALL_CHANNEL",
+            "DOCKER_INFRA_HERMES_AGENT_BIN",
+            "DOCKER_INFRA_HERMES_AGENT_INSTALL_URL",
+            "DOCKER_INFRA_HERMES_AGENT_INSTALL_CHANNEL",
             "WIZ_BUNDLE_ARCHIVE",
             "tar --zstd",
             "sha256sum -c checksums.sha256",
@@ -77,6 +83,8 @@ class InstallerContractTest(unittest.TestCase):
         self.assertNotIn("CODEX_CUSTOM_ARCHIVE", script)
         self.assertNotIn("CODEX_CUSTOM_BIN", script)
         self.assertNotIn("DOCKER_INFRA_CODEX_BIN", script)
+        self.assertNotIn("OFFICIAL_CODEX_PACKAGE", script)
+        self.assertNotIn("npm install -g", script)
         self.assertNotIn("rustc", script)
         self.assertNotIn("cargo", script)
         self.assertNotIn('"$WIZ_BIN" service regist "$SERVICE_NAME" "$APP_PORT" bundle', script)
@@ -98,7 +106,8 @@ class InstallerContractTest(unittest.TestCase):
         self.assertIn("installer-admin-password", html)
         self.assertIn("관리자 비밀번호 설정", html)
         self.assertIn("'setup', '관리자 비밀번호 / 초기 시스템 설정'", html)
-        self.assertIn("'node', 'Official Codex CLI'", html)
+        self.assertIn("'node', 'Node.js Runtime'", html)
+        self.assertIn("Codex, Claude Code, 헤르메스는 설치 후 시스템 설정에서 설치 스크립트로 설치합니다.", html)
         self.assertIn("'cleanup', '설치 관리자 정리'", html)
         self.assertIn("prevStep", html)
         self.assertIn("nextStep", html)
@@ -129,15 +138,27 @@ class InstallerContractTest(unittest.TestCase):
             "DOCKER_INFRA_DB_PASSWORD",
             "DOCKER_INFRA_SECRET_KEY",
             "DOCKER_INFRA_SYSTEM_CODEX_BIN",
+            "DOCKER_INFRA_CLAUDE_CODE_BIN",
+            "DOCKER_INFRA_HERMES_AGENT_BIN",
+            "DOCKER_INFRA_CODEX_INSTALL_SCRIPT",
+            "DOCKER_INFRA_CLAUDE_CODE_INSTALL_SCRIPT",
+            "DOCKER_INFRA_CLAUDE_CODE_INSTALL_URL=https://claude.ai/install.sh",
+            "DOCKER_INFRA_CLAUDE_CODE_INSTALL_CHANNEL=latest",
+            "DOCKER_INFRA_HERMES_AGENT_INSTALL_SCRIPT",
+            "DOCKER_INFRA_HERMES_AGENT_INSTALL_URL=https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh",
+            "DOCKER_INFRA_HERMES_AGENT_INSTALL_CHANNEL=",
             "CODEX_HOME",
+            "CLAUDE_HOME",
+            "HERMES_HOME",
             "DOCKER_INFRA_DDNS_PUBLIC_IP_URLS",
             "DOCKER_INFRA_DDNS_STATE_FILE",
             "DOCKER_INFRA_DDNS_DISPATCHER_AUTO_INSTALL=true",
         ]:
             self.assertIn(token, env)
-        self.assertIn("DOCKER_INFRA_SYSTEM_CODEX_BIN=/usr/local/bin/codex", env)
+        self.assertIn("DOCKER_INFRA_SYSTEM_CODEX_BIN=", env)
         self.assertNotIn("DOCKER_INFRA_CODEX_BIN", env)
         self.assertNotIn("DOCKER_INFRA_CODEX_AUTO_BUILD", env)
+        self.assertNotIn("DOCKER_INFRA_HERMES_AGENT_NPM_PACKAGE", env)
 
     def test_installer_payload_excludes_custom_codex(self):
         payload = INSTALLER / "payload"

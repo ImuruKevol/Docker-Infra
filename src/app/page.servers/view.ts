@@ -1,4 +1,5 @@
 import { HostListener, OnDestroy, OnInit, signal } from '@angular/core';
+import { Router, NavigationEnd } from '@angular/router';
 import { Service } from '@wiz/libs/portal/season/service';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -74,23 +75,32 @@ export class Component implements OnInit, OnDestroy {
     private resourceChartInstances: any[] = [];
     private resourceChartTitleObservers: MutationObserver[] = [];
     private resourceChartRenderTimer: ReturnType<typeof setTimeout> | null = null;
+    private routeSub: any = null;
+    private agentCommandHandler: ((event: Event) => void) | null = null;
 
-    constructor(public service: Service) { }
+    constructor(public service: Service, private router: Router) { }
 
     public async ngOnInit() {
         await this.service.init();
         this.startThemeObserver();
-        const params = new URLSearchParams(window.location.search || '');
-        await this.load(params.get('node_id') || params.get('selected_node_id') || '');
+        this.startAgentCommandListener();
+        const selectedId = this.routeNodeId();
+        this.detailTab.set(this.routeDetailTab());
+        await this.load(selectedId, true);
+        this.routeSub = this.router.events.subscribe((event: any) => {
+            if (event instanceof NavigationEnd) void this.handleRouteNavigation();
+        });
     }
 
     public ngOnDestroy() {
+        if (this.routeSub) this.routeSub.unsubscribe();
         this.stopAutoRefresh();
         this.stopMacroRunPolling();
         this.disconnectTerminal(true);
         this.cancelResourceChartRender();
         this.destroyResourceChart();
         this.stopThemeObserver();
+        this.stopAgentCommandListener();
     }
 
     @HostListener('window:resize')
@@ -104,6 +114,54 @@ export class Component implements OnInit, OnDestroy {
 
     private resetServerForm() {
         this.serverForm = this.emptyServerForm();
+    }
+
+    private detailTabKeys() {
+        return ['overview', 'macros', 'files', 'terminal'];
+    }
+
+    private routeNodeId() {
+        return this.service.routeSegment('node_id') || this.service.queryParam('node_id') || this.service.queryParam('selected_node_id');
+    }
+
+    private routeDetailTab() {
+        const tab = this.service.routeSegment('detail_tab');
+        return this.detailTabKeys().includes(tab) ? tab : 'overview';
+    }
+
+    private async handleRouteNavigation() {
+        const nodeId = this.routeNodeId();
+        const currentId = this.selected()?.id || '';
+        if (nodeId !== currentId) {
+            await this.load(nodeId, true);
+            return;
+        }
+        const tab = this.routeDetailTab();
+        if (tab === this.detailTab()) return;
+        this.detailTab.set(tab);
+        if (tab !== 'terminal') this.terminalExpanded.set(false);
+        if (tab === 'terminal') {
+            await this.service.render(0);
+            this.fitTerminal();
+            return;
+        }
+        await this.service.render();
+    }
+
+    private nodeDetailRoute(nodeId: string = this.selected()?.id || '', tab: string = this.detailTab()) {
+        const encodedId = this.service.encodeRouteSegment(nodeId);
+        if (!encodedId) return '/servers';
+        if (tab && tab !== 'overview') return `/servers/${encodedId}/${this.service.encodeRouteSegment(tab)}`;
+        return `/servers/${encodedId}`;
+    }
+
+    private async syncNodeRoute(nodeId: string = this.selected()?.id || '', replace: boolean = false) {
+        if (!nodeId) {
+            if (this.service.currentPath().startsWith('/servers/')) await this.service.routeTo('/servers', true);
+            return;
+        }
+        const target = this.nodeDetailRoute(nodeId);
+        if (this.service.currentPath() !== target) await this.service.routeTo(target, replace);
     }
 
     private todayDateInput() {
@@ -125,6 +183,159 @@ export class Component implements OnInit, OnDestroy {
         if (!this.themeObserver) return;
         this.themeObserver.disconnect();
         this.themeObserver = null;
+    }
+
+    private startAgentCommandListener() {
+        if (this.agentCommandHandler || typeof window === 'undefined') return;
+        this.agentCommandHandler = (event: Event) => {
+            void this.handleAgentCommand(event as CustomEvent);
+        };
+        window.addEventListener('docker-infra-agent-action', this.agentCommandHandler);
+    }
+
+    private stopAgentCommandListener() {
+        if (!this.agentCommandHandler || typeof window === 'undefined') return;
+        window.removeEventListener('docker-infra-agent-action', this.agentCommandHandler);
+        this.agentCommandHandler = null;
+    }
+
+    private async handleAgentCommand(event: CustomEvent) {
+        const detail = event?.detail || {};
+        if (detail.target !== 'server.run_macro') return;
+        const requestId = String(detail.request_id || '');
+        try {
+            const result = await this.runMacroFromAgent(detail.payload || {});
+            this.publishAgentCommandResult(requestId, { ok: true, ...result });
+        } catch (error: any) {
+            this.publishAgentCommandResult(requestId, {
+                ok: false,
+                message: error?.message || '서버 매크로를 실행하지 못했습니다.',
+            });
+        }
+    }
+
+    private async runMacroFromAgent(payload: any) {
+        await this.waitForServerLoad();
+        const node = await this.ensureAgentNodeSelected(payload || {});
+        this.detailTab.set('macros');
+        await this.syncNodeRoute(node.id);
+        await this.loadMacros(node.id);
+        await this.service.render();
+
+        const macro = await this.ensureAgentMacro(payload || {}, node.id);
+        this.selectMacro(macro.id);
+        const args = String(payload?.args || '');
+        this.macroArgsInput.set(args);
+        this.macroArgsEnabled.set(Boolean(args));
+        await this.runSelectedMacro();
+
+        const operation = this.macroRunResult()?.operation || null;
+        if (!operation) throw new Error('매크로 실행 작업을 시작하지 못했습니다.');
+        return { node, macro, operation };
+    }
+
+    private async ensureAgentNodeSelected(payload: any) {
+        const node = this.agentTargetNode(payload);
+        if (!node?.id) throw new Error('실행할 서버를 찾을 수 없습니다.');
+        if (this.selected()?.id !== node.id) {
+            const epoch = this.beginSelection(node);
+            await this.syncNodeRoute(node.id, true);
+            await this.service.render();
+            void this.fetchCachedDetail(node.id, true, epoch);
+        }
+        return this.selected()?.id === node.id ? this.selected() : node;
+    }
+
+    private agentTargetNode(payload: any) {
+        const nodes = this.nodes();
+        const nodeId = String(payload?.node_id || payload?.nodeId || '').trim();
+        if (nodeId) return nodes.find((node: any) => node.id === nodeId) || (this.selected()?.id === nodeId ? this.selected() : null);
+
+        const selector = String(payload?.node_selector || payload?.nodeSelector || '').trim().toLowerCase();
+        if (['local_master', 'master', '마스터', '중심'].includes(selector)) {
+            return nodes.find((node: any) => node.is_local_master) || this.selected() || nodes[0] || null;
+        }
+
+        const name = String(payload?.node_name || payload?.node || '').trim().toLowerCase();
+        if (name) {
+            const exact = nodes.find((node: any) => {
+                const labels = [node?.id, node?.name, node?.host].map((value) => String(value || '').trim().toLowerCase());
+                return labels.includes(name);
+            });
+            if (exact) return exact;
+            return nodes.find((node: any) => String(`${node?.name || ''} ${node?.host || ''}`).toLowerCase().includes(name)) || null;
+        }
+
+        return this.selected() || nodes.find((node: any) => node.is_local_master) || nodes[0] || null;
+    }
+
+    private async ensureAgentMacro(payload: any, nodeId: string) {
+        const macroPayload = payload?.macro && typeof payload.macro === 'object' ? payload.macro : {};
+        const macroName = String(payload?.macro_name || payload?.macroName || macroPayload?.name || '').trim();
+        if (!macroName) throw new Error('실행할 매크로 이름이 비어 있습니다.');
+
+        let macro = this.findAgentMacroByName(macroName);
+        if (macroPayload?.script && (!macro || macroPayload.update_existing !== false)) {
+            macro = await this.saveAgentGlobalMacro({ ...macroPayload, name: macroPayload?.name || macroName }, macro);
+            await this.loadMacros(nodeId);
+            macro = this.macros().find((item: any) => item.id === macro?.id) || this.findAgentMacroByName(macroName) || macro;
+        }
+        if (!macro) throw new Error(`실행할 매크로를 찾을 수 없습니다: ${macroName}`);
+        if (macro.enabled === false) throw new Error(`비활성화된 매크로는 실행할 수 없습니다: ${macroName}`);
+        return macro;
+    }
+
+    private findAgentMacroByName(name: string) {
+        const target = String(name || '').trim().toLowerCase();
+        if (!target) return null;
+        return this.macros().find((macro: any) => String(macro?.name || '').trim().toLowerCase() === target) || null;
+    }
+
+    private async saveAgentGlobalMacro(payload: any, existing: any = null) {
+        const name = String(payload?.name || existing?.name || '').trim();
+        const script = String(payload?.script || existing?.script || '').trim();
+        if (!name) throw new Error('Agent 매크로 이름이 비어 있습니다.');
+        if (!script) throw new Error('Agent 매크로 스크립트가 비어 있습니다.');
+
+        const formData = new FormData();
+        if (existing?.id) formData.append('id', existing.id);
+        formData.append('name', name);
+        formData.append('description', String(payload?.description || existing?.description || '').trim());
+        formData.append('script', script);
+        formData.append('enabled', String(payload?.enabled !== false));
+        formData.append('scope_type', 'global');
+        formData.append('keep_file_ids', JSON.stringify((existing?.files || []).map((item: any) => item.id).filter((id: string) => !!id)));
+
+        const response = await fetch('/wiz/api/page.macros/save_macro', { method: 'POST', body: formData });
+        const json = await response.json().catch(() => ({}));
+        const code = Number(json?.code || response.status || 500);
+        const data = json?.data || json || {};
+        if (!response.ok || code >= 400) {
+            throw new Error(data?.message || 'Agent 매크로를 저장할 수 없습니다.');
+        }
+        return data?.macro || null;
+    }
+
+    private async waitForServerLoad() {
+        for (let index = 0; index < 40; index++) {
+            if (!this.loading()) return;
+            await this.sleep(100);
+        }
+    }
+
+    private publishAgentCommandResult(requestId: string, detail: any) {
+        if (!requestId || typeof window === 'undefined') return;
+        window.dispatchEvent(new CustomEvent('docker-infra-agent-action-result', {
+            detail: {
+                request_id: requestId,
+                target: 'server.run_macro',
+                ...detail,
+            },
+        }));
+    }
+
+    private sleep(ms: number) {
+        return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, ms || 0)));
     }
 
     private mergeSelectedNode(node: any) {
@@ -370,7 +581,7 @@ export class Component implements OnInit, OnDestroy {
         });
     }
 
-    public async load(selectedId: string = '') {
+    public async load(selectedId: string = '', replaceRoute: boolean = false) {
         this.loading.set(true);
         this.error.set('');
         this.detailLoading.set(false);
@@ -379,8 +590,11 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
         const { code, data } = await wiz.call("load", { selected_id: selectedId });
         if (code === 200) {
+            this.detailTab.set(this.routeDetailTab());
             this.applyOverview(data);
             const epoch = this.beginSelection(data.selected || null);
+            this.detailTab.set(this.routeDetailTab());
+            await this.syncNodeRoute(data.selected?.id || '', replaceRoute);
             this.restartAutoRefresh();
             this.loading.set(false);
             await this.service.render();
@@ -397,7 +611,9 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async selectNode(node: any) {
+        this.detailTab.set('overview');
         const epoch = this.beginSelection(node);
+        await this.syncNodeRoute(node?.id || '');
         await this.service.render();
         void this.loadMacros(node.id);
         void this.fetchCachedDetail(node.id, false, epoch);
@@ -618,7 +834,9 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public setDetailTab(tab: string) {
+        if (!this.detailTabKeys().includes(tab)) return;
         this.detailTab.set(tab);
+        void this.syncNodeRoute();
         if (tab !== 'terminal') {
             this.terminalExpanded.set(false);
         }
@@ -1894,6 +2112,11 @@ export class Component implements OnInit, OnDestroy {
     public serviceDetailQueryParams(group: any) {
         const id = group?.service?.id;
         return id ? { service_id: id } : {};
+    }
+
+    public serviceDetailRoute(group: any) {
+        const id = group?.service?.id;
+        return id ? ['/services', id] : ['/services'];
     }
 
     public serviceRuntimeStatus(group: any) {

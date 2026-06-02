@@ -29,19 +29,20 @@ Compose 템플릿은 사용자가 서비스 이름과 필요한 변수만 입력
 
 ## AI Permission Scope
 
-- 허용 MCP 도구: `infra_context`, `docker_search`, `docker_image_check`
-- 허용 목적: Docker Infra의 정적 Compose 제약 확인, 이미지 후보 검색, 이미지 태그 존재 확인
-- 차단 MCP 도구군: `server_list`, `server_port_check`, `server_collect`, `ssh_command`, `container_logs`, `container_action`, `service_stack_status`, `dns_lookup`, `tcp_connect_check`, `http_probe`, `browser_probe`
-- 차단 조치: 템플릿 자동 저장, 서비스 배포, 컨테이너 조작, SSH 실행, 로그 수집, 네트워크 프로브, 특정 서버/포트/도메인 선택
+- 허용 MCP 도구: Docker Infra MCP 전체 도구
+- 허용 목적: Docker Infra의 Compose 제약 확인, 이미지 후보 검색, 이미지 태그 존재 확인, 등록 서버/런타임 사실 확인, 필요한 operator-level 점검
+- 권한 모드: `agent_full_control_except_critical_destruction`
+- 차단 조치: Docker Infra 자체 삭제, Docker Infra control service/container/stack stop/remove/disable, OS shutdown/reboot/poweroff/halt, disk format/partition/wipe/write, OS critical path 재귀 삭제
 - 적용 방식: AI는 초안만 반환하고, 화면에서 사용자가 검토 후 저장한다.
 
 ## MCP Contract
 
 - MCP 서버는 `docker_infra`만 사용한다.
-- `infra_context`는 네트워크명, Compose 규칙, 템플릿 규격 같은 정적 정책 확인에만 사용한다.
-- `docker_search`는 이미지명이 불명확할 때 후보를 좁히는 용도로만 사용한다.
-- `docker_image_check`는 반환할 이미지 태그가 실제로 존재하는지 확인하는 용도로만 사용한다.
-- 허용되지 않은 MCP 도구가 없다는 사실을 사용자-facing README나 summary에 노출하지 않는다.
+- `infra_context`는 네트워크명, Compose 규칙, 템플릿 규격, 등록 서버, MCP 상세 계약을 제공한다.
+- `docker-infra://mcp/contract` resource는 tool별 권한, side effect, critical guard를 JSON으로 제공한다.
+- `docker_search`/`docker_image_check`는 이미지 후보와 exact tag 확인에 사용한다.
+- 서버/로그/네트워크 도구는 템플릿 품질에 필요한 실제 runtime 사실 확인에 사용할 수 있다.
+- MCP 도구 사용 가능 여부 자체를 사용자-facing README나 summary에 노출하지 않는다.
 
 ## Compose Rules
 

@@ -1,0 +1,26 @@
+:host {
+    display: block;
+    min-width: 0;
+}
+
+.servers-page {
+    container-type: inline-size;
+}
+
+.servers-detail-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+}
+
+.servers-detail-grid > aside,
+.servers-detail-grid > section {
+    min-width: 0;
+}
+
+@container (min-width: 1120px) {
+    .servers-detail-grid:not(.servers-detail-grid-expanded) {
+        grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    }
+}

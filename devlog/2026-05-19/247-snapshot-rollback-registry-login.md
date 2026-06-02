@@ -20,10 +20,10 @@ domain port mapping
 domain port mapping: [{'domain': 'wiki.sub.nanoha.kr', 'target_port': 80, 'published_port': 8080}]
 2026. 5. 19. 오후 2:15:35
 system
-[mini2] Docker insecure registry 설정을 적용합니다: 220.82.71.78:5000
+[mini2] Docker insecure registry 설정을 적용합니다: ---.---.---.---:5000
 2026. 5. 19. 오후 2:15:36
 stdout
-[mini2] configured insecure registries: 220.82.71.78:5000
+[mini2] configured insecure registries: ---.---.---.---:5000
 Docker daemon insecure registries already configured
 Docker daemon is ready
 2026. 5. 19. 오후 2:15:36

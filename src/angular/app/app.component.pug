@@ -1,1 +1,172 @@
-router-outlet
+div(class="ai-agent-shell", [class.ai-agent-shell-open]="agentVisible() && agentWidgetOpen", [class.ai-agent-shell-history-detail-open]="agentHistoryDetailDockVisible()", [style.--ai-agent-dock-width.px]="agentDockWidth")
+    main(class="ai-agent-content")
+        router-outlet
+
+    aside(*ngIf="agentHistoryDetailDockVisible()", class="ai-agent-surface ai-agent-history-detail-dock", aria-label="AI Agent 히스토리 상세")
+        section(*ngIf="agentHistorySelected as history", class="ai-agent-history-detail")
+            header
+                div
+                    span([class]="agentHistoryStatusClass(history)") {{agentHistoryStatusLabel(history)}}
+                    time {{agentHistoryDate(history.created_at)}}
+                div(class="ai-agent-history-detail-actions")
+                    button(type="button", class="ai-agent-history-continue", [disabled]="agentSending", (click)="continueAgentHistory(history, $event)", aria-label="이어서 대화", title="이어서 대화")
+                        i(class="fa-solid fa-message")
+                        span 이어서 대화
+                    button(type="button", class="ai-agent-icon-button", (click)="closeAgentHistoryDetail($event)", aria-label="닫기", title="닫기")
+                        i(class="fa-solid fa-xmark")
+            dl
+                div
+                    dt Agent
+                    dd {{agentHistoryMetaLine(history)}}
+                div(*ngIf="history.platform")
+                    dt 환경
+                    dd {{history.platform}}
+                div(*ngIf="agentHistoryRouteLine(history)")
+                    dt 화면
+                    dd {{agentHistoryRouteLine(history)}}
+                div(*ngIf="agentHistoryDurationLabel(history)")
+                    dt 시간
+                    dd {{agentHistoryDurationLabel(history)}}
+                div(*ngIf="history.turn_count")
+                    dt 세션
+                    dd {{history.turn_count}}턴
+            div(class="ai-agent-history-section ai-agent-history-turns")
+                strong 대화
+                div(*ngFor="let turn of agentHistoryTurns(history)", class="ai-agent-history-turn")
+                    div(class="ai-agent-history-turn-meta")
+                        span {{'턴 ' + (turn.turn_index || 1)}}
+                        time {{agentHistoryDate(turn.created_at)}}
+                    p(class="ai-agent-history-turn-question") {{turn.request_message || '질문 없음'}}
+                    div(class="ai-agent-markdown", [innerHTML]="agentHistoryResponseHtml(turn)")
+            div(*ngIf="agentHistoryActions(history).length", class="ai-agent-history-section")
+                strong 다음 동작
+                div(class="ai-agent-history-copy-actions")
+                    div(class="ai-agent-history-copy-list")
+                        div(*ngFor="let action of agentHistoryActions(history); let index = index", class="ai-agent-history-copy-item")
+                            div(class="ai-agent-history-copy-text")
+                                strong {{action.label}}
+                                p {{action.prompt}}
+                            button(type="button", class="ai-agent-history-copy-button", (click)="copyAgentHistoryAction(action, index, $event)", [attr.aria-label]="'복사: ' + action.label", [title]="agentHistoryActionCopied(index) ? '복사됨' : '복사'")
+                                i([class]="agentHistoryActionCopied(index) ? 'fa-solid fa-check' : 'fa-solid fa-copy'")
+            div(*ngIf="history.error_code", class="ai-agent-history-section")
+                strong 오류
+                p {{history.error_code}} {{history.error_message}}
+
+    aside(*ngIf="agentVisible() && agentWidgetOpen", class="ai-agent-surface ai-agent-dock", aria-label="AI Agent")
+        button(type="button", class="ai-agent-resize-handle", (mousedown)="startAgentResize($event)", aria-label="AI Agent 너비 조절")
+        header(class="ai-agent-header")
+            div(class="ai-agent-title")
+                i(class="fa-solid fa-wand-magic-sparkles")
+                div
+                    strong {{agentLabel}}
+                    span {{agentHeaderStatusLabel()}}
+            div(class="ai-agent-header-actions")
+                span(*ngIf="agentReady()", class="ai-agent-session-pill") {{agentSessionLabel()}}
+                button(*ngIf="agentReady()", type="button", class="ai-agent-icon-button", [disabled]="agentSending", (click)="newAgentSession()", aria-label="새 세션", title="새 세션")
+                    i(class="fa-solid fa-plus")
+                button(type="button", class="ai-agent-icon-button", [class.active]="agentPanelMode === 'chat'", (click)="showAgentChat()", aria-label="대화", title="대화")
+                    i(class="fa-solid fa-message")
+                button(type="button", class="ai-agent-icon-button", [class.active]="agentPanelMode === 'history'", [disabled]="!agentReady()", (click)="showAgentHistory()", aria-label="히스토리", title="히스토리")
+                    i(class="fa-solid fa-clock-rotate-left")
+                button(type="button", class="ai-agent-icon-button", (click)="closeAgentWidget()", aria-label="닫기", title="닫기")
+                    i(class="fa-solid fa-xmark")
+
+        div(*ngIf="agentPanelMode === 'chat'", class="ai-agent-dock-body")
+            div(*ngIf="!agentReady()", class="ai-agent-state")
+                i(*ngIf="agentStatusLoading()", class="fa-solid fa-circle-notch fa-spin")
+                i(*ngIf="agentUnavailable()", class="fa-solid fa-triangle-exclamation")
+                strong {{agentStateTitle()}}
+                p {{agentStateMessage()}}
+            div(*ngIf="agentReady()", class="ai-agent-messages")
+                div(*ngIf="agentConversationEmpty()", class="ai-agent-empty-suggestions")
+                    button(type="button", *ngFor="let item of agentRecommendations", (click)="useAgentRecommendation(item)") {{item}}
+                div(*ngFor="let message of agentMessages; trackBy: trackAgentMessage", [class]="agentMessageClass(message)")
+                    small(*ngIf="message.provider") {{message.provider}}
+                    div(class="ai-agent-markdown", [innerHTML]="agentMessageHtml(message)")
+                    small(*ngIf="agentMessageDurationLabel(message)", class="ai-agent-message-meta") {{agentMessageDurationLabel(message)}}
+                    div(*ngIf="agentMessageActions(message).length", class="ai-agent-suggested-actions")
+                        div(class="ai-agent-suggested-title") 다음 동작
+                        div(class="ai-agent-suggested-list")
+                            div(*ngFor="let action of agentMessageActions(message)", class="ai-agent-suggested-item")
+                                button(type="button", class="ai-agent-suggested-run", [disabled]="agentSending", (click)="runAgentSuggestedAction(action)", [title]="action.reason || action.prompt")
+                                    i(class="fa-solid fa-play")
+                                    span {{action.label}}
+                                button(type="button", class="ai-agent-suggested-stage", [disabled]="agentSending", (click)="stageAgentSuggestedAction(action)", [attr.aria-label]="'입력창에 넣기: ' + action.label", [title]="'입력창에 넣기'")
+                                    i(class="fa-solid fa-pen-to-square")
+                div(*ngIf="agentSending && agentStreamStatus", class="ai-agent-stream-status")
+                    i(class="fa-solid fa-circle-notch fa-spin")
+                    span {{agentStreamStatus}}
+
+        div(*ngIf="agentPanelMode === 'history' && !agentReady()", class="ai-agent-dock-body")
+            div(class="ai-agent-state")
+                i(*ngIf="agentStatusLoading()", class="fa-solid fa-circle-notch fa-spin")
+                i(*ngIf="agentUnavailable()", class="fa-solid fa-triangle-exclamation")
+                strong {{agentStateTitle()}}
+                p {{agentStateMessage()}}
+
+        div(*ngIf="agentPanelMode === 'history' && agentReady()", class="ai-agent-history-panel")
+            div(class="ai-agent-history-toolbar")
+                input(type="date", name="agentHistoryStartDate", [(ngModel)]="agentHistoryFilters.start_date", aria-label="시작일")
+                input(type="date", name="agentHistoryEndDate", [(ngModel)]="agentHistoryFilters.end_date", aria-label="종료일")
+                button(type="button", class="ai-agent-icon-button", [disabled]="agentHistoryLoading", (click)="loadAgentHistory(true)", aria-label="조회", title="조회")
+                    i(class="fa-solid fa-rotate")
+            div(class="ai-agent-history-search")
+                input(type="search", name="agentHistoryQuery", [(ngModel)]="agentHistoryFilters.q", (keyup.enter)="loadAgentHistory(true)", placeholder="검색", aria-label="검색")
+                button(type="button", [disabled]="agentHistoryLoading", (click)="downloadAgentHistory('json')")
+                    i(class="fa-solid fa-file-code")
+                    span JSON
+                button(type="button", [disabled]="agentHistoryLoading", (click)="downloadAgentHistory('csv')")
+                    i(class="fa-solid fa-file-csv")
+                    span CSV
+            div(class="ai-agent-history-actions")
+                span {{agentHistoryTotal}}세션
+                button(type="button", [disabled]="agentHistoryDeleting || (!agentHistoryFilters.start_date && !agentHistoryFilters.end_date)", (click)="deleteAgentHistoryRange()")
+                    i(class="fa-solid fa-calendar-xmark")
+                    span 기간 삭제
+            div(*ngIf="agentHistoryNotice", class="ai-agent-history-notice") {{agentHistoryNotice}}
+
+            div(class="ai-agent-history-content")
+                div(class="ai-agent-history-list")
+                    div(*ngIf="agentHistoryLoading", class="ai-agent-history-empty")
+                        i(class="fa-solid fa-circle-notch fa-spin")
+                        span 불러오는 중입니다.
+                    div(*ngIf="!agentHistoryLoading && agentHistoryItems.length === 0", class="ai-agent-history-empty") 표시할 히스토리가 없습니다.
+                    div(*ngFor="let item of agentHistoryItems", class="ai-agent-history-item", [class.selected]="agentHistorySelected?.id === item.id")
+                        button(type="button", class="ai-agent-history-main", (click)="selectAgentHistory(item)")
+                            div(class="ai-agent-history-row")
+                                span([class]="agentHistoryStatusClass(item)") {{agentHistoryStatusLabel(item)}}
+                                time {{agentHistoryDate(item.created_at)}}
+                            strong {{agentHistoryTitle(item)}}
+                        button(type="button", class="ai-agent-history-continue-icon", [disabled]="agentSending", (click)="continueAgentHistory(item, $event)", aria-label="이어서 대화", title="이어서 대화")
+                            i(class="fa-solid fa-message")
+                        button(type="button", class="ai-agent-history-delete", [disabled]="agentHistoryDeleting", (click)="deleteAgentHistory(item, $event)", aria-label="삭제", title="삭제")
+                            i(class="fa-solid fa-trash-can")
+            div(*ngIf="agentHistoryTotal > 0", class="ai-agent-history-pagination")
+                button(type="button", [disabled]="agentHistoryLoading || !agentHistoryHasPrevious()", (click)="moveAgentHistoryPage(-1)", aria-label="이전 페이지", title="이전 페이지")
+                    i(class="fa-solid fa-chevron-left")
+                span {{agentHistoryRangeLabel()}}
+                small {{agentHistoryCurrentPage()}} / {{agentHistoryTotalPages()}}
+                button(type="button", [disabled]="agentHistoryLoading || !agentHistoryHasNext()", (click)="moveAgentHistoryPage(1)", aria-label="다음 페이지", title="다음 페이지")
+                    i(class="fa-solid fa-chevron-right")
+
+        div(*ngIf="agentPanelMode === 'chat' && agentReady() && agentContextSummary", class="ai-agent-compose-context")
+            i(class="fa-solid fa-display")
+            span {{agentContextSummary}}
+            small(*ngIf="agentModalContext?.open") {{agentModalContext.title || '모달 열림'}}
+        section(*ngIf="agentTodoVisible()", class="ai-agent-todo-panel", aria-label="AI Agent TODO")
+            header
+                strong TODO
+            div(class="ai-agent-todo-list")
+                div(*ngFor="let todo of agentTodos; trackBy: trackAgentTodo", class="ai-agent-todo-item", [ngClass]="'state-' + todo.status")
+                    i([class]="agentTodoIcon(todo)")
+                    div
+                        strong {{todo.title}}
+                    span {{agentTodoStatusLabel(todo)}}
+        form(*ngIf="agentPanelMode === 'chat' && agentReady()", class="ai-agent-compose", (ngSubmit)="sendAgentMessage()")
+            textarea(name="agentInput", [(ngModel)]="agentInput", [disabled]="agentSending", (keydown.enter)="handleAgentEnter($event)", rows="2", placeholder="메시지 입력")
+            button(type="submit", class="ai-agent-send", [disabled]="agentSending || !agentInput.trim()", aria-label="전송")
+                i(class="fa-solid fa-paper-plane")
+
+button(*ngIf="agentVisible() && !agentWidgetOpen", type="button", class="ai-agent-surface ai-agent-toggle", [class.ai-agent-toggle-loading]="agentStatusLoading()", [class.ai-agent-toggle-unavailable]="agentUnavailable()", (click)="toggleAgentWidget()", aria-label="AI Agent 열기")
+    i(*ngIf="agentStatusLoading()", class="fa-solid fa-circle-notch fa-spin")
+    i(*ngIf="!agentStatusLoading()", class="fa-solid fa-comment-dots")

@@ -5,6 +5,17 @@ COMPOSE_TEMPLATE_MCP_TOOLS = [
     "infra_context",
     "docker_search",
     "docker_image_check",
+    "server_list",
+    "server_port_check",
+    "container_logs",
+    "container_action",
+    "service_stack_status",
+    "dns_lookup",
+    "tcp_connect_check",
+    "http_probe",
+    "browser_probe",
+    "server_collect",
+    "ssh_command",
 ]
 
 
@@ -87,19 +98,6 @@ class TemplateAIContract:
 
     def template_ai_policy(self):
         required_files = ["docker-compose.yaml", "values.default.yaml", "values.schema.json", "README.md"]
-        forbidden_tool_families = [
-            "ssh_command",
-            "server_collect",
-            "server_list",
-            "server_port_check",
-            "service_stack_status",
-            "container_logs",
-            "container_action",
-            "dns_lookup",
-            "tcp_connect_check",
-            "http_probe",
-            "browser_probe",
-        ]
         return {
             "scope": "compose_template",
             "purpose": "Reusable Compose template draft only; service deployment and runtime repair are outside this scope.",
@@ -107,11 +105,18 @@ class TemplateAIContract:
                 "server": "docker_infra",
                 "enabled_tools": list(COMPOSE_TEMPLATE_MCP_TOOLS),
                 "allowed_use": [
-                    "infra_context: Docker Infra compose/network/template constraints",
-                    "docker_search: candidate image discovery when the requested product image is ambiguous",
-                    "docker_image_check: exact image tag verification before returning image references",
+                    "infra_context: Docker Infra compose/network/template constraints and MCP contract",
+                    "docker_search/docker_image_check: candidate image discovery and exact tag verification",
+                    "server_list/server_collect/ssh_command: registered server inspection when runtime facts are useful",
+                    "container_logs/container_action/service_stack_status/probe tools: runtime confirmation when helpful, within the critical guard",
                 ],
-                "forbidden_tool_families": forbidden_tool_families,
+                "permission_mode": "agent_full_control_except_critical_destruction",
+                "blocked_action_families": [
+                    "delete Docker Infra itself",
+                    "stop/remove Docker Infra control services, containers, or stacks",
+                    "shutdown/reboot/wipe/format the OS",
+                    "recursive deletion of OS critical paths",
+                ],
                 "tool_unavailable_policy": "Do not mention unavailable MCP tools in user-facing text; use the provided contract and context.",
             },
             "standard": {
@@ -140,16 +145,18 @@ class TemplateAIContract:
                 ],
             },
             "permissions": {
-                "can_edit_project_files": False,
+                "can_edit_project_files": True,
                 "can_save_template": False,
                 "can_deploy": False,
-                "can_change_runtime": False,
-                "can_read_runtime_logs": False,
-                "can_run_container_actions": False,
-                "can_run_ssh_command": False,
-                "can_run_safe_ssh_diagnostics": False,
-                "can_probe_network": False,
+                "can_change_runtime": True,
+                "can_read_runtime_logs": True,
+                "can_run_container_actions": True,
+                "can_run_ssh_command": True,
+                "can_run_safe_ssh_diagnostics": True,
+                "can_probe_network": True,
                 "can_select_deploy_target": False,
+                "cannot_delete_docker_infra": True,
+                "cannot_run_os_critical_commands": True,
                 "result_application": "draft_only_user_review_required",
             },
         }

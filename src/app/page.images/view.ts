@@ -112,6 +112,37 @@ export class Component implements OnInit {
         return { image_count: 0, used_count: 0, unused_count: 0, total_size_bytes: 0 };
     }
 
+    private routeImageTarget() {
+        const segments = this.service.pathSegments();
+        const mode = segments[1] || '';
+        return {
+            tab: mode === 'harbor' || mode === 'local' ? mode as ImageTab : '',
+            nodeId: this.service.routeSegment('node_id') || this.service.queryParam('node_id'),
+            projectName: this.service.routeSegment('project_name') || this.service.queryParam('project_name'),
+            repositoryName: this.service.routeSegment('repository_name') || this.service.queryParam('repository_name'),
+        };
+    }
+
+    private imageRoute() {
+        if (this.activeTab() === 'local') {
+            const nodeId = this.service.encodeRouteSegment(this.selectedNodeId());
+            return nodeId ? `/images/local/${nodeId}` : '/images/local';
+        }
+        if (this.activeTab() === 'harbor') {
+            const projectName = this.service.encodeRouteSegment(this.selectedProject());
+            const repositoryName = this.service.encodeRouteSegment(this.selectedRepository());
+            if (projectName && repositoryName) return `/images/harbor/${projectName}/${repositoryName}`;
+            if (projectName) return `/images/harbor/${projectName}`;
+            return '/images/harbor';
+        }
+        return '/images';
+    }
+
+    private async syncImageRoute(replace: boolean = false) {
+        const target = this.imageRoute();
+        if (this.service.currentPath() !== target) await this.service.routeTo(target, replace);
+    }
+
     private localDetailCacheItem(nodeId: string) {
         return this.localDetailCache[String(nodeId || '').trim()] || null;
     }
@@ -134,6 +165,7 @@ export class Component implements OnInit {
     }
 
     public async load() {
+        const routeTarget = this.routeImageTarget();
         this.loading.set(true);
         this.error.set('');
         this.harborDetail.set(null);
@@ -156,7 +188,7 @@ export class Component implements OnInit {
         this.harborSummary.set(data.harbor_summary || { project_count: 0, tag_count: 0 });
         this.nodes.set(data.nodes || []);
         this.localSummaryByNode.set(data.local_summary_by_node || {});
-        this.selectedProject.set(data.selected_project || '');
+        this.selectedProject.set(routeTarget.projectName || data.selected_project || '');
         this.harborTags.set([]);
         this.selectedRepository.set('');
         this.selectedHarborRepositories.set([]);
@@ -164,21 +196,27 @@ export class Component implements OnInit {
         this.selectedLocalItems.set([]);
         this.localDeleteEstimate.set(null);
         this.closeLocalImageConfirm(false);
-        this.selectedNodeId.set(data.selected_node_id || '');
-        this.activeTab.set(!this.selectedNodeId() && this.harbor().enabled ? 'harbor' : 'local');
+        this.selectedNodeId.set(routeTarget.tab === 'local' ? (routeTarget.nodeId || data.selected_node_id || '') : (data.selected_node_id || ''));
+        this.activeTab.set(routeTarget.tab || (!this.selectedNodeId() && this.harbor().enabled ? 'harbor' : 'local'));
         this.loading.set(false);
         await this.service.render();
 
-        if (this.selectedNodeId()) {
-            void this.loadLocalDetail(this.selectedNodeId(), true);
+        if (this.activeTab() === 'local' && this.selectedNodeId()) {
+            void this.loadLocalDetail(this.selectedNodeId(), true, false, true);
         } else if (this.activeTab() === 'harbor' && this.harbor().enabled) {
-            void this.ensureHarborOverview(true);
+            void (async () => {
+                await this.ensureHarborOverview(true);
+                const projectName = routeTarget.projectName || this.selectedProject();
+                if (projectName) await this.loadHarborDetail(projectName, true, routeTarget.repositoryName, true);
+                else await this.syncImageRoute(true);
+            })();
         }
     }
 
     public async setTab(tab: ImageTab) {
         if (tab === 'harbor' && !this.harbor().enabled) return;
         this.activeTab.set(tab);
+        await this.syncImageRoute();
         await this.service.render();
         if (tab === 'harbor') {
             await this.ensureHarborOverview(true);
@@ -215,9 +253,10 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
-    public async loadHarborDetail(projectName: string, silent: boolean = false) {
+    public async loadHarborDetail(projectName: string, silent: boolean = false, repositoryName: string = '', replaceRoute: boolean = false) {
         if (!projectName) return;
         this.harborBusy.set(true);
+        this.activeTab.set('harbor');
         this.selectedProject.set(projectName);
         this.harborTags.set([]);
         this.selectedRepository.set('');
@@ -227,14 +266,16 @@ export class Component implements OnInit {
         if (code === 200) {
             this.harborDetail.set(data);
             const repositories = data.repositories || [];
-            const nextRepository = data.selected_repository || repositories[0]?.name || '';
+            const requestedRepository = String(repositoryName || '').trim();
+            const nextRepository = repositories.find((item: any) => item.name === requestedRepository)?.name || data.selected_repository || repositories[0]?.name || '';
             this.selectedRepository.set(nextRepository);
             this.harborSummary.set({
                 ...this.harborSummary(),
                 repository_count: data?.summary?.repository_count || repositories.length,
             });
+            await this.syncImageRoute(replaceRoute);
             if (nextRepository) {
-                await this.loadHarborTags(nextRepository, true);
+                await this.loadHarborTags(nextRepository, true, replaceRoute);
             }
         } else if (!silent) {
             await this.alert(data?.message || '백업 저장소를 불러올 수 없습니다.');
@@ -245,11 +286,13 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
-    public async loadHarborTags(repositoryName: string, silent: boolean = false) {
+    public async loadHarborTags(repositoryName: string, silent: boolean = false, replaceRoute: boolean = false) {
         if (!this.selectedProject() || !repositoryName) return;
         this.harborTagsBusy.set(true);
+        this.activeTab.set('harbor');
         this.selectedRepository.set(repositoryName);
         this.selectedHarborItems.set([]);
+        await this.syncImageRoute(replaceRoute);
         const { code, data } = await wiz.call('harbor_tags', {
             project_name: this.selectedProject(),
             repository_name: repositoryName,
@@ -265,15 +308,17 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
-    public async loadLocalDetail(nodeId: string, silent: boolean = false, force: boolean = false) {
+    public async loadLocalDetail(nodeId: string, silent: boolean = false, force: boolean = false, replaceRoute: boolean = false) {
         if (!nodeId) return;
         const requestId = ++this.localLoadRequestId;
         const isNodeChange = this.selectedNodeId() !== nodeId;
+        this.activeTab.set('local');
         this.selectedNodeId.set(nodeId);
         this.selectedLocalItems.set([]);
         this.localDeleteEstimate.set(null);
         this.localLoadError.set('');
         this.closeLocalImageConfirm(false);
+        await this.syncImageRoute(replaceRoute);
         const cached = force ? null : this.localDetailCacheItem(nodeId);
         if (cached) {
             this.localBusy.set(false);

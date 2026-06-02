@@ -1,4 +1,5 @@
 import { HostListener, OnDestroy, OnInit, signal } from '@angular/core';
+import { Router, NavigationEnd } from '@angular/router';
 import { Service } from '@wiz/libs/portal/season/service';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -117,19 +118,24 @@ export class Component implements OnInit, OnDestroy {
     private containerTerminalSocket: any = null;
     private containerTerminalInstance: Terminal | null = null;
     private containerTerminalFitAddon: FitAddon | null = null;
+    private routeSub: any = null;
 
-    constructor(public service: Service) { }
+    constructor(public service: Service, private router: Router) { }
 
     public async ngOnInit() {
         await this.service.init();
         this.syncAdvancedEditorTheme();
         this.startThemeObserver();
         this.refreshCompose(true);
-        const params = new URLSearchParams(window.location.search || '');
-        await this.load(params.get('service_id') || params.get('selected_service_id') || '');
+        const selectedId = this.routeServiceId();
+        await this.load(selectedId, true);
+        this.routeSub = this.router.events.subscribe((event: any) => {
+            if (event instanceof NavigationEnd) void this.handleRouteNavigation();
+        });
     }
 
     public ngOnDestroy() {
+        if (this.routeSub) this.routeSub.unsubscribe();
         this.stopOperationPolling();
         this.stopActiveOperationPolling();
         this.stopThemeObserver();
@@ -198,6 +204,51 @@ export class Component implements OnInit, OnDestroy {
 
     private hasOwn(value: any, key: string) {
         return Object.prototype.hasOwnProperty.call(value || {}, key);
+    }
+
+    private detailTabKeys() {
+        return ['overview', 'logs', 'source', 'files', 'versions'];
+    }
+
+    private routeServiceId() {
+        const fromSegment = this.service.routeSegment('service_id');
+        if (fromSegment) return fromSegment;
+        return this.service.queryParam('service_id') || this.service.queryParam('selected_service_id');
+    }
+
+    private routeDetailTab(): DetailTab {
+        const tab = this.service.routeSegment('detail_tab');
+        return this.detailTabKeys().includes(tab) ? tab as DetailTab : 'overview';
+    }
+
+    private async handleRouteNavigation() {
+        const selectedId = this.routeServiceId();
+        const currentId = this.selected()?.id || '';
+        if (selectedId !== currentId) {
+            await this.load(selectedId, true);
+            return;
+        }
+        const tab = this.routeDetailTab();
+        if (tab === this.detailTab()) return;
+        this.detailTab.set(tab);
+        await this.service.render();
+        await this.loadDetailSection(tab);
+    }
+
+    private serviceDetailRoute(serviceId: string, tab: DetailTab = this.detailTab()) {
+        const encodedId = this.service.encodeRouteSegment(serviceId);
+        if (!encodedId) return '/services';
+        if (tab && tab !== 'overview') return `/services/${encodedId}/${this.service.encodeRouteSegment(tab)}`;
+        return `/services/${encodedId}`;
+    }
+
+    private async syncServiceRoute(serviceId: string = this.selected()?.id || '', replace: boolean = false) {
+        if (!serviceId) {
+            if (this.service.currentPath().startsWith('/services/')) await this.service.routeTo('/services', true);
+            return;
+        }
+        const target = this.serviceDetailRoute(serviceId);
+        if (this.service.currentPath() !== target) await this.service.routeTo(target, replace);
     }
 
     private mergeDetailSections(currentSections: any, incomingSections: any, sameService: boolean) {
@@ -401,7 +452,7 @@ export class Component implements OnInit, OnDestroy {
         return `${data?.message || fallback}\n\n${rows.join('\n')}${suffix}`;
     }
 
-    public async load(selectedId: string = '') {
+    public async load(selectedId: string = '', replaceRoute: boolean = false) {
         this.loading.set(true);
         this.error.set('');
         await this.service.render();
@@ -413,20 +464,22 @@ export class Component implements OnInit, OnDestroy {
             if (this.hasOwn(data, 'zones')) this.zones.set(data.zones || []);
             const next = services.find((item: any) => item.id === selectedId) || services[0] || null;
             if (next?.id) {
+                const nextTab = this.routeDetailTab();
                 this.detailRequestSeq += 1;
                 this.selected.set(next);
                 this.detail.set(null);
-                this.detailTab.set('overview');
+                this.detailTab.set(nextTab);
                 this.detailTabLoading.set(false);
                 this.advancedDetailOpen.set(false);
                 this.advancedNginxEditOpen.set(false);
                 this.loading.set(false);
                 await this.service.render();
-                this.selectService(next, true);
+                this.selectService(next, true, replaceRoute, nextTab);
                 return;
             } else {
                 this.detailRequestSeq += 1;
                 this.applyDetail(null);
+                if (selectedId) await this.syncServiceRoute('', true);
             }
         } else {
             this.error.set(data?.message || '서비스 정보를 불러올 수 없습니다.');
@@ -463,7 +516,7 @@ export class Component implements OnInit, OnDestroy {
         return this.aiAvailable() && this.aiModelOptions().length > 0;
     }
 
-    public async selectService(service: any, silent: boolean = false) {
+    public async selectService(service: any, silent: boolean = false, replaceRoute: boolean = false, targetTab: DetailTab | null = null) {
         if (!service?.id) return;
         const requestSeq = ++this.detailRequestSeq;
         if (this.selected()?.id !== service.id) {
@@ -472,12 +525,13 @@ export class Component implements OnInit, OnDestroy {
         this.selected.set(service);
         if (this.detail()?.service?.id !== service.id) {
             this.detail.set(null);
-            this.detailTab.set('overview');
+            this.detailTab.set(targetTab || 'overview');
         }
         this.detailTabLoading.set(false);
         this.advancedDetailOpen.set(false);
         this.advancedNginxEditOpen.set(false);
         this.detailLoading.set(true);
+        await this.syncServiceRoute(service.id, replaceRoute);
         await this.service.render();
         const { code, data } = await wiz.call('detail_service', { service_id: service.id, lightweight: true });
         if (requestSeq !== this.detailRequestSeq) {
@@ -495,6 +549,7 @@ export class Component implements OnInit, OnDestroy {
         }
         this.detailLoading.set(false);
         await this.service.render();
+        if (this.detailTab() !== 'overview') await this.loadDetailSection(this.detailTab(), false, silent);
     }
 
     private async loadEditOptions() {
@@ -2667,8 +2722,9 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async setDetailTab(tab: any) {
-        if (!['overview', 'logs', 'source', 'files', 'versions'].includes(tab)) return;
+        if (!this.detailTabKeys().includes(tab)) return;
         this.detailTab.set(tab);
+        await this.syncServiceRoute();
         await this.service.render();
         await this.loadDetailSection(tab);
     }
@@ -3493,6 +3549,11 @@ export class Component implements OnInit, OnDestroy {
     public runtimeServerDetailQueryParams() {
         const nodeId = this.runtimeServerDetailNodeId();
         return nodeId ? { node_id: nodeId } : {};
+    }
+
+    public runtimeServerDetailRoute() {
+        const nodeId = this.runtimeServerDetailNodeId();
+        return nodeId ? ['/servers', nodeId] : ['/servers'];
     }
 
     public runtimeServerDetailLinkTitle() {

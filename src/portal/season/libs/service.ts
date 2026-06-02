@@ -85,6 +85,57 @@ export class Service {
         this.app.router.navigateByUrl(url);
     }
 
+    public currentUrl() {
+        const app: any = this.app as any;
+        return String(app?.router?.url || `${location.pathname}${location.search}` || '');
+    }
+
+    public currentPath() {
+        return String(this.currentUrl() || location.pathname || '').split('?')[0].replace(/\/+$/, '') || '/';
+    }
+
+    public async routeTo(url: any, replace: boolean = false) {
+        const target = String(url || '');
+        if (!target || this.currentUrl() === target) return true;
+        const app: any = this.app as any;
+        if (app?.router?.navigateByUrl) {
+            return await app.router.navigateByUrl(target, { replaceUrl: replace });
+        }
+        if (replace) history.replaceState(null, '', target);
+        else history.pushState(null, '', target);
+        return true;
+    }
+
+    public routeSegments() {
+        return ((window as any).WizRoute || {}).segment || {};
+    }
+
+    public routeSegment(name: string) {
+        return this.decodeRouteSegment(this.routeSegments()?.[name]);
+    }
+
+    public pathSegments() {
+        return String(location.pathname || '').split('/').filter(Boolean).map((item) => this.decodeRouteSegment(item));
+    }
+
+    public queryParam(name: string) {
+        return String(new URLSearchParams(location.search || '').get(name) || '');
+    }
+
+    public encodeRouteSegment(value: any) {
+        return encodeURIComponent(String(value || '').trim());
+    }
+
+    private decodeRouteSegment(value: any) {
+        const text = String(value || '').trim();
+        if (!text) return '';
+        try {
+            return decodeURIComponent(text);
+        } catch (_) {
+            return text;
+        }
+    }
+
     public random(stringLength: number = 16) {
         const fchars = 'abcdefghiklmnopqrstuvwxyz';
         const chars = '0123456789abcdefghiklmnopqrstuvwxyz';

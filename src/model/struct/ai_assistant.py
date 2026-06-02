@@ -1,3 +1,4 @@
+import datetime
 import json
 import queue
 import re
@@ -10,6 +11,7 @@ import yaml
 
 settings = wiz.model("struct/settings")
 ai_settings = wiz.model("struct/ai_settings")
+ai_history = wiz.model("struct/ai_history")
 codex_runtime = wiz.model("struct/codex_runtime")
 connect = wiz.model("db/postgres").connect
 nodes_model = wiz.model("struct/nodes")
@@ -24,12 +26,9 @@ placement_selector = wiz.model("struct/services_placement")
 operations = wiz.model("struct/operations")
 
 
-OPENAI_TOKEN_KEY = "ai.openai.api_token"
-GEMINI_TOKEN_KEY = "ai.gemini.api_token"
 MAX_AI_REPAIR_ATTEMPTS = 20
 AI_STREAM_HEARTBEAT_SECONDS = 15
 AI_STREAM_PROVIDER_TIMEOUT_SECONDS = 900
-AI_OLLAMA_REQUEST_TIMEOUT_SECONDS = 900
 AI_VERIFY_MAX_ATTEMPTS = 3
 AI_VERIFY_RUNTIME_WAIT_ATTEMPTS = 12
 AI_VERIFY_RUNTIME_WAIT_SECONDS = 10
@@ -37,6 +36,10 @@ AI_VERIFY_UNCHANGED_BLOCKED_ATTEMPTS = 3
 AI_VERIFY_DEPLOY_WAIT_SECONDS = 300
 SENSITIVE_ENV_PATTERN = re.compile(r"(PASSWORD|SECRET|TOKEN|KEY|AUTH|CREDENTIAL)", re.IGNORECASE)
 FILE_ENV_PATTERN = re.compile(r"_FILE$", re.IGNORECASE)
+
+
+def _utc_now():
+    return datetime.datetime.now(datetime.timezone.utc)
 
 
 class AIAssistantError(Exception):
@@ -57,6 +60,8 @@ class AIAssistantError(Exception):
 
 
 class AIAssistant:
+    AIAssistantError = AIAssistantError
+
     def contracts(self):
         return {
             "service": self.service_contract(),
@@ -64,7 +69,7 @@ class AIAssistant:
             "compose_validation": self.compose_validation_contract(),
         }
 
-    def _mcp_tools(self, scope, allow_container_actions=False, allow_ssh_command=True):
+    def _mcp_tools(self, scope, allow_container_actions=True, allow_ssh_command=True):
         return codex_runtime.mcp_tools_for_scope(
             scope,
             allow_container_actions=allow_container_actions,
@@ -72,175 +77,767 @@ class AIAssistant:
         )
 
     def model_options(self, env=None):
-        payload = ai_settings.public_payload(env=env)
-        config = payload.get("config") or {}
-        cache = payload.get("model_cache") or {}
-        options = []
-        seen = set()
-        codex = config.get("codex") or {}
-        if codex.get("enabled") and codex.get("model"):
-            options.append({
-                "value": "codex",
-                "label": "Codex",
-                "description": "Codex CLI 로그인 세션으로 실행합니다.",
-                "badge": "로그인",
-                "badgeClass": "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-900/70 dark:bg-fuchsia-950/40 dark:text-fuchsia-300",
-                "cli_mode": "system",
-            })
-            seen.add("codex")
-        for item in self._selected_model_candidates(config, cache):
-            provider = item["provider"]
-            if provider == "codex":
-                continue
-            model_id = item["model_id"]
-            model = item["model"]
-            value = "%s::%s" % (provider, model_id)
-            if value in seen:
-                continue
-            seen.add(value)
-            state = model.get("state") or {}
-            capabilities = model.get("capabilities") or {}
-            pricing = model.get("pricing") or {}
-            labels = capabilities.get("labels") or ["텍스트"]
-            description_bits = [
-                self._provider_label(provider),
-                " / ".join(labels),
-            ]
-            if pricing.get("label"):
-                description_bits.append(pricing.get("label"))
-            if state.get("message"):
-                description_bits.append(state.get("message"))
-            options.append(
-                {
-                    "value": value,
-                    "label": model.get("label") or model_id,
-                    "description": " · ".join([bit for bit in description_bits if bit]),
-                    "badge": self._provider_label(provider),
-                    "badgeClass": self._provider_badge_class(provider, state.get("level")),
-                    "state": state,
-                    "cli_mode": "api",
-                }
-            )
-        default_ref = self._default_model_ref(config)
-        if default_ref not in seen:
-            default_ref = options[0]["value"] if options else ""
+        return ai_settings.model_options(env=env)
+
+    def chat_status(self, env=None):
+        options = ai_settings.model_options(env=env)
+        selected = self._normalize_agent_key(options.get("default_agent") or options.get("selected"))
+        enabled = bool(options.get("has_enabled_models") and selected)
+        capabilities = self.openapi_capabilities(compact=True)
         return {
-            "options": options,
-            "default_model_ref": default_ref,
-            "selected": default_ref,
-            "has_enabled_models": bool(options),
-            "message": "" if options else "시스템 설정에서 사용 중인 AI 모델이 없습니다.",
+            "enabled": enabled,
+            "default_agent": selected,
+            "agent_label": "AI Agent" if selected else "",
+            "options": options.get("options") or [],
+            "message": "" if enabled else (options.get("message") or "시스템 설정에서 AI Agent를 먼저 사용 설정하세요."),
+            "capabilities": capabilities,
         }
 
-    def _selected_model_candidates(self, config, cache):
-        result = []
-        seen = set()
-
-        def add(provider, model_id):
-            model_id = self._normalize_model_for_provider(provider, model_id)
-            if not model_id:
-                return
-            key = "%s::%s" % (provider, model_id)
-            if key in seen:
-                return
-            seen.add(key)
-            cached = self._cached_model(cache, provider, model_id)
-            if provider == "codex":
-                codex = config.get("codex") or {}
-                effort = self._clean_text(codex.get("reasoning_effort") or "xhigh").upper()
-                cached = {
-                    "id": model_id,
-                    "label": "%s · %s" % (model_id, effort),
-                    "capabilities": {"labels": ["텍스트", "MCP"]},
-                    "pricing": {"label": "Codex 로그인 세션 사용"},
-                    "state": {
-                        "level": "ok",
-                        "message": "Codex 로그인 세션으로 실행합니다.",
-                    },
-                }
-            result.append(
+    def openapi_capabilities(self, compact=False, env=None):
+        document = self._openapi_document()
+        extension = document.get("x-ai-agent") if isinstance(document, dict) else {}
+        operations = extension.get("operations") if isinstance(extension, dict) else []
+        normalized = []
+        for item in operations or []:
+            if not isinstance(item, dict):
+                continue
+            operation_id = self._clean_text(item.get("operationId") or item.get("operation_id"))
+            path = self._clean_text(item.get("path"))
+            method = self._clean_text(item.get("method") or "POST").upper()
+            if not operation_id or not path:
+                continue
+            normalized.append(
                 {
-                    "provider": provider,
-                    "model_id": model_id,
-                    "model": cached or {"id": model_id, "label": model_id},
+                    "operation_id": operation_id,
+                    "menu": self._clean_text(item.get("menu")),
+                    "method": method,
+                    "path": path,
+                    "safety": self._clean_text(item.get("safety") or "read"),
+                    "summary": self._clean_text(item.get("summary")),
+                    "required": self._string_list(item.get("required")),
                 }
             )
+        payload = {
+            "swagger_url": self._clean_text(extension.get("swaggerUrl") if isinstance(extension, dict) else "") or "/swagger",
+            "openapi_url": self._clean_text(extension.get("openapiUrl") if isinstance(extension, dict) else "") or "/openapi.json",
+            "operation_count": len(normalized),
+            "menus": sorted({item.get("menu") for item in normalized if item.get("menu")}),
+        }
+        if compact:
+            payload["operations"] = normalized[:20]
+        else:
+            payload["operations"] = normalized
+        return payload
 
-        openai = config.get("openai") or {}
-        if openai.get("enabled") and openai.get("selected_model"):
-            add("openai", openai.get("selected_model"))
+    def chat(self, payload=None, env=None):
+        payload = payload if isinstance(payload, dict) else {}
+        message = self._clean_text(payload.get("message"))
+        if not message:
+            raise AIAssistantError(400, "질문이나 요청 내용을 입력하세요.", "AI_AGENT_MESSAGE_REQUIRED")
 
-        gemini = config.get("gemini") or {}
-        if gemini.get("enabled") and gemini.get("selected_model"):
-            add("gemini", gemini.get("selected_model"))
+        started_at = _utc_now()
+        provider = None
+        try:
+            builtin = self._builtin_chat_response(payload, message)
+            if builtin:
+                provider = self._builtin_provider()
+                builtin["duration_ms"] = self._duration_ms(started_at)
+                self._attach_chat_session(builtin, payload, provider, env=env)
+                self._record_chat_history(payload, provider, builtin, status="succeeded", started_at=started_at, env=env)
+                return builtin
+            selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else {}
+            provider = self._select_provider(env=env, selection=selection)
+            result = codex_runtime.complete_json(
+                provider,
+                self._ui_chat_system_prompt(),
+                self._chat_context_for_provider(payload, message, provider, env=env),
+                env=env,
+            )
+            response = self._chat_response_payload(result, provider)
+            response["duration_ms"] = self._duration_ms(started_at)
+            self._record_chat_history(payload, provider, response, status="succeeded", started_at=started_at, env=env)
+            return response
+        except Exception as exc:
+            self._record_chat_history(payload, provider, None, status="failed", error=exc, started_at=started_at, env=env)
+            raise
 
-        ollama = config.get("ollama") or {}
-        runtime = config.get("runtime") or {}
-        runtime_mode = runtime.get("mode") or "cloud_api"
-        runtime_enabled = bool(runtime.get("enabled"))
-        if runtime_enabled and runtime_mode in {"external_ollama", "local_server", "registered_node"} and runtime.get("selected_model"):
-            add("ollama", runtime.get("selected_model"))
-        if ollama.get("enabled") and ollama.get("selected_model"):
-            add("ollama", ollama.get("selected_model"))
-        if runtime_enabled and runtime_mode in {"external_ollama", "local_server", "registered_node"} and not runtime.get("selected_model"):
-            add("ollama", ollama.get("selected_model"))
+    def plan_chat(self, payload=None, env=None):
+        payload = payload if isinstance(payload, dict) else {}
+        message = self._clean_text(payload.get("message"))
+        if not message:
+            raise AIAssistantError(400, "질문이나 요청 내용을 입력하세요.", "AI_AGENT_MESSAGE_REQUIRED")
+
+        builtin = self._builtin_chat_todos(message)
+        if builtin:
+            return {
+                "summary": "요청을 실행 가능한 TODO로 정리했습니다.",
+                "todos": builtin,
+                "provider": self._provider_public(self._builtin_provider()),
+            }
+
+        provider = None
+        try:
+            selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else {}
+            provider = self._select_provider(env=env, selection=selection)
+            result = codex_runtime.complete_json(
+                provider,
+                self._ui_todo_plan_system_prompt(),
+                self._todo_plan_context(payload, message, provider, env=env),
+                env=env,
+            )
+            text = self._clean_text((result or {}).get("text"))
+            data = self._extract_json(text)
+            return {
+                "summary": self._clean_text(data.get("summary") or "요청을 실행 가능한 TODO로 정리했습니다."),
+                "todos": self._normalize_chat_todos(data.get("todos"), message),
+                "provider": self._provider_public(provider, (result or {}).get("metadata") or {}),
+            }
+        except Exception:
+            return {
+                "summary": "요청을 하나의 실행 TODO로 정리했습니다.",
+                "todos": self._normalize_chat_todos([], message),
+                "provider": self._provider_public(provider or self._builtin_provider()),
+            }
+
+    def stream_chat(self, payload=None, env=None):
+        payload = payload if isinstance(payload, dict) else {}
+        message = self._clean_text(payload.get("message"))
+        started_at = _utc_now() if message else None
+        provider = None
+        try:
+            if not message:
+                yield {"type": "error", "message": "질문이나 요청 내용을 입력하세요.", "error_code": "AI_AGENT_MESSAGE_REQUIRED"}
+                return
+
+            builtin = self._builtin_chat_response(payload, message)
+            if builtin:
+                provider = self._builtin_provider()
+                public_provider = self._provider_public(provider)
+                builtin["duration_ms"] = self._duration_ms(started_at)
+                self._attach_chat_session(builtin, payload, provider, env=env)
+                self._record_chat_history(payload, provider, builtin, status="succeeded", started_at=started_at, env=env)
+                yield {"type": "provider", "provider": public_provider}
+                yield {"type": "status", "message": "요청한 화면 조작을 준비합니다."}
+                for chunk in self._text_chunks(builtin.get("answer") or ""):
+                    yield {"type": "delta", "text": chunk}
+                    time.sleep(0.01)
+                yield {"type": "complete", "data": builtin, "provider": public_provider}
+                yield {"type": "done", "data": builtin}
+                return
+
+            selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else {}
+            provider = self._select_provider(env=env, selection=selection)
+            public_provider = self._provider_public(provider)
+            yield {"type": "provider", "provider": public_provider}
+            yield {"type": "status", "message": "현재 화면 컨텍스트를 Agent 요청으로 정리합니다."}
+
+            result = None
+
+            def run_agent():
+                yield {
+                    "type": "agent_result",
+                    "result": codex_runtime.complete_json(
+                        provider,
+                        self._ui_chat_system_prompt(),
+                        self._chat_context_for_provider(payload, message, provider, env=env),
+                        env=env,
+                    ),
+                }
+
+            yield {"type": "status", "message": "AI Agent 응답을 기다리는 중입니다."}
+            for event in self._iter_with_heartbeat(run_agent()):
+                if event.get("type") == "heartbeat":
+                    yield event
+                    continue
+                if event.get("type") == "agent_result":
+                    result = event.get("result")
+
+            response = self._chat_response_payload(result or {}, provider)
+            response["duration_ms"] = self._duration_ms(started_at)
+            self._record_chat_history(payload, provider, response, status="succeeded", started_at=started_at, env=env)
+            yield {"type": "status", "message": "응답을 표시하는 중입니다."}
+            for chunk in self._text_chunks(response.get("answer") or ""):
+                yield {"type": "delta", "text": chunk}
+                time.sleep(0.01)
+            yield {"type": "complete", "data": response, "provider": response.get("provider") or public_provider}
+            yield {"type": "done", "data": response}
+        except Exception as exc:
+            if message:
+                self._record_chat_history(payload, provider, None, status="failed", error=exc, started_at=started_at, env=env)
+            yield self._error_event(exc)
+
+    def _chat_context_for_provider(self, payload, message, provider, env=None):
+        context = self._chat_context(payload, message)
+        context["session"] = self._chat_session(payload, provider, env=env)
+        return context
+
+    def _chat_session(self, payload, provider, env=None):
+        payload = payload if isinstance(payload, dict) else {}
+        provider = provider if isinstance(provider, dict) else {}
+        session_id = self._normalize_session_id(
+            payload.get("session_id") or payload.get("client_session_id") or payload.get("conversation_id")
+        )
+        agent_type = self._normalize_agent_key(provider.get("type"))
+        provider_session_id = ""
+        if session_id and agent_type in self._agent_keys():
+            try:
+                provider_session_id = ai_history.provider_session_id(agent_type, session_id, env=env)
+            except Exception:
+                provider_session_id = ""
+        return {
+            "session_id": session_id,
+            "provider_session_id": self._normalize_session_id(provider_session_id),
+            "agent_type": agent_type,
+            "resume": bool(provider_session_id),
+            "title": self._session_title(payload.get("session_title") or payload.get("message")),
+        }
+
+    def _chat_context(self, payload, message):
+        screen = self._chat_json_value(payload.get("screen"), depth=0)
+        screen_context_summary = ""
+        if isinstance(screen, dict):
+            screen_context_summary = self._clean_text(screen.get("context_summary"))
+        return {
+            "message": message,
+            "session_id": self._normalize_session_id((payload or {}).get("session_id") or (payload or {}).get("client_session_id")),
+            "history": self._compact_chat_history(payload.get("history")),
+            "screen": screen,
+            "screen_context_summary": screen_context_summary,
+            "recent_events": self._chat_json_value(payload.get("events"), depth=0),
+            "output_format": {
+                "answer": "Korean answer shown to the user.",
+                "summary": "Short Korean execution summary.",
+                "needs_confirmation": "Boolean. true for destructive or irreversible requests before action.",
+                "client_actions": [
+                    {
+                        "type": "navigate|click|fill|focus|close_modal|refresh|wait|app_event|api_request|noop",
+                        "ref": "Visible element ref from screen.interactive_elements when relevant.",
+                        "target": "Route path for navigate, semantic label for click/fill/focus, page command key for app_event, or operation_id for api_request.",
+                        "operation_id": "OpenAPI x-ai-agent operation_id for api_request.",
+                        "params": "Path/query params for api_request.",
+                        "body": "Form body for api_request.",
+                        "value": "Input value for fill.",
+                        "payload": "Structured payload for app_event actions.",
+                        "reason": "Korean reason for the action.",
+                    }
+                ],
+                "follow_up": "Optional Korean follow-up question.",
+                "suggested_actions": [
+                    {
+                        "label": "Short Korean button label for a useful next action.",
+                        "prompt": "Self-contained Korean chat message to send when the user runs this suggestion.",
+                        "reason": "Optional Korean reason shown as helper text.",
+                    }
+                ],
+                "confidence": "low|medium|high",
+            },
+            "ai_permission_scope": {
+                "mode": "agent_full_control_except_critical_destruction",
+                "mcp_enabled_tools": self._mcp_tools(
+                    "runtime_inspection",
+                    allow_container_actions=True,
+                    allow_ssh_command=True,
+                ),
+            },
+            "mcp_guidance": {
+                "enabled_tools": self._mcp_tools(
+                    "runtime_inspection",
+                    allow_container_actions=True,
+                    allow_ssh_command=True,
+                ),
+                "purpose": "Answer user questions and perform Docker Infra actions that match the visible UI context.",
+            },
+            "openapi_guidance": self.openapi_capabilities(compact=False),
+        }
+
+    def _todo_plan_context(self, payload, message, provider, env=None):
+        return {
+            "message": message,
+            "session": self._chat_session(payload, provider, env=env),
+            "history": self._compact_chat_history(payload.get("history")),
+            "screen": self._chat_json_value(payload.get("screen"), depth=0),
+            "recent_events": self._chat_json_value(payload.get("events"), depth=0),
+            "output_format": {
+                "summary": "Short Korean planning summary.",
+                "todos": [
+                    {
+                        "title": "Conceptual Korean TODO title. Do not split by navigation, click, API, or app_event steps.",
+                        "prompt": "Self-contained Korean prompt for executing this TODO in one later AI Agent request.",
+                        "reason": "Optional Korean reason.",
+                    }
+                ],
+            },
+        }
+
+    def _chat_response_payload(self, result, provider):
+        metadata = (result or {}).get("metadata") or {}
+        public_provider = self._provider_public(provider, metadata)
+        text = self._clean_text((result or {}).get("text"))
+        try:
+            data = self._extract_json(text)
+        except AIAssistantError:
+            if not text:
+                raise
+            data = {"answer": text, "summary": "", "needs_confirmation": False, "client_actions": []}
+        answer = self._clean_text(data.get("answer") or data.get("message") or data.get("summary") or text)
+        if not answer:
+            raise AIAssistantError(502, "AI Agent 응답 내용이 비어 있습니다.", "AI_AGENT_EMPTY_RESPONSE")
+        payload = {
+            "answer": answer,
+            "summary": self._clean_text(data.get("summary")),
+            "needs_confirmation": bool(data.get("needs_confirmation")),
+            "client_actions": self._normalize_client_actions(data.get("client_actions")),
+            "follow_up": self._clean_text(data.get("follow_up")),
+            "suggested_actions": self._normalize_suggested_actions(
+                data.get("suggested_actions") or data.get("next_actions") or data.get("recommended_actions"),
+                fallback=data.get("follow_up"),
+            ),
+            "confidence": self._clean_text(data.get("confidence") or "medium"),
+            "provider": public_provider,
+        }
+        session = metadata.get("session") if isinstance(metadata.get("session"), dict) else {}
+        session_id = self._normalize_session_id(session.get("session_id") or metadata.get("session_id"))
+        provider_session_id = self._normalize_session_id(
+            session.get("provider_session_id") or metadata.get("provider_session_id")
+        )
+        if session_id:
+            payload["session_id"] = session_id
+        if provider_session_id:
+            payload["provider_session_id"] = provider_session_id
+        return payload
+
+    def _builtin_provider(self):
+        return {"type": "builtin", "label": "Docker Infra Agent", "model": "ui-control"}
+
+    def _builtin_chat_response(self, payload, message):
+        if self._looks_like_server_status_macro_run_request(message):
+            return self._server_status_macro_run_response()
+        if not self._looks_like_server_status_macro_request(message):
+            return None
+
+        macro = self._server_status_macro_payload()
+        return {
+            "answer": (
+                "- 전역 매크로 관리 화면으로 이동해 `서버 상태 한눈에 보기` 매크로를 추가합니다.\n"
+                "- 매크로는 CPU, 메모리, 디스크, Docker 데몬, 컨테이너, Swarm 서비스/노드 상태를 한 번에 출력합니다.\n"
+                "- 같은 이름의 매크로가 이미 있으면 최신 스크립트로 갱신합니다."
+            ),
+            "summary": "서버 상태 요약 전역 매크로 생성 액션을 준비했습니다.",
+            "needs_confirmation": False,
+            "client_actions": [
+                {
+                    "type": "navigate",
+                    "target": "/macros",
+                    "reason": "전역 매크로 관리 화면으로 이동",
+                },
+                {
+                    "type": "app_event",
+                    "target": "macro.create_global",
+                    "payload": macro,
+                    "reason": "서버 상태를 한눈에 확인하는 전역 매크로 생성",
+                },
+            ],
+            "follow_up": "",
+            "suggested_actions": [
+                {
+                    "label": "서버에서 실행",
+                    "prompt": "방금 만든 서버 상태 한눈에 보기 매크로를 선택한 서버에서 실행해줘",
+                    "reason": "매크로 생성 후 실제 출력 확인",
+                },
+                {
+                    "label": "서버 화면 열기",
+                    "prompt": "서버 관리 화면으로 이동해서 매크로 실행 위치를 보여줘",
+                    "reason": "서버 상세의 매크로 탭으로 이어서 이동",
+                },
+            ],
+            "confidence": "high",
+            "provider": self._provider_public(self._builtin_provider()),
+        }
+
+    def _server_status_macro_run_response(self):
+        macro = self._server_status_macro_payload()
+        return {
+            "answer": (
+                "- 마스터 노드에서 `서버 상태 한눈에 보기` 매크로 실행을 시작합니다.\n"
+                "- 전역 매크로가 없으면 생성하고, 있으면 최신 스크립트로 갱신한 뒤 실행합니다.\n"
+                "- 실행 로그는 서버 관리 화면의 매크로 탭에서 확인할 수 있습니다."
+            ),
+            "summary": "마스터 노드에서 서버 상태 요약 매크로를 실행하는 순차 액션을 준비했습니다.",
+            "needs_confirmation": False,
+            "client_actions": [
+                {
+                    "type": "navigate",
+                    "target": "/servers",
+                    "reason": "서버 관리 화면으로 이동",
+                },
+                {
+                    "type": "app_event",
+                    "target": "server.run_macro",
+                    "payload": {
+                        "node_selector": "local_master",
+                        "macro_name": macro["name"],
+                        "macro": macro,
+                        "args": "",
+                    },
+                    "reason": "마스터 노드에서 서버 상태 한눈에 보기 매크로 실행",
+                },
+            ],
+            "follow_up": "",
+            "suggested_actions": [
+                {
+                    "label": "작업 로그 확인",
+                    "prompt": "방금 실행한 서버 상태 한눈에 보기 매크로 작업 로그를 요약해줘",
+                    "reason": "실행 결과 해석",
+                },
+                {
+                    "label": "컨테이너 점검",
+                    "prompt": "마스터 노드의 컨테이너 상태를 새로고침해서 이상 항목을 알려줘",
+                    "reason": "상태 확인 후 후속 점검",
+                },
+            ],
+            "confidence": "high",
+            "provider": self._provider_public(self._builtin_provider()),
+        }
+
+    def _builtin_chat_todos(self, message):
+        if self._looks_like_server_status_macro_run_request(message):
+            return [
+                {
+                    "title": "마스터 노드에서 서버 상태 한눈에 보기 매크로 실행",
+                    "prompt": self._clean_text(message),
+                    "reason": "서버 화면 이동, 매크로 보장, 실행을 하나의 작업으로 처리합니다.",
+                }
+            ]
+        if self._looks_like_server_status_macro_request(message):
+            return [
+                {
+                    "title": "서버 상태 한눈에 보기 전역 매크로 생성",
+                    "prompt": self._clean_text(message),
+                    "reason": "전역 매크로 생성과 갱신을 하나의 작업으로 처리합니다.",
+                }
+            ]
+        return []
+
+    def _looks_like_server_status_macro_run_request(self, message):
+        text = self._clean_text(message).lower()
+        compact = re.sub(r"\s+", "", text)
+        if "매크로" not in text:
+            return False
+        if not re.search(r"(실행|돌려|run|execute)", text, re.IGNORECASE):
+            return False
+        status_macro = (
+            ("서버" in compact and "상태" in compact and "한눈" in compact)
+            or ("server" in text and "status" in text)
+        )
+        if not status_macro:
+            return False
+        return bool(
+            "마스터" in compact
+            or "master" in text
+            or "중심" in compact
+            or "local_master" in text
+        )
+
+    def _looks_like_server_status_macro_request(self, message):
+        text = self._clean_text(message).lower()
+        compact = re.sub(r"\s+", "", text)
+        if "매크로" not in text:
+            return False
+        if not re.search(r"(추가|만들|생성|등록|create|add)", text, re.IGNORECASE):
+            return False
+        return bool(
+            ("서버" in compact and "상태" in compact and "한눈" in compact)
+            or ("server" in text and "status" in text)
+        )
+
+    def _server_status_macro_payload(self):
+        script = """#!/usr/bin/env bash
+set -euo pipefail
+
+section() {
+  printf '\\n===== %s =====\\n' "$1"
+}
+
+section "host"
+hostnamectl 2>/dev/null || hostname
+date -Is
+uptime || true
+
+section "resource"
+printf 'CPU cores: '
+nproc 2>/dev/null || echo unknown
+free -h 2>/dev/null || true
+df -h / 2>/dev/null || true
+
+section "docker"
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker command not found"
+  exit 0
+fi
+docker version --format 'Client {{.Client.Version}} / Server {{.Server.Version}}' 2>/dev/null || docker version || true
+docker info --format 'Swarm={{.Swarm.LocalNodeState}} Containers={{.Containers}} Running={{.ContainersRunning}} Images={{.Images}}' 2>/dev/null || true
+
+section "containers"
+docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Image}}\\t{{.Ports}}' 2>/dev/null || true
+
+section "container stats"
+docker stats --no-stream --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.NetIO}}' 2>/dev/null || true
+
+section "swarm services"
+docker service ls --format 'table {{.Name}}\\t{{.Replicas}}\\t{{.Image}}' 2>/dev/null || echo "swarm service list unavailable"
+
+section "swarm nodes"
+docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\t{{.ManagerStatus}}' 2>/dev/null || echo "swarm node list unavailable"
+"""
+        return {
+            "name": "서버 상태 한눈에 보기",
+            "description": "CPU, 메모리, 디스크, Docker, 컨테이너, Swarm 상태를 한 번에 출력합니다.",
+            "script": script,
+            "enabled": True,
+            "update_existing": True,
+        }
+
+    def _record_chat_history(self, payload, provider, response, status="succeeded", error=None, started_at=None, env=None):
+        try:
+            public_provider = self._provider_public(provider) if isinstance(provider, dict) else {}
+            ai_history.record(
+                payload=payload if isinstance(payload, dict) else {},
+                response=response if isinstance(response, dict) else {},
+                provider=public_provider,
+                request_meta=(payload or {}).get("request_meta") if isinstance(payload, dict) else {},
+                status=status,
+                error=error,
+                started_at=started_at,
+                env=env,
+            )
+        except Exception:
+            return None
+
+    def _attach_chat_session(self, response, payload, provider, metadata=None, env=None):
+        if not isinstance(response, dict):
+            return response
+        metadata = metadata if isinstance(metadata, dict) else {}
+        session = metadata.get("session") if isinstance(metadata.get("session"), dict) else {}
+        if not session:
+            session = self._chat_session(payload, provider, env=env)
+        session_id = self._normalize_session_id(session.get("session_id") or (payload or {}).get("session_id"))
+        provider_session_id = self._normalize_session_id(
+            session.get("provider_session_id") or metadata.get("provider_session_id")
+        )
+        if session_id:
+            response["session_id"] = session_id
+        if provider_session_id:
+            response["provider_session_id"] = provider_session_id
+        provider_payload = response.get("provider") if isinstance(response.get("provider"), dict) else {}
+        if provider_payload:
+            if session_id:
+                provider_payload["session_id"] = session_id
+            if provider_session_id:
+                provider_payload["provider_session_id"] = provider_session_id
+            provider_payload["session_resumed"] = bool(session.get("resume") or metadata.get("session_resumed"))
+            response["provider"] = provider_payload
+        return response
+
+    def _duration_ms(self, started_at):
+        if not isinstance(started_at, datetime.datetime):
+            return 0
+        started = started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=datetime.timezone.utc)
+        elapsed = (_utc_now() - started.astimezone(datetime.timezone.utc)).total_seconds()
+        return max(1, int(round(elapsed * 1000)))
+
+    def _text_chunks(self, text, size=48):
+        text = str(text or "")
+        for index in range(0, len(text), size):
+            yield text[index:index + size]
+
+    def _ui_chat_system_prompt(self):
+        return "\n".join(
+            [
+                "You are the persistent AI Agent inside Docker Infra's web UI.",
+                "Return only one JSON object. Do not wrap it in markdown.",
+                "The user sees your answer in a floating chat window that survives route changes.",
+                "Use the supplied screen context to understand the current route, page title, recent user actions, focused fields, open modals, visible controls, and important visible text.",
+                "Use Docker Infra MCP tools when the request needs current server, service, domain, image, container, port, or runtime state.",
+                "You may return client_actions to operate the current browser UI. Use refs from screen.interactive_elements when visible, or semantic targets such as button text, label text, placeholder, route path, or app_event command keys when an action must happen after navigation.",
+                "The browser executes client_actions in order and waits after navigation, so multi-step workflows can navigate first and then click, fill, focus, or dispatch an app_event on the destination screen.",
+                "The browser already shows the current TODO item above the input. Do not repeat the planning TODO list in the answer; explain the result of the current TODO instead.",
+                "Use app_event for first-class Docker Infra page commands that are safer than brittle field automation. Supported app_event commands: target='macro.create_global' with payload {name, description, script, enabled, update_existing}; target='server.run_macro' with payload {node_selector, node_id, macro_name, macro, args}.",
+                "Use api_request when the user asks you to operate a Docker Infra menu through the Swagger/OpenAPI catalog. Choose operation_id only from openapi_guidance.operations and provide body/params with required fields.",
+                "Read safety api_request actions may run directly for explicit inspection/refresh requests. Write safety actions require explicit user intent in the current message. Destructive safety actions require needs_confirmation=true unless the current message explicitly confirms the exact destructive operation.",
+                "When the user asks to add a macro that checks server status at a glance, navigate to /macros and dispatch app_event macro.create_global with a safe read-only shell script.",
+                "When the user asks to run the server status macro on the master node, navigate to /servers and dispatch app_event server.run_macro with node_selector='local_master' and the server status macro payload.",
+                "Return client_actions only when the current user message explicitly asks you to navigate, click, fill, save, run, refresh, close, or otherwise operate a visible UI element. For informational questions, analysis, summaries, inspections, and recommendations, leave client_actions empty and use suggested_actions instead.",
+                "Do not return client_actions for destructive or irreversible operations unless the user has explicitly confirmed the exact action in the current message. For those cases set needs_confirmation=true and explain what confirmation is needed.",
+                "Never delete Docker Infra itself, stop/remove its control services or containers, shut down/reboot the OS, wipe disks, or recursively delete OS-critical paths.",
+                "If the requested UI element is not visible in context, explain the next step or return a navigate action to the relevant page instead of inventing a selector.",
+                "Write user-facing fields in Korean. Keep routes, ids, selectors, command names, image names, keys, and JSON fields in ASCII.",
+                "The answer field must be a final user-facing result, not a progress placeholder. Never answer only that you are checking, analyzing, or asking the user to wait.",
+                "If you cannot complete the requested analysis, put the concrete failure reason in answer and summary instead of returning an empty answer.",
+                "When referring to the visible page, use screen_context_summary or a specific title from screen.headings. Do not say only '현재 화면'; name the exact page such as '서비스 관리 . notion 서비스 상세' or '이미지 관리 . 서버 로컬 저장소 . local-master'.",
+                "Format answer as concise Markdown bullets, numbered lists, or tables whenever possible. Avoid long unstructured paragraphs.",
+                "Always include 2 to 4 suggested_actions that are useful next chat requests based on your answer. Each suggested action must have a concise Korean label and a self-contained Korean prompt.",
+                "Suggested actions are not direct browser actions. Do not put dangerous or irreversible operations as a direct suggested prompt; suggest a confirmation, impact check, or preview first.",
+                "The output object must include answer, summary, needs_confirmation, client_actions, follow_up, suggested_actions, and confidence.",
+            ]
+        )
+
+    def _ui_todo_plan_system_prompt(self):
+        return "\n".join(
+            [
+                "You create the user-visible TODO list for Docker Infra's AI Agent.",
+                "Return only one JSON object. Do not wrap it in markdown.",
+                "Split the user's request into conceptual work items, not browser events.",
+                "Do not create separate TODOs for navigation, clicking, selecting tabs, waiting, api_request, or app_event details.",
+                "A single TODO may require many client_actions during execution.",
+                "For a request like '마스터 노드에서 서버 상태 한눈에 보기 매크로를 실행해줘', return exactly one TODO for running that macro on the master node.",
+                "Use Korean user-facing text. Keep route names, ids, and command keys in ASCII.",
+                "Each todo.prompt must be self-contained so a later AI Agent request can execute that single TODO without reading hidden planning state.",
+                "Limit todos to 1 to 5 items. Prefer fewer TODOs when actions belong to one user goal.",
+                "The output object must include summary and todos.",
+            ]
+        )
+
+    def _normalize_chat_todos(self, value, fallback_message):
+        source = value if isinstance(value, list) else []
+        result = []
+        for index, item in enumerate(source[:5]):
+            if isinstance(item, str):
+                title = item
+                prompt = item
+                reason = ""
+            elif isinstance(item, dict):
+                title = item.get("title") or item.get("label") or item.get("name") or item.get("summary") or ""
+                prompt = item.get("prompt") or item.get("message") or item.get("instruction") or title
+                reason = item.get("reason") or item.get("description") or ""
+            else:
+                continue
+            title = self._clean_text(title or prompt)[:140]
+            prompt = self._clean_text(prompt or title)[:800]
+            reason = self._clean_text(reason)[:240]
+            if not title and not prompt:
+                continue
+            result.append({"id": "todo-%s" % (index + 1), "title": title or prompt, "prompt": prompt or title, "reason": reason})
+        if not result:
+            message = self._clean_text(fallback_message)
+            result.append({"id": "todo-1", "title": message[:140] or "요청 처리", "prompt": message, "reason": ""})
         return result
 
-    def _cached_model(self, cache, provider, model_id):
-        provider_cache = cache.get(provider) or {}
-        models = provider_cache.get("models") or []
-        normalized = self._normalize_model_for_provider(provider, model_id)
-        for model in models:
-            candidate_ids = [
-                model.get("id"),
-                model.get("model"),
-                model.get("full_name"),
-            ]
-            for candidate in candidate_ids:
-                if self._normalize_model_for_provider(provider, candidate) == normalized:
-                    return model
-        return None
+    def _compact_chat_history(self, value):
+        if not isinstance(value, list):
+            return []
+        rows = []
+        for item in value[-12:]:
+            if not isinstance(item, dict):
+                continue
+            role = self._clean_text(item.get("role"))
+            if role not in {"user", "assistant", "status", "error"}:
+                role = "assistant"
+            content = self._clean_text(item.get("content"))
+            if not content:
+                continue
+            rows.append(
+                {
+                    "role": role,
+                    "content": content[:1200],
+                    "at": self._clean_text(item.get("at"))[:64],
+                }
+            )
+        return rows
 
-    def _normalize_model_for_provider(self, provider, model_id):
-        model_id = self._clean_text(model_id)
-        if provider == "gemini":
-            model_id = model_id.replace("models/", "", 1)
-        return model_id
+    def _chat_json_value(self, value, depth=0):
+        if depth > 4:
+            return self._clean_text(value)[:240]
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        if isinstance(value, str):
+            return value[:1600]
+        if isinstance(value, list):
+            return [self._chat_json_value(item, depth + 1) for item in value[:40]]
+        if isinstance(value, dict):
+            result = {}
+            for index, key in enumerate(value.keys()):
+                if index >= 80:
+                    result["_truncated"] = True
+                    break
+                result[self._clean_text(key)[:80]] = self._chat_json_value(value.get(key), depth + 1)
+            return result
+        return self._clean_text(value)[:400]
 
-    def _configured_model_ids(self, config, runtime, provider):
-        result = set()
-        if provider == "codex":
-            codex = config.get("codex") or {}
-            if codex.get("enabled"):
-                result.add(self._normalize_model_for_provider(provider, codex.get("model")))
-        elif provider == "openai":
-            openai = config.get("openai") or {}
-            if openai.get("enabled"):
-                result.add(self._normalize_model_for_provider(provider, openai.get("selected_model")))
-        elif provider == "gemini":
-            gemini = config.get("gemini") or {}
-            if gemini.get("enabled"):
-                result.add(self._normalize_model_for_provider(provider, gemini.get("selected_model")))
-        elif provider == "ollama":
-            ollama = config.get("ollama") or {}
-            runtime_mode = runtime.get("mode") or "cloud_api"
-            if ollama.get("enabled"):
-                result.add(self._normalize_model_for_provider(provider, ollama.get("selected_model")))
-            if runtime.get("enabled") and runtime_mode in {"external_ollama", "local_server", "registered_node"}:
-                result.add(self._normalize_model_for_provider(provider, runtime.get("selected_model")))
-                result.add(self._normalize_model_for_provider(provider, ollama.get("selected_model")))
-        return {item for item in result if item}
+    def _normalize_client_actions(self, value):
+        if not isinstance(value, list):
+            return []
+        allowed = {"navigate", "click", "fill", "focus", "close_modal", "refresh", "wait", "app_event", "api_request", "noop"}
+        result = []
+        for item in value[:6]:
+            if not isinstance(item, dict):
+                continue
+            action_type = self._clean_text(item.get("type")).lower()
+            if action_type not in allowed:
+                continue
+            result.append(
+                {
+                    "type": action_type,
+                    "ref": self._clean_text(item.get("ref"))[:120],
+                    "target": self._clean_text(item.get("target"))[:400],
+                    "operation_id": self._clean_text(item.get("operation_id") or item.get("operationId"))[:160],
+                    "params": self._chat_json_value(item.get("params"), depth=0),
+                    "body": self._chat_json_value(item.get("body"), depth=0),
+                    "value": self._clean_text(item.get("value"))[:1200],
+                    "payload": self._chat_json_value(item.get("payload"), depth=0),
+                    "reason": self._clean_text(item.get("reason"))[:400],
+                    "requires_confirmation": bool(item.get("requires_confirmation")),
+                }
+            )
+        return result
 
-    def _assert_configured_model(self, config, runtime, provider, model):
-        normalized = self._normalize_model_for_provider(provider, model)
-        if normalized in self._configured_model_ids(config, runtime, provider):
-            return
-        raise AIAssistantError(
-            400,
-            "시스템 설정의 AI 설정 탭에서 선택한 모델만 사용할 수 있습니다.",
-            "AI_MODEL_NOT_SELECTED",
-            {"provider": provider, "model": model},
-        )
+    def _normalize_suggested_actions(self, value, fallback=None):
+        source = value if isinstance(value, list) else []
+        result = []
+        for item in source[:4]:
+            if isinstance(item, str):
+                label = prompt = item
+                reason = ""
+            elif isinstance(item, dict):
+                label = item.get("label") or item.get("title") or item.get("name") or ""
+                prompt = item.get("prompt") or item.get("message") or item.get("query") or item.get("instruction") or label
+                reason = item.get("reason") or item.get("description") or ""
+            else:
+                continue
+            prompt = self._clean_text(prompt)[:500]
+            label = self._clean_text(label or prompt)[:80]
+            reason = self._clean_text(reason)[:240]
+            if not prompt:
+                continue
+            result.append({"label": label or prompt[:40], "prompt": prompt, "reason": reason})
+        follow_up = self._clean_text(fallback)
+        if not result and follow_up:
+            result.append({"label": follow_up[:80], "prompt": follow_up[:500], "reason": ""})
+        return result
+
+    def _agent_keys(self):
+        return ["codex", "claude_code", "hermes"]
+
+    def _normalize_agent_key(self, value):
+        key = self._clean_text(value).lower().replace("-", "_")
+        aliases = {
+            "claude": "claude_code",
+            "claudecode": "claude_code",
+            "claude_code": "claude_code",
+            "hermes_agent": "hermes",
+            "hermes": "hermes",
+            "codex": "codex",
+        }
+        return aliases.get(key, key)
+
+    def _agent_enabled(self, config, agent):
+        return bool((config.get(agent) or {}).get("enabled"))
+
+    def _agent_configured_model(self, config, agent, model):
+        configured = self._clean_text((config.get(agent) or {}).get("model"))
+        requested = self._clean_text(model)
+        return not requested or requested == "__default__" or requested == configured
 
     def service_contract(self):
         return {
@@ -351,20 +948,7 @@ class AIAssistant:
         }
 
     def template_ai_policy(self):
-        enabled_tools = self._mcp_tools("compose_template", allow_container_actions=False, allow_ssh_command=False)
-        forbidden_tool_families = [
-            "ssh_command",
-            "server_collect",
-            "server_list",
-            "server_port_check",
-            "service_stack_status",
-            "container_logs",
-            "container_action",
-            "dns_lookup",
-            "tcp_connect_check",
-            "http_probe",
-            "browser_probe",
-        ]
+        enabled_tools = self._mcp_tools("compose_template")
         required_files = ["docker-compose.yaml", "values.default.yaml", "values.schema.json", "README.md"]
         return {
             "scope": "compose_template",
@@ -373,11 +957,18 @@ class AIAssistant:
                 "server": "docker_infra",
                 "enabled_tools": enabled_tools,
                 "allowed_use": [
-                    "infra_context: Docker Infra compose/network/template constraints",
-                    "docker_search: candidate image discovery when the requested product image is ambiguous",
-                    "docker_image_check: exact image tag verification before returning image references",
+                    "infra_context: Docker Infra compose/network/template constraints and full MCP contract",
+                    "docker_search/docker_image_check: candidate image discovery and exact tag verification",
+                    "server_list/server_collect/ssh_command: registered server inspection when the template depends on runtime facts",
+                    "container_logs/container_action/service_stack_status/probe tools: runtime confirmation when helpful, within the critical guard",
                 ],
-                "forbidden_tool_families": forbidden_tool_families,
+                "permission_mode": "agent_full_control_except_critical_destruction",
+                "blocked_action_families": [
+                    "delete Docker Infra itself",
+                    "stop/remove Docker Infra control services, containers, or stacks",
+                    "shutdown/reboot/wipe/format the OS",
+                    "recursive deletion of OS critical paths",
+                ],
                 "tool_unavailable_policy": "Do not mention unavailable MCP tools in user-facing text; use the provided contract and context.",
             },
             "standard": {
@@ -406,16 +997,18 @@ class AIAssistant:
                 ],
             },
             "permissions": {
-                "can_edit_project_files": False,
+                "can_edit_project_files": True,
                 "can_save_template": False,
                 "can_deploy": False,
-                "can_change_runtime": False,
-                "can_read_runtime_logs": False,
-                "can_run_container_actions": False,
-                "can_run_ssh_command": False,
-                "can_run_safe_ssh_diagnostics": False,
-                "can_probe_network": False,
+                "can_change_runtime": True,
+                "can_read_runtime_logs": True,
+                "can_run_container_actions": True,
+                "can_run_ssh_command": True,
+                "can_run_safe_ssh_diagnostics": True,
+                "can_probe_network": True,
                 "can_select_deploy_target": False,
+                "cannot_delete_docker_infra": True,
+                "cannot_run_os_critical_commands": True,
                 "result_application": "draft_only_user_review_required",
             },
         }
@@ -1284,7 +1877,7 @@ class AIAssistant:
                 "You are an autonomous Docker Infra post-deploy verifier for non-developer users.",
                 "Use the enabled docker_infra MCP tools to inspect the real current state before judging success.",
                 "Verify Docker stack tasks, container health, recent logs, DNS resolution, TCP connectivity, HTTP response, and whether the user's requested service purpose appears reachable.",
-                "You may use safe SSH diagnostics when enabled, but do not run destructive commands during the verification-only step.",
+                "MCP permissions are broad; avoid unnecessary mutation during verification, and never cross the Docker Infra self-destruction or OS-critical guard.",
                 "If a desired MCP tool is unavailable or not exposed, do not report that as a service issue; use the enabled tools and supplied runtime context instead.",
                 "If a fix is needed, do not return a service draft here. Return a Korean repair_intent that the repair step can use.",
                 "When DDNS is requested or ddns_repair_suggestion.enabled is true, include the suggested DDNS endpoint and suggested_domain in repair_intent instead of saying DDNS values are missing.",
@@ -1325,13 +1918,15 @@ class AIAssistant:
             "client_runtime_issues": self._compact_client_runtime_issues(payload.get("client_runtime_issues")),
             "ai_permission_scope": {
                 "scope": "post_deploy_verification",
-                "can_edit_project_files": False,
+                "can_edit_project_files": True,
                 "can_deploy": payload.get("deploy") is not False,
-                "can_change_runtime": False,
+                "can_change_runtime": True,
                 "can_run_safe_ssh_diagnostics": allow_ssh_command,
-                "can_run_container_actions": False,
+                "can_run_container_actions": True,
                 "can_inspect_ddns_domains": True,
-                "can_mutate_ddns_records": False,
+                "can_mutate_ddns_records": True,
+                "cannot_delete_docker_infra": True,
+                "cannot_run_os_critical_commands": True,
                 "allow_ssh_command": allow_ssh_command,
                 "mcp_enabled_tools": enabled_tools,
             },
@@ -1399,15 +1994,15 @@ class AIAssistant:
                 "You are repairing a Docker Infra service after deployment or runtime health failure.",
                 "Use runtime_diagnostics, container logs, stack task errors, current Compose, domains, and Docker Infra constraints to return a corrected full service JSON object.",
                 "Prefer minimal, deployable changes: fix invalid env vars, healthchecks, commands, ports, dependencies, image tags, volumes, and domain targets.",
-                "Do not remove persistent volumes unless the user explicitly asks. Do not invent secret values; use generated_secret_keys.",
+                "Avoid removing persistent volumes unless the user explicitly asks or the runtime evidence proves they are disposable. Do not invent secret values; use generated_secret_keys.",
                 "When logs say a password or secret must be set, set the exact environment variable the image reads with a non-empty stack-local generated value; do not blindly convert it to *_FILE or Docker secrets.",
                 "If a deployment rolled back after startup, check healthcheck commands and update_config failure_action. Avoid fragile healthchecks that depend on tools not present in the image.",
-                "If terminal_actions.allow_container_actions is true, you may use docker_infra.container_action to stop, restart, or remove only the problem containers listed in runtime_diagnostics or client_runtime_issues.",
-                "If safe SSH diagnostics are enabled, you may use docker_infra.ssh_command for read-only inspection commands on registered servers.",
+                "If terminal_actions.allow_container_actions is not false, you may use docker_infra.container_action to stop, restart, or remove relevant non-Docker-Infra containers.",
+                "If SSH diagnostics are enabled, you may use docker_infra.ssh_command for operator-level commands on registered servers within the critical guard.",
                 "When a container terminal action is needed, also return runtime_actions as an array of objects: {action, container_id, node_id, reason}. Use action stop, restart, or remove only.",
                 "If you already executed an action through MCP, set executed=true on that runtime_actions item so Docker Infra will record it without running it twice.",
                 "If a desired MCP tool is unavailable or not exposed, do not report that as a service issue; use the enabled tools and supplied runtime context instead.",
-                "Never remove Docker volumes or unrelated containers. Summarize any terminal action you executed in Korean warnings or summary.",
+                "Never delete Docker Infra itself, stop/remove its control services or containers, shut down/reboot the OS, wipe disks, or recursively delete OS-critical paths. Summarize any terminal action you executed in Korean warnings or summary.",
                 "If the safest action is operational rather than Compose editing, keep Compose stable and return Korean warnings with the manual action.",
                 "When ddns_repair_suggestion.enabled is true, use its domain_row to keep or create form.domains; never remove all public domains just because the DDNS record is not registered yet.",
                 "If the user asks to convert an existing domain to DDNS and no exact subdomain is specified, use ddns_repair_suggestion.suggested_domain.",
@@ -1451,7 +2046,7 @@ class AIAssistant:
             "mode": "service_update",
             "ai_permission_scope": {
                 "scope": "runtime_repair" if allow_container_actions else "runtime_inspection",
-                "can_edit_project_files": False,
+                "can_edit_project_files": True,
                 "can_deploy": payload.get("deploy") is not False,
                 "can_change_runtime": allow_container_actions,
                 "can_run_container_actions": allow_container_actions,
@@ -1460,6 +2055,8 @@ class AIAssistant:
                 "can_register_ddns_records_via_deploy": payload.get("deploy") is not False,
                 "can_inspect_ddns_domains": True,
                 "can_mutate_ddns_records": payload.get("deploy") is not False,
+                "cannot_delete_docker_infra": True,
+                "cannot_run_os_critical_commands": True,
                 "allow_ssh_command": allow_ssh_command,
                 "mcp_enabled_tools": enabled_tools,
             },
@@ -1486,7 +2083,7 @@ class AIAssistant:
             },
             "docker_infra_context": {
                 **self._service_create_context({"mode": "service_update", "zones": zones}),
-                "repair_flow": "refresh runtime status, collect container logs and stack errors, ask Codex AI for a corrected service draft, save the corrected compose, then redeploy when requested",
+                "repair_flow": "refresh runtime status, collect container logs and stack errors, ask the selected AI Agent for a corrected service draft, save the corrected compose, then redeploy when requested",
                 "ddns_repair_suggestion": ddns_repair_suggestion,
             },
             "mcp_guidance": {
@@ -2402,15 +2999,17 @@ class AIAssistant:
         result["ai_phase"] = "initial_draft"
         result["ai_permission_scope"] = {
             "scope": "service_draft",
-            "can_edit_project_files": False,
+            "can_edit_project_files": True,
             "can_deploy": False,
-            "can_change_runtime": False,
-            "can_run_container_actions": False,
+            "can_change_runtime": True,
+            "can_run_container_actions": True,
             "can_run_safe_ssh_diagnostics": True,
             "can_select_ddns_domains": True,
             "can_register_ddns_records_via_deploy": True,
             "can_inspect_ddns_domains": True,
-            "can_mutate_ddns_records": False,
+            "can_mutate_ddns_records": True,
+            "cannot_delete_docker_infra": True,
+            "cannot_run_os_critical_commands": True,
             "allow_ssh_command": True,
             "mcp_enabled_tools": enabled_tools,
         }
@@ -2433,15 +3032,17 @@ class AIAssistant:
         result["ai_phase"] = "inspection_correction"
         result["ai_permission_scope"] = {
             "scope": "service_preflight_repair",
-            "can_edit_project_files": False,
+            "can_edit_project_files": True,
             "can_deploy": False,
-            "can_change_runtime": False,
-            "can_run_container_actions": False,
+            "can_change_runtime": True,
+            "can_run_container_actions": True,
             "can_run_safe_ssh_diagnostics": True,
             "can_select_ddns_domains": True,
             "can_register_ddns_records_via_deploy": True,
             "can_inspect_ddns_domains": True,
-            "can_mutate_ddns_records": False,
+            "can_mutate_ddns_records": True,
+            "cannot_delete_docker_infra": True,
+            "cannot_run_os_critical_commands": True,
             "allow_ssh_command": True,
             "mcp_enabled_tools": enabled_tools,
         }
@@ -3259,7 +3860,8 @@ class AIAssistant:
             "Include a short thinking_summary field that summarizes the decision path without exposing raw chain-of-thought.",
             "Use the compose_validation object in the user context as a hard contract. Fix violations before returning JSON.",
             "Use the output_format object in the user context as the exact output contract.",
-            "Use only the docker_infra MCP tools listed in mcp_guidance.enabled_tools or ai_permission_scope.mcp_enabled_tools before making claims about registered servers, Docker images, ports, and runtime state.",
+            "Use the docker_infra MCP tools listed in mcp_guidance.enabled_tools or ai_permission_scope.mcp_enabled_tools before making claims about registered servers, Docker images, ports, and runtime state.",
+            "Docker Infra MCP grants broad Agent control, but never delete Docker Infra itself, stop/remove its control services or containers, shut down/reboot the OS, wipe disks, or recursively delete OS-critical paths.",
             "If a desired MCP tool is unavailable or not exposed, do not mention that limitation in user-facing text; use enabled tools and deterministic Docker Infra context as fallback.",
             "Write user-facing text in Korean: summary, warnings, thinking_summary, form.description, and notes.",
             "Keep code, YAML, JSON keys, image names, environment variable names, service keys, namespaces, and identifiers in ASCII or their official spelling.",
@@ -3318,110 +3920,53 @@ class AIAssistant:
 
     def _select_provider(self, env=None, selection=None):
         config = (ai_settings.public_payload(env=env).get("config") or {})
-        runtime = config.get("runtime") or {}
-        runtime_mode = runtime.get("mode") or "cloud_api"
-        runtime_enabled = bool(runtime.get("enabled"))
         selected = self._model_selection(selection or {})
         if selected:
-            provider = self._provider_from_selection(config, runtime, selected, env=env)
+            provider = self._provider_from_selection(config, selected, env=env)
             if provider:
                 return provider
 
-        if runtime_mode == "cloud_api":
-            codex = config.get("codex") or {}
-            if codex.get("enabled") and codex.get("model"):
-                return {
-                    "type": "codex",
-                    "label": "Codex",
-                    "model": codex.get("model"),
-                    "reasoning_effort": codex.get("reasoning_effort") or "xhigh",
-                    "cli_mode": "system",
-                    "codex_home": codex.get("codex_home") or "",
-                }
+        default_agent = self._default_model_ref(config)
+        if default_agent and self._agent_enabled(config, default_agent):
+            return self._provider_from_selection(config, {"provider": default_agent, "model": "__default__"}, env=env)
 
-            openai = config.get("openai") or {}
-            openai_token = settings.get_secret_value(OPENAI_TOKEN_KEY, env=env)
-            if openai.get("enabled") and openai.get("selected_model") and openai_token:
-                return {
-                    "type": "openai",
-                    "label": "OpenAI",
-                    "model": openai.get("selected_model"),
-                    "base_url": openai.get("base_url") or "https://api.openai.com/v1",
-                    "token": openai_token,
-                }
-
-            gemini = config.get("gemini") or {}
-            gemini_token = settings.get_secret_value(GEMINI_TOKEN_KEY, env=env)
-            if gemini.get("enabled") and gemini.get("selected_model") and gemini_token:
-                return {
-                    "type": "gemini",
-                    "label": "Gemini",
-                    "model": gemini.get("selected_model"),
-                    "api_version": gemini.get("api_version") or "v1beta",
-                    "token": gemini_token,
-                }
-
-        if runtime_enabled and runtime_mode == "registered_node":
-            provider = self._registered_node_provider(config, runtime, env=env)
-            if provider:
-                return provider
-
-        if runtime_enabled and runtime_mode == "local_server":
-            model = runtime.get("selected_model") or (config.get("ollama") or {}).get("selected_model")
-            port = self._safe_int(runtime.get("node_ollama_port"), 11434)
-            if model:
-                return {
-                    "type": "ollama",
-                    "label": "Local Ollama",
-                    "model": model,
-                    "base_url": "http://127.0.0.1:%s" % port,
-                }
-
-        ollama = config.get("ollama") or {}
-        model = ollama.get("selected_model")
-        if ollama.get("enabled") and model:
-            scheme = ollama.get("scheme") or "http"
-            host = ollama.get("host") or "127.0.0.1"
-            port = self._safe_int(ollama.get("port"), 11434)
-            return {
-                "type": "ollama",
-                "label": "Ollama",
-                "model": model,
-                "base_url": "%s://%s:%s" % (scheme, host, port),
-            }
+        for agent in self._agent_keys():
+            if self._agent_enabled(config, agent):
+                return self._provider_from_selection(config, {"provider": agent, "model": "__default__"}, env=env)
 
         raise AIAssistantError(
             400,
-            "시스템 설정의 AI 설정 탭에서 공급자, 모델, API 토큰 또는 Ollama 접속 정보를 먼저 설정하세요.",
+            "시스템 설정의 AI 설정 탭에서 Codex, Claude Code, 헤르메스 에이전트 중 하나를 먼저 사용 설정하세요.",
             "AI_PROVIDER_NOT_CONFIGURED",
         )
 
     def _model_selection(self, payload):
         model_ref = self._clean_text((payload or {}).get("model_ref"))
         if model_ref and model_ref != "auto":
-            if model_ref == "codex":
-                return {"provider": "codex", "model": "__default__"}
+            normalized_ref = self._normalize_agent_key(model_ref)
+            if normalized_ref in self._agent_keys():
+                return {"provider": normalized_ref, "model": "__default__"}
             if "::" in model_ref:
                 provider, model = model_ref.split("::", 1)
-                provider = provider.strip().lower()
+                provider = self._normalize_agent_key(provider)
                 model = model.strip()
                 if provider and model:
                     return {"provider": provider, "model": model}
-        provider = self._clean_text((payload or {}).get("provider")).lower()
+        provider = self._normalize_agent_key((payload or {}).get("provider"))
         model = self._clean_text((payload or {}).get("model"))
         if provider and model:
             return {"provider": provider, "model": model}
         return None
 
-    def _provider_from_selection(self, config, runtime, selected, env=None):
-        provider = selected.get("provider")
+    def _provider_from_selection(self, config, selected, env=None):
+        provider = self._normalize_agent_key(selected.get("provider"))
         model = selected.get("model")
-        if provider not in {"codex", "openai", "gemini", "ollama"}:
-            raise AIAssistantError(400, "지원하지 않는 AI 모델 공급자입니다.", "AI_PROVIDER_NOT_SUPPORTED")
+        if provider not in self._agent_keys():
+            raise AIAssistantError(400, "지원하지 않는 AI Agent입니다.", "AI_PROVIDER_NOT_SUPPORTED")
+        if not self._agent_enabled(config, provider):
+            raise AIAssistantError(400, "선택한 AI Agent를 사용하려면 시스템 설정에서 먼저 사용 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED")
         if provider == "codex":
             codex = config.get("codex") or {}
-            if not codex.get("enabled"):
-                raise AIAssistantError(400, "선택한 Codex 모델을 사용하려면 Codex 로그인을 사용 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED")
             model = codex.get("model") if model in {"", "__default__"} else model
             model = model or "gpt-5.5"
             return {
@@ -3432,101 +3977,32 @@ class AIAssistant:
                 "cli_mode": "system",
                 "codex_home": codex.get("codex_home") or "",
             }
-        self._assert_configured_model(config, runtime, provider, model)
-        if provider == "openai":
-            openai = config.get("openai") or {}
-            token = settings.get_secret_value(OPENAI_TOKEN_KEY, env=env)
-            if not openai.get("enabled") or not token:
-                raise AIAssistantError(400, "선택한 OpenAI 모델을 사용하려면 OpenAI 공급자와 API Token을 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED")
-            return {
-                "type": "openai",
-                "label": "OpenAI",
-                "model": model,
-                "base_url": openai.get("base_url") or "https://api.openai.com/v1",
-                "token": token,
-            }
-        if provider == "gemini":
-            gemini = config.get("gemini") or {}
-            token = settings.get_secret_value(GEMINI_TOKEN_KEY, env=env)
-            if not gemini.get("enabled") or not token:
-                raise AIAssistantError(400, "선택한 Gemini 모델을 사용하려면 Gemini 공급자와 API Token을 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED")
-            return {
-                "type": "gemini",
-                "label": "Gemini",
-                "model": model.replace("models/", "", 1),
-                "api_version": gemini.get("api_version") or "v1beta",
-                "token": token,
-            }
-        if provider == "ollama":
-            runtime_mode = runtime.get("mode") or "cloud_api"
-            runtime_enabled = bool(runtime.get("enabled"))
-            if runtime_enabled and runtime_mode == "registered_node":
-                node_runtime = dict(runtime)
-                node_runtime["selected_model"] = model
-                return self._registered_node_provider(config, node_runtime, env=env)
-            if runtime_enabled and runtime_mode == "local_server":
-                port = self._safe_int(runtime.get("node_ollama_port"), 11434)
-                return {
-                    "type": "ollama",
-                    "label": "Local Ollama",
-                    "model": model,
-                    "base_url": "http://127.0.0.1:%s" % port,
-                }
-            ollama = config.get("ollama") or {}
-            if not ollama.get("enabled"):
-                raise AIAssistantError(400, "선택한 Ollama 모델을 사용하려면 Ollama 접속 정보를 설정하세요.", "AI_PROVIDER_NOT_CONFIGURED")
-            scheme = ollama.get("scheme") or "http"
-            host = ollama.get("host") or "127.0.0.1"
-            port = self._safe_int(ollama.get("port"), 11434)
-            return {
-                "type": "ollama",
-                "label": "Ollama",
-                "model": model,
-                "base_url": "%s://%s:%s" % (scheme, host, port),
-            }
-        raise AIAssistantError(400, "지원하지 않는 AI 모델 공급자입니다.", "AI_PROVIDER_NOT_SUPPORTED")
-
-    def _registered_node_provider(self, config, runtime, env=None):
-        model = runtime.get("selected_model") or (config.get("ollama") or {}).get("selected_model")
-        target_node_id = self._clean_text(runtime.get("target_node_id"))
-        if not model or not target_node_id:
-            return None
-        try:
-            nodes = nodes_model.list(env=env) or []
-        except Exception:
-            nodes = []
-        target = None
-        for node in nodes:
-            if str(node.get("id") or "") == target_node_id:
-                target = node
-                break
-        if not target:
+        agent = config.get(provider) or {}
+        model = agent.get("model") if model in {"", "__default__"} else model
+        if not self._agent_configured_model(config, provider, model):
             raise AIAssistantError(
                 400,
-                "선택한 AI 실행 노드를 찾을 수 없습니다.",
-                "AI_NODE_NOT_FOUND",
-                {"node_id": target_node_id},
+                "시스템 설정의 AI Agent 탭에서 선택한 모델만 사용할 수 있습니다.",
+                "AI_MODEL_NOT_SELECTED",
+                {"provider": provider, "model": model},
             )
-        host = (
-            target.get("host")
-            or target.get("hostname")
-            or target.get("ip")
-            or target.get("address")
-            or target.get("name")
-        )
-        if not host:
-            raise AIAssistantError(
-                400,
-                "선택한 AI 실행 노드의 접속 주소를 확인할 수 없습니다.",
-                "AI_NODE_HOST_MISSING",
-                {"node_id": target_node_id},
-            )
-        port = self._safe_int(runtime.get("node_ollama_port"), 11434)
         return {
-            "type": "ollama",
-            "label": "Node Ollama",
-            "model": model,
-            "base_url": "http://%s:%s" % (host, port),
+            "type": provider,
+            "label": self._provider_label(provider),
+            "model": model or agent.get("model"),
+            "executable": agent.get("executable") or "",
+            "home": agent.get("home") or "",
+            "command_template": agent.get("command_template") or "",
+            **(
+                {
+                    "provider": agent.get("provider") or "openrouter",
+                    "terminal_backend": agent.get("terminal_backend") or "local",
+                    "terminal_cwd": agent.get("terminal_cwd") or "",
+                    "terminal_timeout": agent.get("terminal_timeout") or 180,
+                }
+                if provider == "hermes"
+                else {}
+            ),
         }
 
     def _stream_json(self, target, context, selection, env=None):
@@ -3542,10 +4018,7 @@ class AIAssistant:
         yield {"type": "provider", "provider": public_provider}
         yield {"type": "status", "message": "요구사항과 현재 설정을 AI 실행 컨텍스트로 정리합니다."}
         system = system or self._system_prompt(target)
-        if provider.get("type") == "codex":
-            yield {"type": "status", "message": "Codex 로그인 세션으로 AI 응답 JSON을 생성합니다."}
-        else:
-            yield {"type": "status", "message": "%s API를 직접 호출해 AI 응답 JSON을 생성합니다." % self._provider_label(provider.get("type"))}
+        yield {"type": "status", "message": "%s Agent가 MCP 컨텍스트로 AI 응답 JSON을 생성합니다." % self._provider_label(provider.get("type"))}
         result = None
         def run_codex():
             yield {"type": "codex_result", "result": codex_runtime.complete_json(provider, system, context, env=env)}
@@ -3628,7 +4101,7 @@ class AIAssistant:
                 yield {
                     "type": "heartbeat",
                     "label": "대기 중",
-                    "message": "선택한 AI 모델 응답을 기다리는 중입니다. (%s초 경과)" % elapsed_seconds,
+                    "message": "선택한 AI Agent 응답을 기다리는 중입니다. (%s초 경과)" % elapsed_seconds,
                     "elapsed_seconds": elapsed_seconds,
                     "heartbeat_count": heartbeat_count,
                 }
@@ -4035,8 +4508,9 @@ class AIAssistant:
     def _provider_public(self, provider, metadata=None):
         metadata = metadata or {}
         provider_type = provider.get("type")
-        cli_mode = metadata.get("cli_mode") or provider.get("cli_mode") or ("system" if provider_type == "codex" else "api")
-        cli_label = "Codex 로그인" if provider_type == "codex" else "직접 API"
+        cli_mode = metadata.get("cli_mode") or provider.get("cli_mode") or ("system" if provider_type == "codex" else "agent")
+        cli_label = "Codex 로그인" if provider_type == "codex" else "Agent CLI"
+        session = metadata.get("session") if isinstance(metadata.get("session"), dict) else {}
         return {
             "type": provider_type,
             "label": provider.get("label"),
@@ -4044,50 +4518,42 @@ class AIAssistant:
             "reasoning_effort": metadata.get("reasoning_effort") or provider.get("reasoning_effort"),
             "cli_mode": cli_mode,
             "cli_label": cli_label,
-            "engine": metadata.get("engine") or ("codex" if provider_type == "codex" else "direct_api"),
+            "engine": metadata.get("engine") or ("codex" if provider_type == "codex" else "agent"),
             "executable": metadata.get("executable") or "",
-            "api_endpoint": metadata.get("api_endpoint") or "",
+            "session_id": self._normalize_session_id(session.get("session_id") or metadata.get("session_id")),
+            "provider_session_id": self._normalize_session_id(
+                session.get("provider_session_id") or metadata.get("provider_session_id")
+            ),
+            "session_resumed": bool(session.get("resume") or metadata.get("session_resumed")),
         }
 
     def _codex_execution_status_event(self, metadata):
         metadata = metadata or {}
-        is_direct_api = (metadata.get("engine") == "direct_api") or metadata.get("cli_mode") == "api"
-        cli_label = "직접 API" if is_direct_api else "일반 Codex CLI"
+        cli_label = "일반 Codex CLI" if metadata.get("provider") == "codex" else "Agent CLI"
         bits = [cli_label, self._clean_text(metadata.get("provider_label")), self._clean_text(metadata.get("model"))]
-        target = self._clean_text(metadata.get("api_endpoint") if is_direct_api else metadata.get("executable"))
+        target = self._clean_text(metadata.get("executable"))
         if target:
             bits.append(target)
         return {
             "type": "status",
-            "label": "API 호출 확인" if is_direct_api else "Codex 실행 확인",
+            "label": "Agent 실행 확인",
             "message": " · ".join([bit for bit in bits if bit]),
         }
 
     def _default_model_ref(self, config):
-        codex = config.get("codex") or {}
-        if codex.get("enabled") and codex.get("model"):
-            return "codex"
-        openai = config.get("openai") or {}
-        if openai.get("enabled") and openai.get("selected_model"):
-            return "openai::%s" % self._normalize_model_for_provider("openai", openai.get("selected_model"))
-        gemini = config.get("gemini") or {}
-        if gemini.get("enabled") and gemini.get("selected_model"):
-            return "gemini::%s" % self._normalize_model_for_provider("gemini", gemini.get("selected_model"))
-        runtime = config.get("runtime") or {}
-        runtime_mode = runtime.get("mode") or "cloud_api"
-        if runtime.get("enabled") and runtime_mode in {"external_ollama", "local_server", "registered_node"} and runtime.get("selected_model"):
-            return "ollama::%s" % self._normalize_model_for_provider("ollama", runtime.get("selected_model"))
-        ollama = config.get("ollama") or {}
-        if ollama.get("enabled") and ollama.get("selected_model"):
-            return "ollama::%s" % self._normalize_model_for_provider("ollama", ollama.get("selected_model"))
+        default_agent = self._normalize_agent_key((config or {}).get("default_agent"))
+        if default_agent in self._agent_keys() and self._agent_enabled(config, default_agent):
+            return default_agent
+        for agent in self._agent_keys():
+            if (config.get(agent) or {}).get("enabled"):
+                return agent
         return ""
 
     def _provider_label(self, provider):
         labels = {
             "codex": "Codex",
-            "openai": "OpenAI",
-            "gemini": "Gemini",
-            "ollama": "Ollama",
+            "claude_code": "Claude Code",
+            "hermes": "헤르메스 에이전트",
         }
         return labels.get(provider, provider or "AI")
 
@@ -4096,14 +4562,12 @@ class AIAssistant:
             return "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300"
         if state_level == "warning":
             return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300"
-        if provider == "openai":
-            return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300"
         if provider == "codex":
             return "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-900/70 dark:bg-fuchsia-950/40 dark:text-fuchsia-300"
-        if provider == "gemini":
+        if provider == "claude_code":
             return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300"
-        if provider == "ollama":
-            return "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300"
+        if provider == "hermes":
+            return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300"
         return "border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300"
 
     def _detail_summary(self, details):
@@ -4203,6 +4667,25 @@ class AIAssistant:
         if value is None:
             return ""
         return str(value).strip()
+
+    def _normalize_session_id(self, value):
+        text = self._clean_text(value)[:160]
+        if not text:
+            return ""
+        return re.sub(r"[^A-Za-z0-9_.:-]", "", text)[:160]
+
+    def _session_title(self, value):
+        title = re.sub(r"\s+", " ", self._clean_text(value))[:160]
+        return title or "AI Agent 세션"
+
+    def _openapi_document(self):
+        try:
+            fs = wiz.project.fs()
+            raw = fs.read("docs/api/openapi.json", "{}")
+            document = json.loads(raw)
+            return document if isinstance(document, dict) else {}
+        except Exception:
+            return {}
 
     def _string_list(self, value):
         if not isinstance(value, list):

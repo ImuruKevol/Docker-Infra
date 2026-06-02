@@ -292,11 +292,11 @@
   </main>
   <script>
     const steps = [
-      ['apt', 'APT 패키지', 'nginx, PostgreSQL, Docker, Codex 실행에 필요한 runtime 패키지를 설치합니다.'],
+      ['apt', 'APT 패키지', 'nginx, PostgreSQL, Docker, Agent 실행에 필요한 공통 runtime 패키지를 설치합니다.'],
       ['env', '환경변수 파일', '/etc/docker-infra/docker-infra.env를 생성하고 런타임 경로를 준비합니다.'],
       ['postgres', 'PostgreSQL 초기화', '컨테이너 DB 대신 host PostgreSQL role, database, schema를 구성합니다.'],
       ['python', 'PIP 패키지', 'requirements.txt 기준으로 WIZ 런타임 Python 패키지를 설치합니다.'],
-      ['node', 'Official Codex CLI', 'Node.js LTS와 npm을 설치하고 공식 @openai/codex package를 global 설치합니다.'],
+      ['node', 'Node.js Runtime', 'Node.js LTS와 npm만 준비합니다. Codex, Claude Code, 헤르메스는 설치 후 시스템 설정에서 설치 스크립트로 설치합니다.'],
       ['bundle', 'WIZ Bundle', 'installer payload의 WIZ bundle 파일만 설치 경로로 복사합니다.'],
       ['migrate', 'DB Migration', 'Docker Infra 테이블과 기본 schema migration을 적용합니다.'],
       ['service', 'WIZ Service', '환경변수 파일을 포함한 systemd daemon으로 WIZ를 실행합니다.'],
