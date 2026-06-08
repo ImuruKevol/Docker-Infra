@@ -12,6 +12,10 @@ interface AgentMessage {
     provider?: string;
     duration_ms?: number;
     suggested_actions?: AgentSuggestedAction[];
+    __agentProgressMode?: boolean;
+    __agentProgressLines?: string[];
+    __agentAnswerStarted?: boolean;
+    __agentAnswerText?: string;
 }
 
 interface AgentSuggestedAction {
@@ -124,6 +128,8 @@ export class AppComponent implements OnInit, OnDestroy {
     private agentHistoryCopyTimer: any = null;
     private agentSelectionRenderTimer: any = null;
     private agentContextSignature = '';
+    private agentSessionMap: Record<string, string> = {};
+    private readonly agentDockWidthStorageKey = 'docker-infra.ai-agent.dock-width';
 
     constructor(
         public service: Service,
@@ -140,6 +146,7 @@ export class AppComponent implements OnInit, OnDestroy {
     }
 
     public async ngOnInit() {
+        this.restoreAgentDockWidth();
         await this.service.init(this);
         this.setupAgentContextTrackers();
         this.routeSub = this.router.events.subscribe((event: any) => {
@@ -313,12 +320,11 @@ export class AppComponent implements OnInit, OnDestroy {
         event.stopPropagation();
         this.stopAgentResize();
         this.resizeMoveHandler = (moveEvent: MouseEvent) => {
-            const maxWidth = Math.min(760, Math.max(360, window.innerWidth - 360));
             const nextWidth = window.innerWidth - moveEvent.clientX;
-            this.agentDockWidth = Math.max(340, Math.min(maxWidth, nextWidth));
+            this.agentDockWidth = this.clampAgentDockWidth(nextWidth);
             this.ref.detectChanges();
         };
-        this.resizeEndHandler = () => this.stopAgentResize();
+        this.resizeEndHandler = () => this.stopAgentResize(true);
         document.addEventListener('mousemove', this.resizeMoveHandler);
         document.addEventListener('mouseup', this.resizeEndHandler, { once: true });
     }
@@ -746,16 +752,16 @@ export class AppComponent implements OnInit, OnDestroy {
                 await this.applyAgentStreamEvent(event, assistantMessage);
             });
             let fallbackApplied = false;
-            if (!assistantMessage.content.trim() && !done?.answer) {
+            if (!this.agentMessageHasAnswerContent(assistantMessage) && !done?.answer && !done?.stream_incomplete) {
                 done = await this.completeAgentChatFallback(payload, assistantMessage, requestStartedAt);
                 fallbackApplied = true;
             }
-            if (!assistantMessage.content.trim() && done?.answer) {
-                assistantMessage.content = String(done.answer || '').trim();
+            if (!this.agentMessageHasAnswerContent(assistantMessage) && done?.answer) {
+                this.appendAgentAnswerText(assistantMessage, String(done.answer || '').trim());
             }
             this.applyAgentDuration(done, assistantMessage, requestStartedAt);
             if (!fallbackApplied) this.applyAgentSuggestedActions(done, assistantMessage);
-            if (!assistantMessage.content.trim()) {
+            if (!this.agentMessageHasAnswerContent(assistantMessage)) {
                 throw new Error(done?.stream_incomplete ? 'AI Agent 응답 스트림이 완료되지 않았고 표시할 본문이 없습니다.' : 'AI Agent 응답 본문이 비어 있습니다.');
             }
             if (done?.stream_incomplete) {
@@ -770,8 +776,10 @@ export class AppComponent implements OnInit, OnDestroy {
             this.updateAgentTodo(todo.id, { status: 'succeeded', detail: '완료' });
             return true;
         } catch (error: any) {
-            assistantMessage.role = assistantMessage.content.trim() ? assistantMessage.role : 'error';
-            if (!assistantMessage.content.trim()) assistantMessage.content = error?.message || 'AI Agent 호출에 실패했습니다.';
+            if (!this.agentMessageHasAnswerContent(assistantMessage)) {
+                assistantMessage.role = 'error';
+                this.setAgentErrorContent(assistantMessage, error?.message || 'AI Agent 호출에 실패했습니다.');
+            }
             this.applyAgentDuration({}, assistantMessage, requestStartedAt);
             this.updateAgentTodo(todo.id, { status: 'failed', detail: error?.message || '실패' });
             return false;
@@ -857,12 +865,14 @@ export class AppComponent implements OnInit, OnDestroy {
 
     private async completeAgentChatFallback(payload: any, assistantMessage: AgentMessage, requestStartedAt?: number) {
         this.agentStreamStatus = '스트림 응답을 동기 호출로 다시 확인하는 중입니다.';
+        this.appendAgentProgressLine(assistantMessage, this.agentStreamStatus);
+        await this.renderAgentView();
         const fallback = await this.agentApi('chat', payload);
         const answer = String(fallback?.answer || fallback?.message || '').trim();
         if (!answer) throw new Error('AI Agent 응답 본문이 비어 있습니다.');
         assistantMessage.role = 'assistant';
         assistantMessage.provider = 'AI Agent';
-        assistantMessage.content = answer;
+        this.appendAgentAnswerText(assistantMessage, answer);
         this.applyAgentSuggestedActions(fallback, assistantMessage);
         this.applyAgentDuration(fallback, assistantMessage, requestStartedAt);
         return fallback;
@@ -889,16 +899,21 @@ export class AppComponent implements OnInit, OnDestroy {
         let buffer = '';
         let donePayload: any = null;
         let sawDelta = false;
+        let sawProgress = false;
         const startedAt = Date.now();
         let lastEventAt = Date.now();
         const timeoutLimitMs = 10 * 60 * 1000;
         const idleLimitMs = timeoutLimitMs;
         const maxDurationMs = timeoutLimitMs;
+        let readPromise = reader.read().then((result) => ({ result }));
 
         const readWithTick = async () => {
             const timeout = new Promise((resolve) => setTimeout(() => resolve({ tick: true }), 1000));
-            const read = reader.read().then((result) => ({ result }));
-            return await Promise.race([read, timeout]) as any;
+            const next = await Promise.race([readPromise, timeout]) as any;
+            if (!next.tick) {
+                readPromise = reader.read().then((result) => ({ result }));
+            }
+            return next;
         };
 
         const handleBlock = async (block: string) => {
@@ -907,6 +922,7 @@ export class AppComponent implements OnInit, OnDestroy {
             const event = JSON.parse(line.slice(6));
             lastEventAt = Date.now();
             if (event.type === 'delta') sawDelta = true;
+            if (['provider', 'status', 'heartbeat', 'thinking', 'progress', 'phase'].includes(String(event.type || ''))) sawProgress = true;
             await onEvent(event);
             if (event.type === 'error') {
                 throw new Error(event.message || 'AI Agent 스트림 처리 중 오류가 발생했습니다.');
@@ -949,6 +965,7 @@ export class AppComponent implements OnInit, OnDestroy {
             this.scrollAgentMessages();
         }
         if (!donePayload && sawDelta) return { stream_incomplete: true };
+        if (!donePayload && sawProgress) return { stream_incomplete: true, missing_terminal_event: true };
         return donePayload || {};
     }
 
@@ -958,19 +975,30 @@ export class AppComponent implements OnInit, OnDestroy {
             assistantMessage.provider = 'AI Agent';
             return;
         }
-        if (event.type === 'status' || event.type === 'heartbeat') {
+        if (event.type === 'status') {
             this.agentStreamStatus = event.message || event.label || '응답을 기다리는 중입니다.';
+            this.appendAgentProgressLine(assistantMessage, this.agentStreamStatus);
+            return;
+        }
+        if (event.type === 'thinking' || event.type === 'progress' || event.type === 'phase') {
+            const progressText = event.message || event.text || event.summary || event.label || 'AI Agent가 요청을 처리하는 중입니다.';
+            this.agentStreamStatus = progressText;
+            this.appendAgentProgressLine(assistantMessage, progressText);
+            return;
+        }
+        if (event.type === 'heartbeat') {
+            this.agentStreamStatus = event.message || event.progress_message || event.label || '응답을 기다리는 중입니다.';
             return;
         }
         if (event.type === 'delta') {
-            assistantMessage.content += String(event.text || '');
+            this.appendAgentAnswerText(assistantMessage, String(event.text || ''));
             this.agentStreamStatus = '';
             return;
         }
         if (event.type === 'complete') {
             const data = event.data || {};
-            if (!assistantMessage.content.trim() && data.answer) {
-                assistantMessage.content = String(data.answer || '').trim();
+            if (data.answer && !this.agentMessageHasAnswerContent(assistantMessage)) {
+                this.appendAgentAnswerText(assistantMessage, String(data.answer || '').trim());
             }
             this.applyAgentSuggestedActions(data, assistantMessage);
             this.applyAgentDuration(data, assistantMessage);
@@ -979,6 +1007,55 @@ export class AppComponent implements OnInit, OnDestroy {
             }
             this.agentStreamStatus = '';
         }
+    }
+
+    private appendAgentProgressLine(assistantMessage: AgentMessage, value: string) {
+        const text = this.normalizeText(value);
+        if (!text) return;
+        const state = assistantMessage as any;
+        const lines = Array.isArray(state.__agentProgressLines) ? state.__agentProgressLines : [];
+        if (lines.includes(text)) return;
+        lines.push(text);
+        state.__agentProgressLines = lines.slice(-8);
+        state.__agentProgressMode = true;
+        if (state.__agentAnswerStarted) return;
+        assistantMessage.content = state.__agentProgressLines.map((line: string) => `- ${line}`).join('\n');
+    }
+
+    private prepareAgentAnswerAfterProgress(assistantMessage: AgentMessage) {
+        const state = assistantMessage as any;
+        if (!state.__agentProgressMode || state.__agentAnswerStarted) return;
+        assistantMessage.content = `${assistantMessage.content.trim()}\n\n`;
+        state.__agentAnswerStarted = true;
+    }
+
+    private appendAgentAnswerText(assistantMessage: AgentMessage, value: string) {
+        const text = String(value || '');
+        if (!text) return;
+        this.prepareAgentAnswerAfterProgress(assistantMessage);
+        const state = assistantMessage as any;
+        state.__agentAnswerText = `${state.__agentAnswerText || ''}${text}`;
+        if (!state.__agentProgressMode) {
+            state.__agentAnswerStarted = true;
+        }
+        assistantMessage.content += text;
+    }
+
+    private agentMessageHasAnswerContent(assistantMessage: AgentMessage) {
+        const state = assistantMessage as any;
+        if (state.__agentProgressMode) {
+            return Boolean(this.normalizeText(state.__agentAnswerText || ''));
+        }
+        return Boolean(String(assistantMessage?.content || '').trim());
+    }
+
+    private setAgentErrorContent(assistantMessage: AgentMessage, value: string) {
+        const text = this.normalizeText(value) || 'AI Agent 호출에 실패했습니다.';
+        const current = String(assistantMessage.content || '').trim();
+        assistantMessage.content = current ? `${current}\n\n${text}` : text;
+        const state = assistantMessage as any;
+        state.__agentAnswerStarted = true;
+        state.__agentAnswerText = text;
     }
 
     private trustAgentMarkdown(value: string): SafeHtml {
@@ -1363,21 +1440,11 @@ export class AppComponent implements OnInit, OnDestroy {
     }
 
     private loadAgentSessionMap() {
-        try {
-            const raw = window.localStorage?.getItem('docker-infra.ai-agent.sessions.v1') || '{}';
-            const parsed = JSON.parse(raw);
-            return parsed && typeof parsed === 'object' ? parsed : {};
-        } catch (_error) {
-            return {};
-        }
+        return { ...this.agentSessionMap };
     }
 
     private saveAgentSessionMap(sessions: any) {
-        try {
-            window.localStorage?.setItem('docker-infra.ai-agent.sessions.v1', JSON.stringify(sessions || {}));
-        } catch (_error) {
-            return;
-        }
+        this.agentSessionMap = { ...(sessions || {}) };
     }
 
     private createAgentSessionId() {
@@ -1438,11 +1505,40 @@ export class AppComponent implements OnInit, OnDestroy {
         URL.revokeObjectURL(url);
     }
 
-    private stopAgentResize() {
+    private stopAgentResize(persistWidth: boolean = false) {
         if (this.resizeMoveHandler) document.removeEventListener('mousemove', this.resizeMoveHandler);
         if (this.resizeEndHandler) document.removeEventListener('mouseup', this.resizeEndHandler);
         this.resizeMoveHandler = null;
         this.resizeEndHandler = null;
+        if (persistWidth) this.saveAgentDockWidth();
+    }
+
+    private agentDockMaxWidth() {
+        if (typeof window === 'undefined') return 760;
+        return Math.min(760, Math.max(360, window.innerWidth - 360));
+    }
+
+    private clampAgentDockWidth(value: any) {
+        const numeric = Number(value);
+        const nextWidth = Number.isFinite(numeric) ? Math.round(numeric) : 420;
+        return Math.max(340, Math.min(this.agentDockMaxWidth(), nextWidth));
+    }
+
+    private restoreAgentDockWidth() {
+        if (typeof window === 'undefined') return;
+        try {
+            const value = window.localStorage?.getItem(this.agentDockWidthStorageKey);
+            if (!value) return;
+            this.agentDockWidth = this.clampAgentDockWidth(value);
+        } catch { }
+    }
+
+    private saveAgentDockWidth() {
+        if (typeof window === 'undefined') return;
+        try {
+            this.agentDockWidth = this.clampAgentDockWidth(this.agentDockWidth);
+            window.localStorage?.setItem(this.agentDockWidthStorageKey, String(this.agentDockWidth));
+        } catch { }
     }
 
     private setupAgentContextTrackers() {
@@ -1712,6 +1808,7 @@ export class AppComponent implements OnInit, OnDestroy {
         }
         if (executableItems.length === 0) return true;
         let stepIndex = 0;
+        const actionContext: any = {};
         for (const item of todoItems) {
             if (!item.executable) continue;
             if (item.blocked) {
@@ -1722,10 +1819,13 @@ export class AppComponent implements OnInit, OnDestroy {
             this.updateAgentTodo(todoId, { status: 'running', detail: `${stepIndex}/${executableItems.length} ${item.label}` });
             await this.renderAgentView();
             try {
-                if (!await this.executeAgentAction(item.action)) {
+                const action = this.resolveAgentActionReferences(item.action, actionContext);
+                const result = await this.executeAgentAction(action);
+                if (!result) {
                     this.updateAgentTodo(todoId, { status: 'failed', detail: `${item.label} 실패` });
                     return false;
                 }
+                this.storeAgentActionResult(action, result, actionContext);
             } catch (error: any) {
                 this.updateAgentTodo(todoId, { status: 'failed', detail: error?.message || `${item.label} 실패` });
                 return false;
@@ -1741,7 +1841,7 @@ export class AppComponent implements OnInit, OnDestroy {
                 && !action.requires_confirmation
                 && this.isMeaningfulAgentAction(action, requestMessage)
             );
-            const blocked = executable && this.isBlockedAgentAction(action);
+            const blocked = executable && this.isBlockedAgentAction(action, requestMessage);
             return {
                 action,
                 executable,
@@ -1782,11 +1882,39 @@ export class AppComponent implements OnInit, OnDestroy {
         return false;
     }
 
-    private isBlockedAgentAction(action: any) {
+    private isBlockedAgentAction(action: any, requestMessage: string = '') {
         const operation = String(action?.type || '').toLowerCase() === 'api_request' ? this.findAgentApiOperation(action) : null;
-        if (operation?.safety === 'destructive') return true;
+        if (operation?.safety === 'destructive') return !this.hasExplicitDestructiveConfirmation(action, requestMessage, operation);
         const target = this.normalizeText(`${action?.target || ''} ${action?.reason || ''} ${action?.value || ''}`).toLowerCase();
-        return /(삭제|제거|초기화|폐기|종료|전원|재부팅|delete|remove|destroy|reset|wipe|shutdown|poweroff|reboot)/i.test(target);
+        if (!/(삭제|제거|초기화|폐기|종료|전원|재부팅|delete|remove|destroy|reset|wipe|shutdown|poweroff|reboot)/i.test(target)) {
+            return false;
+        }
+        return !this.hasExplicitDestructiveConfirmation(action, requestMessage, operation);
+    }
+
+    private hasExplicitDestructiveConfirmation(action: any, requestMessage: string = '', operation: AgentApiOperation | null = null) {
+        if (action?.requires_confirmation) return false;
+        const text = this.normalizeText(requestMessage).toLowerCase();
+        if (!text) return false;
+        const destructiveIntent = /(삭제|제거|초기화|폐기|영구|되돌릴 수|확정|확인|승인|진행|실행|delete|remove|destroy|reset|wipe|confirm|confirmed|proceed)/i.test(text);
+        if (!destructiveIntent) return false;
+
+        const payload = this.agentActionObject(action?.body || action?.payload);
+        const params = this.agentActionObject(action?.params);
+        const identifiers = [
+            operation?.operation_id,
+            operation?.summary,
+            action?.target,
+            action?.operation_id,
+            action?.operationId,
+            ...Object.values({ ...params, ...payload }),
+        ]
+            .map((value) => this.normalizeText(value).toLowerCase())
+            .filter((value) => value.length >= 3 && !['true', 'false', 'null', 'undefined'].includes(value));
+
+        if (identifiers.some((value) => text.includes(value))) return true;
+        const summary = this.normalizeText(operation?.summary || action?.reason || action?.target).toLowerCase();
+        return Boolean(summary && /(삭제|제거|초기화|delete|remove|destroy|reset|wipe)/i.test(summary) && destructiveIntent);
     }
 
     private agentActionLabel(action: any) {
@@ -1825,9 +1953,9 @@ export class AppComponent implements OnInit, OnDestroy {
             return true;
         }
         if (type === 'api_request') {
-            await this.executeAgentApiRequest(action);
+            const result = await this.executeAgentApiRequest(action);
             await this.waitForAgentSettled(250);
-            return true;
+            return result || { ok: true };
         }
         if (type === 'app_event') {
             await this.dispatchAgentAppEvent(action);
@@ -1852,6 +1980,64 @@ export class AppComponent implements OnInit, OnDestroy {
             return true;
         }
         return false;
+    }
+
+    private resolveAgentActionReferences(value: any, context: any, depth: number = 0): any {
+        if (depth > 8) return value;
+        if (Array.isArray(value)) {
+            return value.map((item) => this.resolveAgentActionReferences(item, context, depth + 1));
+        }
+        if (value && typeof value === 'object') {
+            const resolved: any = {};
+            Object.keys(value).forEach((key) => {
+                resolved[key] = this.resolveAgentActionReferences(value[key], context, depth + 1);
+            });
+            return resolved;
+        }
+        if (typeof value !== 'string') return value;
+        return this.resolveAgentActionReferenceText(value, context);
+    }
+
+    private resolveAgentActionReferenceText(value: string, context: any) {
+        const text = String(value || '');
+        const exact = text.match(/^{{\s*([A-Za-z0-9_.:-]+)\s*}}$/);
+        if (exact) {
+            const resolved = this.agentActionContextValue(context, exact[1]);
+            return resolved === undefined ? value : resolved;
+        }
+        return text.replace(/{{\s*([A-Za-z0-9_.:-]+)\s*}}/g, (_match, path) => {
+            const resolved = this.agentActionContextValue(context, path);
+            if (resolved === undefined) return _match;
+            if (resolved === null) return '';
+            if (typeof resolved === 'object') return JSON.stringify(resolved);
+            return String(resolved);
+        });
+    }
+
+    private agentActionContextValue(context: any, path: string) {
+        const parts = String(path || '').split('.').filter(Boolean);
+        let current = context;
+        for (const part of parts) {
+            if (!current || typeof current !== 'object' || !(part in current)) return undefined;
+            current = current[part];
+        }
+        return current;
+    }
+
+    private storeAgentActionResult(action: any, result: any, context: any) {
+        if (!context || result === undefined) return;
+        context.last = result;
+        const alias = this.normalizeAgentActionAlias(action?.save_as || action?.result_key);
+        if (alias) context[alias] = result;
+        const operationAlias = this.normalizeAgentActionAlias(action?.operation_id || action?.operationId || action?.target);
+        if (operationAlias && !context[operationAlias]) context[operationAlias] = result;
+    }
+
+    private normalizeAgentActionAlias(value: any) {
+        return this.normalizeText(value)
+            .replace(/[^A-Za-z0-9_:-]+/g, '_')
+            .replace(/^_+|_+$/g, '')
+            .slice(0, 80);
     }
 
     private async waitForAgentSettled(ms: number = 120) {
@@ -1922,7 +2108,7 @@ export class AppComponent implements OnInit, OnDestroy {
         }
         const body = this.agentActionObject(action?.body || action?.payload);
         const params = this.agentActionObject(action?.params);
-        const payload = { ...params, ...body };
+        const payload = await this.resolveAgentApiEntityPayload(operation, { ...params, ...body });
         const path = this.interpolateAgentApiPath(operation.path, payload);
         const method = operation.method || 'POST';
         const request: RequestInit = { method, credentials: 'same-origin' };
@@ -1932,9 +2118,8 @@ export class AppComponent implements OnInit, OnDestroy {
             const query = this.agentApiSearchParams(payload);
             if (query.toString()) url += `${url.includes('?') ? '&' : '?'}${query.toString()}`;
         } else {
-            const form = this.agentApiSearchParams(payload);
-            request.headers = { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' };
-            request.body = form.toString();
+            request.headers = { 'Content-Type': 'application/json' };
+            request.body = JSON.stringify(payload || {});
         }
 
         const response = await fetch(url, request);
@@ -1943,7 +2128,77 @@ export class AppComponent implements OnInit, OnDestroy {
         if (!response.ok || code >= 400) {
             throw new Error(data?.data?.message || data?.message || `${operation.summary || operation.operation_id} 실패 (${code})`);
         }
-        return data;
+        return data?.data || data || {};
+    }
+
+    private async resolveAgentApiEntityPayload(operation: AgentApiOperation, payload: any) {
+        const next = { ...(payload || {}) };
+        if (this.agentOperationNeedsServiceId(operation.operation_id) && !this.normalizeText(next.service_id)) {
+            const serviceName = this.normalizeText(next.service_name || next.service || next.name || next.namespace);
+            if (serviceName) {
+                next.service_id = await this.resolveAgentServiceIdByName(serviceName);
+            }
+        }
+        return next;
+    }
+
+    private agentOperationNeedsServiceId(operationId: string) {
+        return [
+            'services.deploy',
+            'services.deploy_sync',
+            'services.delete',
+            'services.refresh_status',
+            'services.detail',
+            'services.logs',
+            'services.extras',
+            'services.backups',
+            'services.advanced',
+            'services.save_nginx',
+            'services.save_compose',
+            'services.update',
+            'services.rollback_plan',
+            'services.rollback',
+            'services.runtime_ai_repair',
+            'services.runtime_ai_verify',
+            'services.backup_image',
+            'services.snapshot_image',
+            'services.refresh_image_records',
+            'services_create.deploy',
+            'services_create.deploy_background',
+        ].includes(this.normalizeText(operationId));
+    }
+
+    private async resolveAgentServiceIdByName(serviceName: string) {
+        const target = this.normalizeComparableText(serviceName);
+        if (!target) throw new Error('서비스 이름이 비어 있어 service_id를 확인할 수 없습니다.');
+        const response = await fetch('/wiz/api/page.services/load', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        const raw = await response.json().catch(() => ({}));
+        const code = Number(raw?.code || response.status || 500);
+        if (!response.ok || code >= 400) {
+            throw new Error(raw?.data?.message || raw?.message || `서비스 목록 조회 실패 (${code})`);
+        }
+        const data = raw?.data || {};
+        const rows = Array.isArray(data.services) ? data.services : (Array.isArray(data.items) ? data.items : []);
+        const matches = rows.filter((item: any) => {
+            const values = [item?.id, item?.name, item?.namespace, item?.stack_name].map((value) => this.normalizeComparableText(value));
+            return values.includes(target);
+        });
+        const partial = matches.length ? matches : rows.filter((item: any) => {
+            const values = [item?.name, item?.namespace, item?.stack_name].map((value) => this.normalizeComparableText(value));
+            return values.some((value) => value && (value.includes(target) || target.includes(value)));
+        });
+        if (partial.length === 1 && partial[0]?.id) return String(partial[0].id);
+        if (partial.length > 1) throw new Error(`서비스 이름이 여러 항목과 일치합니다: ${serviceName}`);
+        throw new Error(`서비스를 찾을 수 없습니다: ${serviceName}`);
+    }
+
+    private normalizeComparableText(value: any) {
+        return this.normalizeText(value).toLowerCase();
     }
 
     private findAgentApiOperation(action: any) {

@@ -150,6 +150,13 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
             "agentTextSelectionActive",
             "scheduleAgentRenderAfterSelection",
             "agentSelectionRenderTimer",
+            "agentDockWidthStorageKey",
+            "restoreAgentDockWidth()",
+            "saveAgentDockWidth()",
+            "clampAgentDockWidth",
+            "window.localStorage?.getItem",
+            "window.localStorage?.setItem",
+            "this.stopAgentResize(true)",
         ]:
             self.assertIn(token, view_ts)
 
@@ -203,6 +210,11 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
             ".ai-agent-code-toolbar",
             ".ai-agent-code-copy",
             ":host ::ng-deep .ai-agent-markdown .ai-agent-code-block",
+            ":host ::ng-deep .ai-agent-markdown table",
+            ":host ::ng-deep .ai-agent-markdown th",
+            ":host ::ng-deep .ai-agent-markdown td",
+            "::ng-deep .dark .ai-agent-markdown table",
+            ".ai-agent-markdown tbody tr:nth-child(even)",
             ".ai-agent-shell-history-detail-open",
             ".ai-agent-history-copy-actions",
             ".ai-agent-history-copy-button",

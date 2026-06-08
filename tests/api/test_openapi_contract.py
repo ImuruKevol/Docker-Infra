@@ -128,17 +128,34 @@ class OpenApiContractTest(unittest.TestCase):
         operation_ids = {item["operationId"] for item in operations}
         for operation_id in [
             "dashboard.summary",
+            "services_create.prepare_compose_draft",
             "services.load",
+            "services.release",
+            "services.rollback",
+            "services.backup_image",
             "servers.load",
+            "servers.resource_history",
             "domains.load",
+            "domains.save_ddns_endpoint",
+            "domains.delete_certificate",
             "images.load",
+            "images.harbor_tags",
+            "images.delete_local",
             "macros.save",
             "templates.preview",
             "system.agent_status",
+            "system.codex_device_login_start",
+            "file_tree.read",
         ]:
             self.assertIn(operation_id, operation_ids)
+        self.assertGreaterEqual(len(operation_ids), 150)
+        self.assertEqual(len(operation_ids), len(operations))
         self.assertEqual(catalog["swaggerUrl"], "/swagger")
         self.assertEqual(catalog["openapiUrl"], "/openapi.json")
+        self.assertIn("AIAgentActionCatalog", document["components"]["schemas"])
+        capabilities_example = document["paths"]["/api/ai-agent/capabilities"]["get"]["responses"]["200"]["content"]["application/json"]["example"]["data"]
+        self.assertIn("action_catalog", capabilities_example)
+        self.assertIn("docker_infra.services.delete", json.dumps(capabilities_example["action_catalog"]))
 
     def test_static_response_examples_match_declared_schemas(self):
         document = self.load_document()

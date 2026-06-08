@@ -12,6 +12,7 @@ import yaml
 settings = wiz.model("struct/settings")
 ai_settings = wiz.model("struct/ai_settings")
 ai_history = wiz.model("struct/ai_history")
+ai_agent_actions = wiz.model("struct/ai_agent_actions")
 codex_runtime = wiz.model("struct/codex_runtime")
 connect = wiz.model("db/postgres").connect
 nodes_model = wiz.model("struct/nodes")
@@ -93,7 +94,7 @@ class AIAssistant:
             "capabilities": capabilities,
         }
 
-    def openapi_capabilities(self, compact=False, env=None):
+    def openapi_capabilities(self, compact=False, env=None, include_action_catalog=True):
         document = self._openapi_document()
         extension = document.get("x-ai-agent") if isinstance(document, dict) else {}
         operations = extension.get("operations") if isinstance(extension, dict) else []
@@ -127,6 +128,8 @@ class AIAssistant:
             payload["operations"] = normalized[:20]
         else:
             payload["operations"] = normalized
+            if include_action_catalog:
+                payload["action_catalog"] = ai_agent_actions.catalog(normalized, compact=False)
         return payload
 
     def chat(self, payload=None, env=None):
@@ -175,29 +178,11 @@ class AIAssistant:
                 "provider": self._provider_public(self._builtin_provider()),
             }
 
-        provider = None
-        try:
-            selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else {}
-            provider = self._select_provider(env=env, selection=selection)
-            result = codex_runtime.complete_json(
-                provider,
-                self._ui_todo_plan_system_prompt(),
-                self._todo_plan_context(payload, message, provider, env=env),
-                env=env,
-            )
-            text = self._clean_text((result or {}).get("text"))
-            data = self._extract_json(text)
-            return {
-                "summary": self._clean_text(data.get("summary") or "요청을 실행 가능한 TODO로 정리했습니다."),
-                "todos": self._normalize_chat_todos(data.get("todos"), message),
-                "provider": self._provider_public(provider, (result or {}).get("metadata") or {}),
-            }
-        except Exception:
-            return {
-                "summary": "요청을 하나의 실행 TODO로 정리했습니다.",
-                "todos": self._normalize_chat_todos([], message),
-                "provider": self._provider_public(provider or self._builtin_provider()),
-            }
+        return {
+            "summary": "요청을 하나의 Agent 실행 TODO로 정리했습니다.",
+            "todos": self._normalize_chat_todos([], message),
+            "provider": self._provider_public(self._builtin_provider()),
+        }
 
     def stream_chat(self, payload=None, env=None):
         payload = payload if isinstance(payload, dict) else {}
@@ -230,6 +215,36 @@ class AIAssistant:
             public_provider = self._provider_public(provider)
             yield {"type": "provider", "provider": public_provider}
             yield {"type": "status", "message": "현재 화면 컨텍스트를 Agent 요청으로 정리합니다."}
+            yield {"type": "status", "message": "Docker Infra MCP 액션 카탈로그에서 요청 의도를 매칭합니다."}
+            yield {
+                "type": "thinking",
+                "message": "요청 문장, 현재 화면, 사용 가능한 MCP/API 작업을 함께 대조합니다.",
+                "phase": "intent_mapping",
+            }
+            matches = ai_agent_actions.intent_matches(
+                message,
+                self.openapi_capabilities(compact=False, include_action_catalog=False).get("operations") or [],
+            )
+            if matches:
+                top = matches[0]
+                yield {
+                    "type": "status",
+                    "message": "후보 MCP 액션: %s (%s)" % (top.get("tool"), top.get("operation_id")),
+                }
+                yield {
+                    "type": "thinking",
+                    "message": "가장 가까운 실행 후보를 %s / %s로 잡고 필요한 입력값을 확인합니다." % (
+                        top.get("tool"),
+                        top.get("operation_id"),
+                    ),
+                    "phase": "action_candidate",
+                }
+            else:
+                yield {
+                    "type": "thinking",
+                    "message": "직접 매칭되는 MCP 액션이 없어 화면 컨텍스트와 대화 이력을 기준으로 응답 전략을 정리합니다.",
+                    "phase": "action_candidate",
+                }
 
             result = None
 
@@ -244,14 +259,24 @@ class AIAssistant:
                     ),
                 }
 
+            yield {
+                "type": "thinking",
+                "message": "선택한 Agent CLI가 Docker Infra MCP 컨텍스트를 읽고 최종 응답 JSON을 생성합니다.",
+                "phase": "agent_execution",
+            }
             yield {"type": "status", "message": "AI Agent 응답을 기다리는 중입니다."}
             for event in self._iter_with_heartbeat(run_agent()):
                 if event.get("type") == "heartbeat":
-                    yield event
+                    yield self._agent_chat_heartbeat_event(event)
                     continue
                 if event.get("type") == "agent_result":
                     result = event.get("result")
 
+            yield {
+                "type": "thinking",
+                "message": "Agent 응답을 수신해 사용자에게 보여줄 최종 답변과 실행 액션으로 정리합니다.",
+                "phase": "response_normalization",
+            }
             response = self._chat_response_payload(result or {}, provider)
             response["duration_ms"] = self._duration_ms(started_at)
             self._record_chat_history(payload, provider, response, status="succeeded", started_at=started_at, env=env)
@@ -265,6 +290,22 @@ class AIAssistant:
             if message:
                 self._record_chat_history(payload, provider, None, status="failed", error=exc, started_at=started_at, env=env)
             yield self._error_event(exc)
+
+    def _agent_chat_heartbeat_event(self, event):
+        elapsed = int((event or {}).get("elapsed_seconds") or 0)
+        if elapsed >= 60:
+            label = "Agent가 MCP 조회와 응답 생성을 계속 진행 중입니다. (%s분 %s초 경과)" % (elapsed // 60, elapsed % 60)
+        else:
+            label = "Agent가 MCP 조회와 응답 생성을 계속 진행 중입니다. (%s초 경과)" % elapsed
+        return {
+            "type": "thinking",
+            "label": "처리 중",
+            "message": label,
+            "phase": "agent_execution_wait",
+            "elapsed_seconds": elapsed,
+            "heartbeat_count": (event or {}).get("heartbeat_count") or 0,
+            "progress_message": "Agent가 MCP 조회와 응답 생성을 계속 진행 중입니다.",
+        }
 
     def _chat_context_for_provider(self, payload, message, provider, env=None):
         context = self._chat_context(payload, message)
@@ -297,6 +338,12 @@ class AIAssistant:
         screen_context_summary = ""
         if isinstance(screen, dict):
             screen_context_summary = self._clean_text(screen.get("context_summary"))
+        openapi_guidance = self.openapi_capabilities(compact=False, include_action_catalog=False)
+        openapi_guidance["mcp_action_catalog"] = ai_agent_actions.prompt_catalog(
+            openapi_guidance.get("operations") or [],
+            message,
+            screen,
+        )
         return {
             "message": message,
             "session_id": self._normalize_session_id((payload or {}).get("session_id") or (payload or {}).get("client_session_id")),
@@ -316,6 +363,7 @@ class AIAssistant:
                         "operation_id": "OpenAPI x-ai-agent operation_id for api_request.",
                         "params": "Path/query params for api_request.",
                         "body": "Form body for api_request.",
+                        "save_as": "Optional ASCII alias for api_request response data that later actions can reference.",
                         "value": "Input value for fill.",
                         "payload": "Structured payload for app_event actions.",
                         "reason": "Korean reason for the action.",
@@ -347,7 +395,7 @@ class AIAssistant:
                 ),
                 "purpose": "Answer user questions and perform Docker Infra actions that match the visible UI context.",
             },
-            "openapi_guidance": self.openapi_capabilities(compact=False),
+            "openapi_guidance": openapi_guidance,
         }
 
     def _todo_plan_context(self, payload, message, provider, env=None):
@@ -410,6 +458,9 @@ class AIAssistant:
         return {"type": "builtin", "label": "Docker Infra Agent", "model": "ui-control"}
 
     def _builtin_chat_response(self, payload, message):
+        delete_target = self._service_delete_target(message)
+        if delete_target:
+            return self._service_delete_response(delete_target)
         if self._looks_like_server_status_macro_run_request(message):
             return self._server_status_macro_run_response()
         if not self._looks_like_server_status_macro_request(message):
@@ -500,6 +551,15 @@ class AIAssistant:
         }
 
     def _builtin_chat_todos(self, message):
+        delete_target = self._service_delete_target(message)
+        if delete_target:
+            return [
+                {
+                    "title": "%s 서비스 삭제" % delete_target,
+                    "prompt": self._clean_text(message),
+                    "reason": "서비스 이름을 service_id로 해석한 뒤 삭제 API를 실행합니다.",
+                }
+            ]
         if self._looks_like_server_status_macro_run_request(message):
             return [
                 {
@@ -517,6 +577,58 @@ class AIAssistant:
                 }
             ]
         return []
+
+    def _service_delete_response(self, service_name):
+        return {
+            "answer": (
+                "- `%s` 서비스를 삭제하는 Docker Infra MCP 액션을 준비했습니다.\n"
+                "- 브라우저가 서비스 이름을 정확한 `service_id`로 해석한 뒤 삭제 API를 실행합니다.\n"
+                "- 삭제 작업 로그는 작업 로그 화면에서 확인할 수 있습니다."
+            ) % service_name,
+            "summary": "%s 서비스 삭제 액션을 준비했습니다." % service_name,
+            "needs_confirmation": False,
+            "client_actions": [
+                {
+                    "type": "api_request",
+                    "operation_id": "services.delete",
+                    "body": {"service_name": service_name},
+                    "reason": "%s 서비스 삭제" % service_name,
+                }
+            ],
+            "follow_up": "",
+            "suggested_actions": [
+                {
+                    "label": "작업 로그 확인",
+                    "prompt": "%s 서비스 삭제 작업 로그를 확인해줘" % service_name,
+                    "reason": "삭제가 정상 완료됐는지 확인",
+                }
+            ],
+            "confidence": "high",
+            "provider": self._provider_public(self._builtin_provider()),
+        }
+
+    def _service_delete_target(self, message):
+        text = self._clean_text(message)
+        if not re.search(r"(삭제|제거|지워|delete|remove)", text, re.IGNORECASE):
+            return ""
+        if not re.search(r"(서비스|service)", text, re.IGNORECASE):
+            return ""
+        quoted = re.search(r"[\"'`“”‘’]([^\"'`“”‘’]{2,160})[\"'`“”‘’]", text)
+        if quoted:
+            return self._clean_text(quoted.group(1))[:160]
+        patterns = [
+            r"(.{2,160}?)\s+서비스(?:를|을)?\s*(?:삭제|제거|지워|delete|remove)",
+            r"(?:서비스\s+)?(.{2,160}?)\s*(?:삭제|제거|지워|delete|remove)(?:\s*해줘|\s*해주세요|\s*해|$)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            target = self._clean_text(match.group(1)).strip(" .,")
+            target = re.sub(r"^(방금|아까|저|그)\s+", "", target).strip()
+            if target and target not in {"서비스", "service"}:
+                return target[:160]
+        return ""
 
     def _looks_like_server_status_macro_run_request(self, message):
         text = self._clean_text(message).lower()
@@ -664,7 +776,10 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 "The browser executes client_actions in order and waits after navigation, so multi-step workflows can navigate first and then click, fill, focus, or dispatch an app_event on the destination screen.",
                 "The browser already shows the current TODO item above the input. Do not repeat the planning TODO list in the answer; explain the result of the current TODO instead.",
                 "Use app_event for first-class Docker Infra page commands that are safer than brittle field automation. Supported app_event commands: target='macro.create_global' with payload {name, description, script, enabled, update_existing}; target='server.run_macro' with payload {node_selector, node_id, macro_name, macro, args}.",
-                "Use api_request when the user asks you to operate a Docker Infra menu through the Swagger/OpenAPI catalog. Choose operation_id only from openapi_guidance.operations and provide body/params with required fields.",
+                "Use api_request when the user asks you to operate a Docker Infra menu through the Swagger/OpenAPI catalog. Prefer api_request over brittle click/fill automation whenever openapi_guidance.operations contains the needed page command. Choose operation_id only from openapi_guidance.operations and provide body/params with required fields.",
+                "Treat openapi_guidance.mcp_action_catalog as the Docker Infra MCP tool catalog. Pick the matching docker_infra.* tool first, then emit the corresponding api_request operation_id.",
+                "For service MCP tools that require service_id, if the user names a service but the id is not visible, put body.service_name with the exact name. The browser resolves service_name to service_id before calling the API.",
+                "For chained api_request workflows, set save_as on the action whose response is needed, then reference it in later params/body strings as {{alias.path.to.value}}. The browser resolves references from the API response data object before sending the later request. Example: services_create.create with save_as='created_service', then services_create.deploy_background body {'service_id': '{{created_service.result.service.id}}'}, then services.refresh_status body {'service_id': '{{created_service.result.service.id}}'}.",
                 "Read safety api_request actions may run directly for explicit inspection/refresh requests. Write safety actions require explicit user intent in the current message. Destructive safety actions require needs_confirmation=true unless the current message explicitly confirms the exact destructive operation.",
                 "When the user asks to add a macro that checks server status at a glance, navigate to /macros and dispatch app_event macro.create_global with a safe read-only shell script.",
                 "When the user asks to run the server status macro on the master node, navigate to /servers and dispatch app_event server.run_macro with node_selector='local_master' and the server status macro payload.",

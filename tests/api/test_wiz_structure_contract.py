@@ -151,6 +151,53 @@ class WizStructureContractTest(unittest.TestCase):
         self.assertIn("@container (min-width: 1120px)", style)
         self.assertIn("minmax(280px, 360px) minmax(0, 1fr)", style)
 
+    def test_ai_agent_destructive_actions_can_run_after_explicit_confirmation(self):
+        view = (ROOT / "src" / "angular" / "app" / "app.component.ts").read_text(encoding="utf-8")
+
+        self.assertIn("isBlockedAgentAction(action, requestMessage)", view)
+        self.assertIn("hasExplicitDestructiveConfirmation", view)
+        self.assertIn("operation?.safety === 'destructive'", view)
+        self.assertNotIn("if (operation?.safety === 'destructive') return true;", view)
+
+    def test_ai_agent_api_requests_can_chain_json_results(self):
+        view = (ROOT / "src" / "angular" / "app" / "app.component.ts").read_text(encoding="utf-8")
+        assistant = (ROOT / "src" / "model" / "struct" / "ai_assistant.py").read_text(encoding="utf-8")
+        actions = (ROOT / "src" / "model" / "struct" / "ai_agent_actions.py").read_text(encoding="utf-8")
+
+        self.assertIn("resolveAgentActionReferences(item.action, actionContext)", view)
+        self.assertIn("storeAgentActionResult(action, result, actionContext)", view)
+        self.assertIn("resolveAgentApiEntityPayload", view)
+        self.assertIn("resolveAgentServiceIdByName", view)
+        self.assertIn("appendAgentProgressLine", view)
+        self.assertIn("JSON.stringify(payload || {})", view)
+        self.assertIn("if (resolved === undefined) return _match", view)
+        self.assertIn("return data?.data || data || {}", view)
+        self.assertIn("mcp_action_catalog", assistant)
+        self.assertIn("Docker Infra MCP 액션 카탈로그에서 요청 의도를 매칭합니다.", assistant)
+        self.assertIn("save_as", assistant)
+        self.assertIn("{{created_service.result.service.id}}", assistant)
+        self.assertIn("docker_infra.services.delete", actions)
+        self.assertIn("service_name_to_service_id", actions)
+
+    def test_ai_agent_progress_lines_do_not_hide_missing_answer(self):
+        view = (ROOT / "src" / "angular" / "app" / "app.component.ts").read_text(encoding="utf-8")
+        assistant = (ROOT / "src" / "model" / "struct" / "ai_assistant.py").read_text(encoding="utf-8")
+
+        self.assertIn("agentMessageHasAnswerContent(assistantMessage)", view)
+        self.assertIn("!this.agentMessageHasAnswerContent(assistantMessage) && !done?.answer && !done?.stream_incomplete", view)
+        self.assertIn("completeAgentChatFallback(payload, assistantMessage, requestStartedAt)", view)
+        self.assertIn("setAgentErrorContent(assistantMessage", view)
+        self.assertIn("__agentAnswerText", view)
+        self.assertIn("Boolean(this.normalizeText(state.__agentAnswerText || ''))", view)
+        self.assertIn("assistantMessage.role = 'error'", view)
+        self.assertIn("missing_terminal_event", view)
+        self.assertIn("event.type === 'thinking'", view)
+        self.assertIn("let readPromise = reader.read().then((result) => ({ result }))", view)
+        self.assertIn("if (!next.tick)", view)
+        self.assertIn("Agent 응답을 수신해 사용자에게 보여줄 최종 답변과 실행 액션으로 정리합니다.", assistant)
+        self.assertIn("_agent_chat_heartbeat_event", assistant)
+        self.assertIn("progress_message", assistant)
+
 
 if __name__ == "__main__":
     unittest.main()

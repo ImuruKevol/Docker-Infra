@@ -480,6 +480,7 @@
 .ai-agent-markdown pre:last-child,
 :host ::ng-deep .ai-agent-markdown .ai-agent-code-block:last-child,
 .ai-agent-markdown .ai-agent-code-block:last-child,
+:host ::ng-deep .ai-agent-markdown .ai-agent-markdown-table-wrap:last-child,
 .ai-agent-markdown .ai-agent-markdown-table-wrap:last-child,
 .ai-agent-markdown h4:last-child,
 .ai-agent-markdown h5:last-child,
@@ -616,29 +617,38 @@
     white-space: pre;
 }
 
+:host ::ng-deep .ai-agent-markdown-table-wrap,
 .ai-agent-markdown-table-wrap {
     margin: 6px 0 8px;
     max-width: 100%;
     overflow: auto;
     border: 1px solid #e4e4e7;
     border-radius: 6px;
+    background: #ffffff;
 }
 
+:host ::ng-deep .ai-agent-markdown table,
 .ai-agent-markdown table {
     width: 100%;
     min-width: 320px;
     border-collapse: collapse;
     background: #ffffff;
+    table-layout: auto;
 }
 
+:host ::ng-deep .ai-agent-markdown th,
+:host ::ng-deep .ai-agent-markdown td,
 .ai-agent-markdown th,
 .ai-agent-markdown td {
     border-bottom: 1px solid #e4e4e7;
+    border-right: 1px solid #e4e4e7;
     padding: 7px 8px;
     text-align: left;
     vertical-align: top;
+    overflow-wrap: break-word;
 }
 
+:host ::ng-deep .ai-agent-markdown th,
 .ai-agent-markdown th {
     background: #fafafa;
     color: #18181b;
@@ -646,11 +656,25 @@
     font-weight: 700;
 }
 
+:host ::ng-deep .ai-agent-markdown td,
 .ai-agent-markdown td {
     color: #27272a;
     font-size: 12px;
 }
 
+:host ::ng-deep .ai-agent-markdown tbody tr:nth-child(even),
+.ai-agent-markdown tbody tr:nth-child(even) {
+    background: #fafafa;
+}
+
+:host ::ng-deep .ai-agent-markdown th:last-child,
+:host ::ng-deep .ai-agent-markdown td:last-child,
+.ai-agent-markdown th:last-child,
+.ai-agent-markdown td:last-child {
+    border-right: 0;
+}
+
+:host ::ng-deep .ai-agent-markdown tr:last-child td,
 .ai-agent-markdown tr:last-child td {
     border-bottom: 0;
 }
@@ -1582,6 +1606,8 @@
     color: #fed7aa;
 }
 
+::ng-deep .dark .ai-agent-markdown-table-wrap,
+:host-context(.dark) ::ng-deep .ai-agent-markdown-table-wrap,
 :host-context(.dark) .ai-agent-markdown code,
 :host-context(.dark) .ai-agent-markdown pre,
 :host-context(.dark) .ai-agent-markdown-table-wrap {
@@ -1617,15 +1643,29 @@
     background: transparent;
 }
 
+::ng-deep .dark .ai-agent-markdown table,
+::ng-deep .dark .ai-agent-markdown th,
+:host-context(.dark) ::ng-deep .ai-agent-markdown table,
+:host-context(.dark) ::ng-deep .ai-agent-markdown th,
 :host-context(.dark) .ai-agent-markdown table,
 :host-context(.dark) .ai-agent-markdown th {
     background: #18181b;
 }
 
+::ng-deep .dark .ai-agent-markdown th,
+::ng-deep .dark .ai-agent-markdown td,
+:host-context(.dark) ::ng-deep .ai-agent-markdown th,
+:host-context(.dark) ::ng-deep .ai-agent-markdown td,
 :host-context(.dark) .ai-agent-markdown th,
 :host-context(.dark) .ai-agent-markdown td {
     border-color: #3f3f46;
     color: #f4f4f5;
+}
+
+::ng-deep .dark .ai-agent-markdown tbody tr:nth-child(even),
+:host-context(.dark) ::ng-deep .ai-agent-markdown tbody tr:nth-child(even),
+:host-context(.dark) .ai-agent-markdown tbody tr:nth-child(even) {
+    background: #111827;
 }
 
 :host-context(.dark) .ai-agent-suggested-actions {

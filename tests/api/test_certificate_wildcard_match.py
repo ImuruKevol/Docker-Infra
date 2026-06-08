@@ -51,6 +51,17 @@ class CertificateWildcardMatchTest(unittest.TestCase):
         self.assertIn('metadata.get("dns_provider") == "ddns"', nginx)
         self.assertIn("needs_managed_certificate", nginx)
 
+    def test_certbot_issue_waits_for_dns_propagation_after_ddns_registration(self):
+        nginx = SERVICE_NGINX.read_text(encoding="utf-8")
+        apply_block = nginx[nginx.index("    def apply("):]
+        self.assertIn("def _wait_certbot_dns_ready", nginx)
+        self.assertIn("dns propagation", nginx)
+        self.assertLess(apply_block.index("_ensure_dns_records"), apply_block.index("_wait_certbot_dns_ready"))
+        self.assertLess(
+            apply_block.index("_wait_certbot_dns_ready(certbot_targets"),
+            apply_block.index("_issue_certificates(certbot_targets"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

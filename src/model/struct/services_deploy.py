@@ -35,6 +35,24 @@ def _image_registry(image_ref):
     return ""
 
 
+def _safe_int(value, fallback=0):
+    try:
+        return int(value)
+    except Exception:
+        return fallback
+
+
+def _has_host_published_ports(service):
+    for item in service.get("ports") or []:
+        if not isinstance(item, dict):
+            continue
+        mode = str(item.get("mode") or "").strip().lower()
+        published = _safe_int(item.get("published") or item.get("target"), 0)
+        if mode == "host" and published > 0:
+            return True
+    return False
+
+
 class ServiceDeployMixin:
     def _deploy_operation_payload(self, service, stack_name, compose_path):
         return {
@@ -302,11 +320,34 @@ class ServiceDeployMixin:
     def _sync_domain_published_ports(self, service_id, compose_path, env=None):
         return deploy_targets.sync_domain_published_ports(service_id, compose_path, env=env)
 
-    def _record_deploy_adjustments(self, service_id, allocations, domain_port_updates, env=None):
+    def _ensure_host_port_update_order(self, compose_path):
+        path = Path(compose_path).expanduser()
+        compose = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        changed = []
+        for service_name, service in (compose.get("services") or {}).items():
+            if not isinstance(service, dict) or not _has_host_published_ports(service):
+                continue
+            deploy = service.setdefault("deploy", {})
+            if not isinstance(deploy, dict):
+                continue
+            update_config = deploy.get("update_config")
+            if not isinstance(update_config, dict):
+                update_config = dict(compose_rules.DEFAULT_UPDATE_CONFIG)
+                deploy["update_config"] = update_config
+            previous = update_config.get("order")
+            if previous != "stop-first":
+                update_config["order"] = "stop-first"
+                changed.append({"service": service_name, "previous": previous or "", "order": "stop-first"})
+        if changed:
+            path.write_text(yaml.safe_dump(compose, sort_keys=False, allow_unicode=False), encoding="utf-8")
+        return changed
+
+    def _record_deploy_adjustments(self, service_id, allocations, domain_port_updates, update_order_adjustments=None, env=None):
         payload = {
             "port_allocation": (allocations or {}).get("allocations") or [],
             "port_allocation_changed": bool((allocations or {}).get("changed")),
             "domain_port_updates": domain_port_updates or [],
+            "update_order_adjustments": update_order_adjustments or [],
         }
         return payload
 
@@ -702,6 +743,15 @@ class ServiceDeployMixin:
                 return self._deploy_failure(operation_id, "서비스 네트워크를 준비할 수 없습니다.", ensure, env=env)
 
         placement = self._apply_stack_placement(compose_path, service, operation_id, env=env)
+        update_order_adjustments = self._ensure_host_port_update_order(compose_path)
+        if update_order_adjustments:
+            operations.append_output(
+                operation_id,
+                f"update order adjusted for host-mode ports: {update_order_adjustments}",
+                stream="system",
+                metadata={"step": "update order", "adjustments": update_order_adjustments},
+                env=env,
+            )
         allocations = service_ports.allocate_file(compose_path)
         if allocations.get("allocations"):
             operations.append_output(
@@ -720,7 +770,13 @@ class ServiceDeployMixin:
                 metadata={"step": "domain port mapping"},
                 env=env,
             )
-        deploy_adjustments = self._record_deploy_adjustments(service_id, allocations, domain_port_updates, env=env)
+        deploy_adjustments = self._record_deploy_adjustments(
+            service_id,
+            allocations,
+            domain_port_updates,
+            update_order_adjustments=update_order_adjustments,
+            env=env,
+        )
 
         backup_registry_setup = None
         backup_registry_login = None

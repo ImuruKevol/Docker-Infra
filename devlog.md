@@ -351,3 +351,15 @@
 | 2026-06-01 | 016 | AI Agent 스트림 응답 대기 시간 10분 확장 | [상세](devlog/2026-06-01/016-ai-agent-stream-timeout-10min.md) |
 | 2026-06-01 | 017 | AI Agent TODO 목록 표시 간소화와 우측 잘림 보정 | [상세](devlog/2026-06-01/017-ai-agent-todo-list-cleanup.md) |
 | 2026-06-01 | 018 | AI Agent 히스토리 세션 이어서 대화와 선택 중 렌더 지연 | [상세](devlog/2026-06-01/018-ai-agent-history-continue-selection-render.md) |
+| 2026-06-02 | 001 | AI Agent 실행 카탈로그 확장과 확인 후 destructive 실행 보완 | [상세](devlog/2026-06-02/001-ai-agent-capability-coverage.md) |
+| 2026-06-02 | 002 | AI Agent API 액션 체이닝과 템플릿 서비스 생성 검증 | [상세](devlog/2026-06-02/002-ai-agent-template-service-flow.md) |
+| 2026-06-02 | 003 | AI Agent MCP 액션 카탈로그와 진행 스트리밍 개선 | [상세](devlog/2026-06-02/003-ai-agent-mcp-action-progress.md) |
+| 2026-06-04 | 001 | 서비스 host-mode 포트 변경 배포 실패 수정 | [상세](devlog/2026-06-04/001-service-host-port-update-order.md) |
+| 2026-06-04 | 002 | bus 서비스 host-mode 포트 보정 배포 | [상세](devlog/2026-06-04/002-bus-service-host-port-redeploy.md) |
+| 2026-06-04 | 003 | bus 서비스 SSL 인증서 발급과 DNS 전파 대기 보강 | [상세](devlog/2026-06-04/003-bus-service-ssl-certificate-dns-wait.md) |
+| 2026-06-08 | 001 | AI Agent 진행 로그만 남는 응답 표시 회귀 수정 | [상세](devlog/2026-06-08/001-ai-agent-progress-only-response-fix.md) |
+| 2026-06-08 | 002 | AI Agent 빈 채팅의 이전 세션 재사용 방지 | [상세](devlog/2026-06-08/002-ai-agent-new-chat-session-isolation.md) |
+| 2026-06-08 | 003 | AI Agent 진행 요약 스트리밍과 완료 이벤트 처리 재정비 | [상세](devlog/2026-06-08/003-ai-agent-thinking-stream-final-response.md) |
+| 2026-06-08 | 004 | AI Agent SSE read race로 최종 응답 누락되는 문제 수정 | [상세](devlog/2026-06-08/004-ai-agent-sse-read-race-fix.md) |
+| 2026-06-08 | 004 | AI Agent 응답 Markdown 테이블 디자인 적용 | [상세](devlog/2026-06-08/004-ai-agent-markdown-table-design.md) |
+| 2026-06-08 | 005 | AI Agent 패널 width 로컬 스토리지 보존 | [상세](devlog/2026-06-08/005-ai-agent-width-local-storage.md) |

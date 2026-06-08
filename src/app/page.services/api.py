@@ -527,7 +527,14 @@ def delete_service():
     payload = {}
     try:
         result = services_model.delete(wiz.request.query())
-        payload = {"result": result, **catalog.services()}
+        payload = {"result": result}
+        try:
+            payload.update(catalog.services())
+        except Exception as exc:
+            payload["catalog_warning"] = {
+                "message": str(exc),
+                "error_code": "SERVICE_CATALOG_REFRESH_FAILED",
+            }
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

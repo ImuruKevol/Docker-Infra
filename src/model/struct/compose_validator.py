@@ -17,6 +17,23 @@ _load_compose = rules.load_compose
 _network_names = rules.network_names
 
 
+def _safe_int(value, fallback=0):
+    try:
+        return int(value)
+    except Exception:
+        return fallback
+
+
+def _has_host_published_ports(service):
+    for item in service.get("ports") or []:
+        if not isinstance(item, dict):
+            continue
+        mode = str(item.get("mode") or "").strip().lower()
+        if mode == "host" and _safe_int(item.get("published") or item.get("target"), 0) > 0:
+            return True
+    return False
+
+
 class ComposeValidator:
     ComposeValidationError = ComposeValidationError
 
@@ -179,6 +196,8 @@ class ComposeValidator:
                     )
                 else:
                     deploy[key] = merged
+            if _has_host_published_ports(service) and isinstance(deploy.get("update_config"), dict):
+                deploy["update_config"]["order"] = "stop-first"
 
         self._raise_if_errors(errors, warnings=warnings, allow_warnings=allow_warnings)
 

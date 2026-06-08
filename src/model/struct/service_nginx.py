@@ -1,4 +1,7 @@
+import ipaddress
 import re
+import socket
+import time
 from pathlib import Path
 
 from psycopg.types.json import Jsonb
@@ -14,6 +17,8 @@ config = wiz.config("docker_infra")
 
 DOMAIN_RE = re.compile(r"^[A-Za-z0-9*.][A-Za-z0-9.*-]{0,251}[A-Za-z0-9]$")
 PROXY_HOST_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+DNS_WAIT_ATTEMPTS = 30
+DNS_WAIT_DELAY_SECONDS = 2
 
 
 def _safe_segment(value):
@@ -72,6 +77,32 @@ def _truthy(value):
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ip_values(*values):
+    addresses = set()
+    for value in values:
+        for token in str(value or "").replace(",", " ").split():
+            try:
+                addresses.add(str(ipaddress.ip_address(token.strip())))
+            except Exception:
+                continue
+    return addresses
+
+
+def _resolve_domain_addresses(domain):
+    try:
+        infos = socket.getaddrinfo(domain, 80, type=socket.SOCK_STREAM)
+    except Exception as exc:
+        return [], str(exc)
+    addresses = set()
+    for info in infos:
+        try:
+            host = info[4][0]
+            addresses.add(str(ipaddress.ip_address(host)))
+        except Exception:
+            continue
+    return sorted(addresses), ""
 
 
 def _domain_dns_provider(metadata):
@@ -331,6 +362,47 @@ class ServiceNginx:
             targets.append(domain)
         return sorted(set(targets))
 
+    def _certbot_dns_expected_addresses(self, domain_row, env=None):
+        metadata = dict((domain_row or {}).get("metadata") or {})
+        if metadata.get("dns_proxied") is True:
+            return set()
+        addresses = _ip_values(
+            metadata.get("ddns_target_host"),
+            metadata.get("dns_target_host"),
+            metadata.get("public_dns_content"),
+        )
+        if addresses:
+            return addresses
+        return _ip_values(
+            config.public_dns_address(env=env, record_type="A"),
+            config.public_dns_address(env=env, record_type="AAAA"),
+        )
+
+    def _wait_certbot_dns_ready(self, targets, domains, commands, env=None):
+        domain_rows = {str(row.get("domain") or "").strip().lower(): row for row in domains or []}
+        for domain in targets or []:
+            domain = str(domain or "").strip().lower()
+            expected = self._certbot_dns_expected_addresses(domain_rows.get(domain), env=env)
+            detail = {"domain": domain, "expected_addresses": sorted(expected), "resolved_addresses": [], "attempts": 0}
+            for attempt in range(1, DNS_WAIT_ATTEMPTS + 1):
+                resolved, error = _resolve_domain_addresses(domain)
+                resolved_set = set(resolved)
+                detail.update({"resolved_addresses": resolved, "attempts": attempt, "error": error})
+                if resolved_set and (not expected or bool(resolved_set & expected)):
+                    commands.append({
+                        "step": f"dns propagation {domain}",
+                        "result": {"status": "ok", "stdout": detail, "stderr": "", "exit_code": 0},
+                    })
+                    break
+                if attempt < DNS_WAIT_ATTEMPTS:
+                    time.sleep(DNS_WAIT_DELAY_SECONDS)
+            else:
+                commands.append({
+                    "step": f"dns propagation {domain}",
+                    "result": {"status": "error", "stdout": detail, "stderr": "DNS record is not ready for certbot validation.", "exit_code": 1},
+                })
+                raise RuntimeError(f"{domain} DNS 레코드가 아직 전파되지 않아 무료 인증서를 발급할 수 없습니다.")
+
     def _issue_certificates(self, targets, commands, env=None):
         certificates.issue_certificates(targets, commands, env=env)
 
@@ -406,6 +478,8 @@ class ServiceNginx:
                     })
             certbot_targets = self._certbot_targets(nginx_domains, env=env)
             if certbot_targets:
+                if certificates.self_signed_test_enabled(env=env) is not True:
+                    self._wait_certbot_dns_ready(certbot_targets, nginx_domains, commands, env=env)
                 self._issue_certificates(certbot_targets, commands, env=env)
                 active_applied = []
                 for domain in nginx_domains:
