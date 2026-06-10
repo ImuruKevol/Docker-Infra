@@ -367,7 +367,7 @@ main(class="space-y-5 px-5 py-5")
                                                 span(class="mt-0.5 block truncate text-xs opacity-80") {{containerFileSubtitle(container)}}
                                             span(class="shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="containerStatusClass(container)") {{containerStatusLabel(container)}}
                                 div(class="min-w-0 p-4")
-                                    wiz-component-file-tree([title]="containerFileRootLabel()", [description]="'/'", [scope]="'container'", [context]="containerFileTreeContext()", [rootLabel]="containerFileRootLabel()", [allowUpload]="true", [allowMutate]="true", [allowRead]="true", [embedded]="true", [maxHeight]="'360px'")
+                                    wiz-component-file-tree([title]="containerFileRootLabel()", [description]="'/'", [scope]="'container'", [context]="containerFileTreeContext()", [rootLabel]="containerFileRootLabel()", [allowUpload]="true", [allowMutate]="true", [allowRead]="true", [selectMode]="true", [embedded]="true", [maxHeight]="'360px'", (fileSelect)="openContainerFilePreview($event)")
 
                     div(*ngIf="detailTab() === 'versions' && !detailTabLoading()", class="p-4")
                         section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
@@ -915,12 +915,12 @@ div(*ngIf="fileBrowserOpen()", class="fixed inset-0 z-40 flex items-center justi
 
 div(*ngIf="filePreviewOpen()", class="fixed inset-0 z-50 flex items-center justify-center px-4 py-6")
     div(class="absolute inset-0 bg-zinc-950/60", (click)="closeFilePreview()")
-    section(class="relative w-full max-w-4xl rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
-        div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            div
+    section(class="relative flex max-h-[calc(100vh-3rem)] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
+        div(class="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            div(class="min-w-0")
                 h2(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") 파일 내용
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{filePreviewTitle()}}
-            button(type="button", (click)="closeFilePreview()", class="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400", [attr.title]="filePreviewTitle()") {{filePreviewTitle()}}
+            button(type="button", (click)="closeFilePreview()", class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800")
                 i(class="fa-solid fa-xmark")
-        div(class="px-5 py-4")
-            textarea([value]="filePreviewContent()", rows="22", readonly, class="w-full resize-none rounded-md border border-zinc-300 bg-zinc-950 p-3 font-mono text-xs text-zinc-50 dark:border-zinc-700")
+        div(class="min-h-0 flex-1 px-5 py-4")
+            textarea([value]="filePreviewContent()", readonly, wrap="off", class="h-[68vh] max-h-full min-h-0 w-full resize-none overflow-auto rounded-md border border-zinc-300 bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-50 dark:border-zinc-700")

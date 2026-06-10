@@ -413,3 +413,4 @@
 | 2026-06-10 | 025 | 실제 브라우저 메뉴 순회 기반 UI 액션 정렬 보정 | [상세](devlog/2026-06-10/025-browser-ui-full-menu-consistency.md) |
 | 2026-06-10 | 026 | DDNS 관리 서버 표 nowrap과 작업 컬럼 겹침 보정 | [상세](devlog/2026-06-10/026-ddns-table-nowrap-action-overlap.md) |
 | 2026-06-10 | 027 | 서비스 상세 콘솔 모달 헤더와 생성 화면 AI 버튼 겹침 보정 | [상세](devlog/2026-06-10/027-service-console-header-ai-toggle-overlap.md) |
+| 2026-06-10 | 028 | 컨테이너 파일 미리보기 모달 overflow 보정 | [상세](devlog/2026-06-10/028-container-file-preview-modal-overflow.md) |

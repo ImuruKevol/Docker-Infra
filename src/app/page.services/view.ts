@@ -2883,6 +2883,14 @@ export class Component implements OnInit, OnDestroy {
         return target ? this.containerDisplayName(target) : 'container';
     }
 
+    public async openContainerFilePreview(file: any) {
+        if (!file?.path) return;
+        this.filePreviewTitle.set(`${this.containerFileRootLabel()} · ${file.path}`);
+        this.filePreviewContent.set(String(file.content || ''));
+        this.filePreviewOpen.set(true);
+        await this.service.render();
+    }
+
     public containerFileTargetClass(container: any) {
         if (this.containerFileKey(container) === this.containerFileKey(this.containerFileTarget())) {
             return 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950';
