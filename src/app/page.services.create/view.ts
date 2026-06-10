@@ -3,6 +3,7 @@ import { Service } from '@wiz/libs/portal/season/service';
 
 type StepId = 1 | 2 | 3 | 4;
 type CreationMode = 'template' | 'ai' | 'manual';
+type CreateCheckStatus = 'idle' | 'checking' | 'creating' | 'error' | 'success';
 
 export class Component implements OnInit {
     public loading = signal<boolean>(true);
@@ -19,12 +20,21 @@ export class Component implements OnInit {
     public aiBusy = signal<boolean>(false);
     public templateBusy = signal<boolean>(false);
     public templateLoading = signal<boolean>(false);
+    public createCheck = signal<any>({
+        open: false,
+        status: 'idle' as CreateCheckStatus,
+        title: '',
+        message: '',
+        items: [],
+    });
     public importSource = signal<any>(null);
     public importWarnings = signal<any[]>([]);
     public draftSource = signal<string>('');
     public templates = signal<any[]>([]);
     public selectedTemplateId = signal<string>('');
     public templateDetail = signal<any>(null);
+    public readmeOpen = signal<boolean>(false);
+    public secretVisibility = signal<any>({});
     public zones = signal<any[]>([]);
     public baseContent = '';
     public manualCompose = '';
@@ -65,11 +75,13 @@ export class Component implements OnInit {
     public preflightSignature = '';
     public preflightReady = false;
     public preflightOk = false;
+    private preflightErrorMessage = '';
     public createSessionId = `svc-create-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     public createdServiceId = '';
     private templateDetailRequestSeq = 0;
     private zonesLoaded = false;
     private zonesRequest: Promise<boolean> | null = null;
+    private domainModeTouched = false;
     private aiModelOptionsLoaded = false;
     private aiModelOptionsRequest: Promise<boolean> | null = null;
 
@@ -84,8 +96,7 @@ export class Component implements OnInit {
         await this.service.init();
         this.syncManualComposeEditorTheme();
         await this.load();
-        this.ensureAiModelOptions(true).catch(() => null);
-        if (!this.error()) await this.loadImportFromQuery();
+        if (!this.error()) await this.ensureDomainOptions(true);
     }
 
     private hasOwn(value: any, key: string) {
@@ -106,7 +117,7 @@ export class Component implements OnInit {
             this.templates.set(templates);
             const templateFromQuery = this.templateIdFromQuery();
             this.selectedTemplateId.set(templateFromQuery || templates[0]?.id || templates[0]?.namespace || '');
-            this.creationMode.set((templateFromQuery || templates.length) ? 'template' : 'ai');
+            this.creationMode.set('template');
             this.baseContent = '';
             this.manualCompose = '';
             this.draftSource.set('');
@@ -132,7 +143,14 @@ export class Component implements OnInit {
             this.baseContent = content;
             this.manualCompose = content;
         }
-        this.generatedSecretKeys = data?.generated_secret_keys || data?.draft?.generated_secret_keys || [];
+        this.generatedSecretKeys = this.mergeGeneratedSecretKeys(
+            this.generatedSecretKeys,
+            data?.generated_secret_keys,
+            data?.draft?.generated_secret_keys,
+        );
+        if (data?.values && source === 'compose_template') {
+            this.templateValues = { ...this.templateValues, ...(data.values || {}) };
+        }
         this.components = data?.components || data?.draft?.components || this.components || [];
         this.importWarnings.set(data?.warnings || []);
         this.draftSource.set(source || data?.source || 'manual_compose');
@@ -174,7 +192,7 @@ export class Component implements OnInit {
         return this.templates().map((item: any) => ({
             value: item.id || item.namespace,
             label: item.name || item.namespace,
-            description: item.readme_excerpt || '',
+            description: item.description || item.metadata?.description || item.metadata?.summary || '',
             badge: this.templateBadge(item),
             badgeClass: 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300',
         }));
@@ -205,29 +223,95 @@ export class Component implements OnInit {
         return fields.filter((field: any) => field.name !== 'namespace' && field.name !== 'service_name');
     }
 
+    public isManagedTemplateField(field: any) {
+        const name = String(field?.name || '').trim().toLowerCase();
+        const title = String(field?.title || '').trim().toLowerCase();
+        const wrapped = `_${name.replace(/[^a-z0-9]+/g, '_')}_`;
+        if (wrapped.includes('_image_') || wrapped.includes('_image_ref_') || wrapped.includes('_image_name_') || wrapped.includes('_image_tag_')) return true;
+        if (wrapped.includes('_port_') || wrapped.includes('_ports_') || wrapped.includes('_published_') || wrapped.includes('_published_port_') || wrapped.includes('_target_port_') || wrapped.includes('_host_port_')) return true;
+        if (title.includes('이미지') || title.includes('image')) return true;
+        if (title.includes('포트') || title.includes('port')) return true;
+        return false;
+    }
+
+    public editableTemplateFields() {
+        return this.templateFields().filter((field: any) => !this.isManagedTemplateField(field));
+    }
+
+    public managedTemplateFieldCount() {
+        return this.templateFields().length - this.editableTemplateFields().length;
+    }
+
     public visibleTemplateFields() {
-        return this.templateFields().filter((field: any) => !field.secret);
+        return this.editableTemplateFields().filter((field: any) => !field.secret);
     }
 
     public secretTemplateFields() {
-        return this.templateFields().filter((field: any) => field.secret);
+        return this.editableTemplateFields().filter((field: any) => field.secret);
     }
 
     public selectedTemplateReadme() {
         return String(this.templateDetail()?.files?.readme || this.templateDetail()?.readme || '').trim();
     }
 
+    public toggleTemplateReadme() {
+        this.readmeOpen.set(!this.readmeOpen());
+    }
+
+    public closeTemplateReadme() {
+        this.readmeOpen.set(false);
+    }
+
     private initialTemplateValues(detail: any) {
         const values = { ...(detail?.values || {}) };
+        const generated: string[] = [];
         for (const field of detail?.fields || []) {
             if (values[field.name] === undefined && field.default !== undefined) values[field.name] = field.default;
+            if (field?.secret && this.shouldGenerateTemplateSecret(values[field.name])) {
+                values[field.name] = this.generateTemplateSecret();
+                generated.push(field.name);
+            }
         }
+        this.generatedSecretKeys = this.mergeGeneratedSecretKeys([], generated);
+        this.secretVisibility.set(Object.fromEntries(generated.map((key: string) => [key, true])));
         return values;
+    }
+
+    private shouldGenerateTemplateSecret(value: any) {
+        const clean = String(value || '').trim();
+        if (!clean) return true;
+        const lower = clean.toLowerCase();
+        return ['change_me', 'changeme', 'password', 'secret'].includes(lower) || lower.endsWith('_change_me');
+    }
+
+    private generateTemplateSecret(length: number = 40) {
+        const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+        const bytes = new Uint8Array(length);
+        if (globalThis.crypto?.getRandomValues) {
+            globalThis.crypto.getRandomValues(bytes);
+        } else {
+            for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+        }
+        return Array.from(bytes).map((value) => alphabet[value % alphabet.length]).join('');
+    }
+
+    private mergeGeneratedSecretKeys(...groups: any[]) {
+        const result: string[] = [];
+        for (const group of groups) {
+            for (const key of group || []) {
+                const clean = String(key || '').trim();
+                if (clean && !result.includes(clean)) result.push(clean);
+            }
+        }
+        return result;
     }
 
     public async selectTemplate(templateId: string) {
         this.selectedTemplateId.set(templateId || '');
         this.templateDetail.set(null);
+        this.closeTemplateReadme();
+        this.secretVisibility.set({});
+        this.generatedSecretKeys = [];
         await this.loadTemplateDetail(templateId, true);
     }
 
@@ -258,14 +342,41 @@ export class Component implements OnInit {
     }
 
     public templateFieldInputType(field: any) {
-        if (field?.secret) return 'password';
+        if (field?.secret) return this.secretFieldVisible(field) ? 'text' : 'password';
         if (field?.type === 'integer' || field?.type === 'number') return 'number';
         return 'text';
     }
 
+    public templateFieldPlaceholder(field: any) {
+        if (field?.secret) return '비워두면 자동 생성';
+        return '';
+    }
+
+    public secretFieldVisible(field: any) {
+        const key = String(field?.name || '');
+        return !!this.secretVisibility()[key];
+    }
+
+    public toggleSecretField(field: any) {
+        const key = String(field?.name || '');
+        if (!key) return;
+        this.secretVisibility.set({
+            ...this.secretVisibility(),
+            [key]: !this.secretFieldVisible(field),
+        });
+    }
+
+    public secretFieldToggleLabel(field: any) {
+        return this.secretFieldVisible(field) ? '비밀 값 숨기기' : '비밀 값 보기';
+    }
+
+    public secretFieldToggleIcon(field: any) {
+        return this.secretFieldVisible(field) ? 'fa-eye-slash' : 'fa-eye';
+    }
+
     public async applyTemplateDraft(options: any = {}) {
-        const advance = options.advance !== false;
-        const showSuccess = options.showSuccess !== false;
+        const advance = options.advance === true;
+        const showSuccess = options.showSuccess === true;
         const templateId = this.selectedTemplateId();
         if (!templateId) {
             await this.alert('사용할 템플릿을 선택해주세요.');
@@ -284,8 +395,8 @@ export class Component implements OnInit {
         if (code === 200) {
             this.importSource.set(null);
             this.applyComposeDraft(data, 'compose_template');
-            if (advance) this.step.set(2);
-            if (showSuccess) await this.alert('템플릿 초안을 적용했습니다. 다음 단계에서 구성을 확인하세요.', 'success');
+            if (advance) this.step.set(1);
+            if (showSuccess) await this.alert('템플릿 구성을 적용했습니다.', 'success');
             this.templateBusy.set(false);
             await this.service.render();
             return true;
@@ -347,6 +458,9 @@ export class Component implements OnInit {
             if (code === 200) {
                 this.zones.set(data.zones || []);
                 this.zonesLoaded = true;
+                if (!this.domainModeTouched && this.zones().length > 0) {
+                    this.form.domain_mode = 'registered';
+                }
                 if (this.form.domain_mode === 'registered' && !this.form.zone_id && this.zones()[0]) {
                     this.form.zone_id = this.zones()[0].id;
                 }
@@ -412,12 +526,8 @@ export class Component implements OnInit {
     }
 
     public steps() {
-        const draftDescription = this.hasAiModels() ? '템플릿, AI 또는 직접 작성' : '템플릿 또는 직접 작성';
         return [
-            { id: 1, title: '서비스 초안', description: draftDescription },
-            { id: 2, title: '구성 확인', description: '이미지, 연결 포트, 고급 설정' },
-            { id: 3, title: '도메인', description: '접속 주소' },
-            { id: 4, title: '확인', description: '저장 또는 배포' },
+            { id: 1, title: '서비스 생성', description: '템플릿과 도메인 설정' },
         ];
     }
 
@@ -430,22 +540,6 @@ export class Component implements OnInit {
                 description: this.templates().length ? '표준 Compose 템플릿에 필요한 변수만 입력합니다.' : '등록된 템플릿이 없습니다.',
                 badge: this.templates().length ? `${this.templates().length}개` : '',
                 disabled: !this.templates().length,
-            },
-            {
-                id: 'ai',
-                icon: 'fa-wand-magic-sparkles',
-                title: 'AI 자동 구성',
-                description: this.hasAiModels() ? '요구사항을 설명하면 이미지, 포트, 도메인 초안을 만듭니다.' : (this.aiUnavailableMessage() || '사용 가능한 AI 모델이 없습니다.'),
-                badge: this.hasAiModels() ? '자동' : '',
-                disabled: !this.hasAiModels(),
-            },
-            {
-                id: 'manual',
-                icon: 'fa-code',
-                title: '직접 작성',
-                description: 'Compose YAML을 붙여넣거나 직접 작성해 초안을 만듭니다.',
-                badge: 'Compose',
-                disabled: false,
             },
         ];
     }
@@ -493,66 +587,48 @@ export class Component implements OnInit {
     }
 
     public serviceNamePlaceholder() {
-        const mode = this.creationMode();
-        if (mode === 'ai') return 'AI가 자동으로 채울 수 있습니다.';
-        if (mode === 'manual') return 'Compose에서 추출하거나 직접 입력';
         return '예: wiz-dev';
     }
 
+    public createBusy() {
+        return this.busy() || this.templateBusy() || this.preflightLoading();
+    }
+
+    public createButtonLabel() {
+        return this.createBusy() ? '생성 중' : '생성';
+    }
+
+    public createButtonIconClass() {
+        return this.createBusy() ? 'fa-spinner fa-spin' : 'fa-plus';
+    }
+
     private normalizeCreationMode() {
-        const mode = this.creationMode();
-        if (mode === 'template' && !this.templates().length) {
-            this.creationMode.set(this.hasAiModels() ? 'ai' : 'manual');
-        }
-        if (mode === 'ai' && !this.hasAiModels()) {
-            this.creationMode.set(this.templates().length ? 'template' : 'manual');
-        }
-        if (this.creationMode() === 'manual' && !this.baseContent) {
-            this.manualComposeOpen.set(true);
-            this.syncManualComposeEditorTheme();
-        }
+        this.creationMode.set('template');
+        this.manualComposeOpen.set(false);
     }
 
     public async selectCreationMode(mode: string) {
         const nextMode = mode as CreationMode;
+        if (nextMode !== 'template') {
+            await this.alert('템플릿 기반 생성만 사용할 수 있습니다.');
+            return;
+        }
         if (nextMode === 'template' && !this.templates().length) {
             await this.alert('사용할 수 있는 템플릿이 없습니다.');
             return;
         }
-        if (nextMode === 'ai') await this.ensureAiModelOptions();
-        if (nextMode === 'ai' && !this.hasAiModels()) {
-            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
-            return;
-        }
         this.creationMode.set(nextMode);
-        if (nextMode === 'manual') {
-            this.manualComposeOpen.set(true);
-            this.syncManualComposeEditorTheme();
-        }
         await this.service.render();
     }
 
     public zoneSelectorItems() {
         return this.zones().map((zone: any) => {
-            if (zone.provider === 'ddns') {
-                return {
-                    value: zone.id,
-                    label: zone.domain,
-                    description: 'DDNS 관리 서버로 DNS 레코드를 등록합니다.',
-                    badge: 'DDNS',
-                    badgeClass: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300',
-                };
-            }
-            const summary = zone.certificate_summary || {};
-            const hasCert = Number(summary.valid || 0) > 0;
             return {
                 value: zone.id,
                 label: zone.domain,
-                description: hasCert ? '업로드된 SSL 인증서 사용' : '인증서는 배포 시 자동 발급 예정',
-                badge: hasCert ? 'SSL' : 'certbot',
-                badgeClass: hasCert
-                    ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300'
-                    : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300',
+                description: 'DDNS 관리 서버로 DNS 레코드를 등록합니다.',
+                badge: 'DDNS',
+                badgeClass: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300',
             };
         });
     }
@@ -582,7 +658,7 @@ export class Component implements OnInit {
     private aiAutomationRows() {
         return [
             { icon: 'fa-layer-group', title: '서비스 구성', description: '이미지, 포트, 환경변수, 데이터 보관' },
-            { icon: 'fa-globe', title: '도메인 연결', description: '등록 도메인, 공개 포트, SSL 방식' },
+            { icon: 'fa-globe', title: '도메인 연결', description: 'DDNS suffix, 공개 포트, nginx 연결' },
             { icon: 'fa-rotate-right', title: '자동 보정', description: '검증 실패 시 AI 재호출 후 다시 검사' },
         ];
     }
@@ -953,44 +1029,20 @@ export class Component implements OnInit {
     }
 
     public nextStepLabel() {
-        if (this.step() !== 1) return '다음';
-        if (this.creationMode() === 'template') return this.templateBusy() ? '적용 중' : '템플릿 적용 후 다음';
-        if (this.creationMode() === 'ai') return this.aiBusy() ? '생성 중' : 'AI 생성 후 다음';
-        if (this.creationMode() === 'manual') return this.manualBusy() ? '적용 중' : 'Compose 적용 후 다음';
-        return '다음';
+        return this.templateBusy() ? '적용 중' : '생성';
     }
 
     public nextStepBusy() {
-        if (this.busy()) return true;
-        if (this.step() !== 1) return false;
-        return this.templateBusy() || this.templateLoading() || this.aiBusy() || this.manualBusy();
+        return this.busy() || this.templateBusy() || this.templateLoading() || this.preflightLoading();
     }
 
     public nextStepIconClass() {
-        return this.nextStepBusy() ? 'fa-spinner fa-spin' : 'fa-chevron-right';
+        return this.nextStepBusy() ? 'fa-spinner fa-spin' : 'fa-plus';
     }
 
     public async nextStep() {
         if (this.nextStepBusy()) return;
-        if (this.step() === 1) {
-            if (this.creationMode() === 'template') {
-                await this.applyTemplateDraft();
-                return;
-            }
-            if (this.creationMode() === 'ai') {
-                if (this.baseContent.trim() && this.draftSource() === 'ai_draft') {
-                    await this.setStep(2);
-                    return;
-                }
-                await this.generateServiceWithAi();
-                return;
-            }
-            if (this.creationMode() === 'manual') {
-                await this.applyManualCompose();
-                return;
-            }
-        }
-        await this.setStep(Math.min(4, this.step() + 1) as StepId);
+        await this.save(true);
     }
 
     public previousStep() {
@@ -998,17 +1050,21 @@ export class Component implements OnInit {
     }
 
     public async validateStep(step: StepId = this.step()) {
+        if (step === 1 && !this.selectedTemplateId()) {
+            await this.alert('사용할 템플릿을 선택해주세요.');
+            return false;
+        }
         if (step === 1 && !String(this.form.name || '').trim()) {
             await this.alert('서비스 이름을 입력해주세요.');
             return false;
         }
         if (step === 1 && !this.baseContent.trim()) {
-            await this.alert(this.hasAiModels() ? '템플릿, AI 또는 직접 작성으로 서비스 초안을 만들어주세요.' : '템플릿을 적용하거나 Compose 초안을 직접 작성해 적용해주세요.');
+            await this.alert('템플릿 구성을 먼저 적용해주세요.');
             return false;
         }
-        if (step === 2) {
+        if (step === 1 || step === 2) {
             if (!this.components.length) {
-                await this.alert('서비스 구성을 불러오지 못했습니다. 서비스 초안을 다시 적용해주세요.');
+                await this.alert('서비스 구성을 불러오지 못했습니다. 템플릿을 다시 확인해주세요.');
                 return false;
             }
             for (const item of this.components) {
@@ -1018,15 +1074,15 @@ export class Component implements OnInit {
                 }
             }
         }
-        if (step === 3 && this.form.domain_mode === 'registered') {
+        if ((step === 1 || step === 3) && this.form.domain_mode === 'registered') {
             if (!(await this.ensureDomainOptions())) return false;
             this.syncDomain();
             if (!this.hasConnectablePorts()) {
-                await this.alert('도메인에 연결할 포트를 먼저 추가해주세요.');
+                await this.alert('선택한 템플릿에 도메인으로 연결할 포트가 없습니다.');
                 return false;
             }
             if (!this.form.zone_id || !this.form.domain) {
-                await this.alert('사용할 도메인을 선택해주세요.');
+                await this.alert('사용할 DDNS suffix를 선택해주세요.');
                 return false;
             }
         }
@@ -1101,16 +1157,18 @@ export class Component implements OnInit {
         return options.sort((a: any, b: any) => Number(!!b.recommended) - Number(!!a.recommended));
     }
 
+    public selectedDomainTargetLabel() {
+        const option = this.domainTargetOptions().find((item: any) => item.key === this.form.domain_target_key);
+        if (!option) return this.form.domain_mode === 'registered' ? '포트 확인 필요' : '-';
+        return `${option.service_label || option.label} · ${option.port}/${option.protocol || 'tcp'}`;
+    }
+
     public ensureDomainTarget() {
         const first = this.domainTargetOptions()[0];
         const current = this.domainTargetOptions().find((item: any) => item.key === this.form.domain_target_key);
         if (!first) {
             this.form.domain_target_key = '';
             this.form.domain_target_port = 0;
-            if (this.form.domain_mode === 'registered') {
-                this.form.domain_mode = 'none';
-                this.form.domain = '';
-            }
             return;
         }
         if ((!this.form.domain_target_key || !current) && first) {
@@ -1126,18 +1184,11 @@ export class Component implements OnInit {
     }
 
     public async setDomainMode(mode: 'none' | 'registered') {
-        if (mode === 'registered' && !this.hasConnectablePorts()) {
-            this.form.domain_mode = 'none';
-            this.syncDomain();
-            await this.alert('도메인에 연결할 포트를 먼저 추가해주세요.');
-            await this.service.render();
-            return;
-        }
-        if (mode === 'registered' && !(await this.ensureDomainOptions())) return;
+        this.domainModeTouched = true;
+        if (mode === 'registered' && !(await this.ensureDomainOptions(true))) return;
         if (mode === 'registered' && this.zones().length === 0) {
             this.form.domain_mode = 'none';
             this.syncDomain();
-            await this.alert('등록된 도메인이 없습니다.');
             await this.service.render();
             return;
         }
@@ -1309,6 +1360,43 @@ export class Component implements OnInit {
         return { payload, signature: JSON.stringify(payload) };
     }
 
+    private async updateCreateCheck(update: any) {
+        this.createCheck.set({
+            ...this.createCheck(),
+            ...update,
+            open: update.open === undefined ? this.createCheck().open : update.open,
+        });
+        await this.service.render();
+    }
+
+    public createCheckItems() {
+        return this.createCheck()?.items || [];
+    }
+
+    public createCheckStatusClass(status: CreateCheckStatus) {
+        if (status === 'success') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300';
+        if (status === 'error') return 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300';
+        return 'bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300';
+    }
+
+    public createCheckIconClass(status: CreateCheckStatus) {
+        if (status === 'checking' || status === 'creating') return 'fa-spinner fa-spin';
+        if (status === 'success') return 'fa-circle-check';
+        if (status === 'error') return 'fa-triangle-exclamation';
+        return 'fa-circle-info';
+    }
+
+    public createCheckActionLabel() {
+        return this.createCheck().status === 'error' ? '돌아가기' : '확인';
+    }
+
+    public async closeCreateCheck() {
+        const status = this.createCheck().status as CreateCheckStatus;
+        if (status === 'checking' || status === 'creating') return;
+        this.createCheck.set({ ...this.createCheck(), open: false });
+        await this.service.render();
+    }
+
     public async runPreflight(showMessage: boolean = false, force: boolean = false) {
         const { payload, signature } = this.currentPreflightPayload();
         if (!force && this.preflightReady && this.preflightSignature === signature) {
@@ -1321,6 +1409,7 @@ export class Component implements OnInit {
         this.preflight.set(null);
         this.preflightReady = false;
         this.preflightOk = false;
+        this.preflightErrorMessage = '';
         const { code, data } = await wiz.call('preflight', payload);
         this.preflightLoading.set(false);
         if (code === 200) {
@@ -1329,6 +1418,7 @@ export class Component implements OnInit {
             this.preflightSignature = signature;
             this.preflightReady = true;
             this.preflightOk = !!preflight?.ok;
+            this.preflightErrorMessage = preflight?.ok ? '' : this.formatPreflightError(data);
             await this.service.render();
             if (!preflight?.ok && showMessage) {
                 await this.alert(this.formatPreflightError(data));
@@ -1338,62 +1428,79 @@ export class Component implements OnInit {
         this.preflightSignature = signature;
         this.preflightReady = true;
         this.preflightOk = false;
+        this.preflightErrorMessage = this.formatPreflightError(data);
         if (showMessage) await this.alert(this.formatPreflightError(data));
         await this.service.render();
         return false;
     }
 
-    public async save(deploy: boolean = false) {
-        if (this.busy()) return;
+    public async save(deploy: boolean = true) {
+        if (this.busy() || this.templateBusy() || this.preflightLoading()) return;
         if (this.createdServiceId) {
-            if (deploy) {
-                const deployResult = await wiz.call('deploy_service_background', {
-                    service_id: this.createdServiceId,
-                });
-                if (![200, 202].includes(deployResult.code)) {
-                    await this.alert(deployResult.data?.message || '서비스 배포를 시작할 수 없습니다.');
-                    return;
-                }
-            }
             this.service.href(this.serviceDetailRoute(this.createdServiceId));
             return;
         }
-        for (const item of [1, 2, 3] as StepId[]) {
-            if (!(await this.validateStep(item))) {
-                this.step.set(item);
-                return;
-            }
-        }
-        if (!(await this.runPreflight(true))) {
-            this.step.set(4);
+        if (!(await this.applyTemplateDraft({ advance: false, showSuccess: false }))) return;
+        if (!(await this.validateStep(1))) return;
+
+        this.busy.set(true);
+        await this.updateCreateCheck({
+            open: true,
+            status: 'checking' as CreateCheckStatus,
+            title: '생성 전 확인',
+            message: '템플릿 구성, 이미지, 포트, 도메인 설정을 확인하는 중입니다.',
+            items: [],
+        });
+
+        if (!(await this.runPreflight(false, true))) {
+            this.busy.set(false);
+            await this.updateCreateCheck({
+                status: 'error' as CreateCheckStatus,
+                title: '생성 전 확인 필요',
+                message: this.preflightErrorMessage || this.formatPreflightError({ preflight: this.preflight() }),
+                items: this.preflightItems(),
+            });
             return;
         }
-        this.busy.set(true);
+
+        await this.updateCreateCheck({
+            status: 'creating' as CreateCheckStatus,
+            title: '서비스 생성 중',
+            message: '자동 확인을 통과했습니다. 서비스를 생성하고 있습니다.',
+            items: this.preflightItems(),
+        });
         const { code, data } = await wiz.call('create_service', this.payload());
         if (code !== 200) {
             this.busy.set(false);
-            await this.alert(this.formatPreflightError(data));
+            await this.updateCreateCheck({
+                status: 'error' as CreateCheckStatus,
+                title: '서비스 생성 실패',
+                message: this.formatPreflightError(data),
+                items: [],
+            });
             return;
         }
         const serviceId = data.result?.service?.id;
         if (serviceId) this.createdServiceId = serviceId;
-        if (deploy && serviceId) {
-            const deployResult = await wiz.call('deploy_service_background', {
-                service_id: serviceId,
-            });
-            this.busy.set(false);
-            if (![200, 202].includes(deployResult.code)) {
-                await this.alert(deployResult.data?.message || '서비스 배포에 실패했습니다.');
-                this.service.href(this.serviceDetailRoute(serviceId));
-                return;
+        let deployStartMessage = '서비스가 생성되었습니다. 상세 화면으로 이동합니다.';
+        if (deploy !== false && serviceId) {
+            const deployResult = await wiz.call('deploy_service_background', { service_id: serviceId });
+            if ([200, 202].includes(deployResult.code)) {
+                deployStartMessage = '서비스가 생성되었고 서버 배포가 시작되었습니다. 상세 화면에서 이미지 pull과 컨테이너 상태를 확인합니다.';
+            } else {
+                deployStartMessage = `서비스는 생성되었지만 배포를 시작하지 못했습니다. 상세 화면에서 다시 적용해주세요.\n\n${deployResult.data?.message || '배포 시작 실패'}`;
             }
-            await this.alert('서비스를 저장했고 배포는 백그라운드에서 시작했습니다. 서비스 화면에서 Docker 작업과 이미지 pull 대기 상태를 확인할 수 있습니다.', 'success');
-            this.service.href(this.serviceDetailRoute(serviceId));
-            return;
         }
+        await this.updateCreateCheck({
+            status: 'success' as CreateCheckStatus,
+            title: '서비스 생성 완료',
+            message: deployStartMessage,
+            items: this.preflightItems(),
+        });
+        await this.service.sleep(450);
+        this.createCheck.set({ ...this.createCheck(), open: false });
         this.busy.set(false);
-        await this.alert('서비스 초안을 저장했습니다.', 'success');
-        this.service.href('/services');
+        this.service.href(serviceId ? this.serviceDetailRoute(serviceId) : '/services');
     }
 
     public cancel() {

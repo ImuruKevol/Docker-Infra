@@ -33,7 +33,7 @@ Docker Infra는 개발자가 아닌 전산 담당자 또는 일반 관리자가 
 - 서비스 생성/수정 마법사
 - 서비스 Compose 초안 생성과 관리
 - 서비스 배포, 수정, 롤백
-- 도메인 관리, Cloudflare DNS record 동기화와 CRUD
+- 도메인 관리, DDNS endpoint 등록과 레코드 갱신
 - 도메인별 인증서 업로드와 만료일 분석
 - 서비스 화면의 certbot 무료 인증서 발급
 - nginx server block 자동 생성, 검증, reload, rollback
@@ -68,7 +68,7 @@ Docker Infra는 개발자가 아닌 전산 담당자 또는 일반 관리자가 
    배포, 컨테이너 제어, nginx reload, certbot, 이미지 삭제, 백업 정리 결과는 operation log와 audit log로 남긴다. 화면에 실시간 출력이 필요한 경우에는 streaming response 또는 WebSocket을 사용한다.
 
 5. **비활성화된 연동도 기본 운영을 막지 않는다.**
-   Cloudflare token이 없어도 수동 도메인 관리는 가능해야 하고, 백업 시스템이 꺼져도 서비스 배포와 로컬 이미지 관리는 가능해야 한다.
+   DDNS 관리 서버가 없어도 도메인 미사용 서비스는 가능해야 하고, 백업 시스템이 꺼져도 서비스 배포와 로컬 이미지 관리는 가능해야 한다.
 
 ## 4. 아키텍처
 
@@ -80,7 +80,7 @@ flowchart LR
     API --> Operation["Operation/Audit Log"]
     API --> LocalExec["Local Executor<br/>Docker Infra Host"]
     API --> SSH["SSH Executor"]
-    API --> Cloudflare["Cloudflare DNS API"]
+    API --> DDNS["DDNS management API"]
     API --> Nginx["nginx Manager"]
     API --> Backup["Built-in Harbor Backup<br/>optional"]
 
@@ -93,7 +93,7 @@ flowchart LR
 | 구성 요소 | 역할 |
 |---|---|
 | Web UI | 서버, 서비스, 도메인, 이미지, 시스템 설정 화면 |
-| WIZ API | 인증, 설정, DB 접근, Docker/SSH/nginx/Cloudflare 작업 조율 |
+| WIZ API | 인증, 설정, DB 접근, Docker/SSH/nginx/DDNS 작업 조율 |
 | PostgreSQL | 설정, 서버, 서비스, 도메인, 인증서, 이미지, 작업 결과 저장 |
 | Local Executor | Docker Infra host에서 Docker, Swarm, nginx, certbot 명령 실행 |
 | SSH Executor | 등록 서버 접속 확인, key 설치, 원격 Docker 상태 조회, PTY 중계 |
@@ -109,8 +109,8 @@ flowchart LR
 |---|---|---|
 | `system_settings` | `key`, `value`, `value_type`, `is_secret` | 브라우저 title, 설치 상태, 정리 정책 등 |
 | `backup_system_settings` | `enabled`, `status`, `data_path`, `used_bytes`, `available_bytes` | 내장 Harbor 백업 시스템 상태 |
-| `cloudflare_zones` | `domain`, `zone_id`, `api_token_enc`, `enabled` | 도메인별 Cloudflare 설정 |
-| `cloudflare_dns_records` | `zone_config_id`, `record_type`, `record_name`, `content`, `proxied`, `ttl` | DNS record cache |
+| `ddns_endpoints` | `domain_suffix`, `api_base_url`, `token_enc`, `enabled` | DDNS 관리 서버 설정 |
+| `ddns_registrations` | `endpoint_id`, `domain`, `target_host`, `status` | DDNS 등록 레코드 상태 |
 | `domain_certificates` | `domain_id`, `cert_path`, `key_path`, `expires_at`, `issuer`, `status` | 도메인별 업로드 인증서 |
 | `nodes` | `name`, `host`, `ssh_port`, `username`, `ssh_key_path`, `fingerprint`, `is_local_master`, `status` | 서버 등록 정보 |
 | `node_metrics` | `node_id`, `cpu_pct`, `memory_pct`, `storage_pct`, `sampled_at` | 최신 metric |
@@ -224,9 +224,9 @@ nginx는 Ubuntu 24.04 기본값으로 고정한다.
 - reload 실패 시 이전 설정으로 복원한다.
 - 원문 편집은 고급 모드에서만 제공한다.
 
-도메인 화면은 Cloudflare DNS와 인증서를 관리한다.
+도메인 화면은 DDNS 관리 서버와 등록 레코드를 관리한다.
 
-- Cloudflare token이 있으면 DNS record 동기화와 CRUD를 수행한다.
+- DDNS API Key가 있으면 서비스 배포 시 DNS record 등록/갱신을 수행한다.
 - token이 없어도 수동 도메인과 인증서 관리는 가능하다.
 - 인증서는 도메인별로 cert/key 파일을 업로드하고 만료일, SAN, issuer, key matching 상태를 분석한다.
 - 인증서가 없는 도메인은 서비스 화면에서 certbot 무료 인증서를 발급할 수 있다.
@@ -283,7 +283,7 @@ nginx 경로, daemon 이름, 사이트 설정 디렉토리, SSL 인증서 업로
 - 관리자 로그인은 password-only지만 password는 해시로 저장한다.
 - SSH 최초 비밀번호는 연결과 key 설치에만 사용하고 DB에 저장하지 않는다.
 - DB에는 SSH key file 경로와 fingerprint만 저장한다.
-- Cloudflare token, backup system secret은 암호화 저장한다.
+- DDNS key, backup system secret은 암호화 저장한다.
 - API 응답과 devlog에는 password/token 같은 민감 정보를 남기지 않는다.
 - 위험 작업은 audit log에 요약 저장한다.
 - streaming output은 화면 표시가 목적이며, 영구 저장 범위는 operation summary로 제한한다.
@@ -299,7 +299,7 @@ API는 화면 중심의 굵은 흐름으로 제공한다.
 - `/api/nodes/{id}/terminal`: 웹 터미널 연결
 - `/api/services`: 서비스 목록, 생성 마법사, 수정, 배포, 롤백
 - `/api/services/{id}/domains`: 서비스와 도메인/nginx 연결
-- `/api/domains`: Cloudflare zone, DNS record, 인증서 관리
+- `/api/domains`: DDNS endpoint와 등록 레코드 관리
 - `/api/images`: 로컬 이미지와 백업 이미지 조회/삭제
 - `/api/operations`: operation log와 audit log 조회
 

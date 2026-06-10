@@ -3,6 +3,7 @@ import datetime
 import errno
 import os
 import pty
+import queue
 import re
 import select
 import shlex
@@ -2348,6 +2349,77 @@ class CodexRuntime:
             }
             return {"text": result["text"], "metadata": metadata}
 
+    def complete_json_stream(self, provider, system, context, env=None):
+        provider = self._normalize_provider(provider or {})
+        request_context = context if isinstance(context, dict) else {}
+        session_info = self._request_session(provider, request_context)
+        mcp_enabled_tools = self._enabled_mcp_tools(request_context)
+        prompt_context = self._prompt_context(request_context, mcp_enabled_tools)
+        CODEX_RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="run-", dir=str(CODEX_RUNTIME_ROOT)) as runtime_home:
+            runtime_home_path = Path(runtime_home)
+            mcp_context_path = runtime_home_path / "docker-infra-mcp-context.json"
+            mcp_request_context = dict(request_context)
+            mcp_request_context["session"] = session_info
+            mcp_request_context["mcp_enabled_tools"] = mcp_enabled_tools
+            mcp_request_context["ai_request_summary"] = prompt_context
+            mcp_context = self._mcp_context(env=env, request_context=mcp_request_context)
+            last_message_path = runtime_home_path / "last-message.txt"
+            mcp_context_path.write_text(
+                json.dumps(mcp_context, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            prompt = self._prompt(system, prompt_context, provider, mcp_enabled_tools)
+            if provider["type"] == "codex":
+                result = yield from self._run_codex_stream(
+                    provider,
+                    runtime_home_path,
+                    last_message_path,
+                    prompt,
+                    mcp_context_path,
+                    mcp_enabled_tools,
+                    session_info,
+                )
+                engine = "codex"
+                cli_mode = provider.get("cli_mode") or "system"
+            else:
+                yield {
+                    "type": "runtime_event",
+                    "event": {"type": "agent.execution.started", "provider": provider["type"]},
+                }
+                result = yield from self._run_agent_stream(
+                    provider,
+                    runtime_home_path,
+                    last_message_path,
+                    prompt,
+                    mcp_context_path,
+                    mcp_enabled_tools,
+                    session_info,
+                )
+                yield {
+                    "type": "runtime_event",
+                    "event": {"type": "agent.execution.completed", "provider": provider["type"]},
+                }
+                engine = "agent"
+                cli_mode = "agent"
+            result_session = result.get("session") if isinstance(result.get("session"), dict) else session_info
+            metadata = {
+                "engine": engine,
+                "provider": provider["type"],
+                "provider_id": provider["provider_id"],
+                "provider_label": _provider_label(provider["type"]),
+                "model": provider["model"],
+                "reasoning_effort": provider.get("reasoning_effort") or "",
+                "cli_mode": cli_mode,
+                "executable": result.get("executable") or "",
+                "codex_exit_code": result["exit_code"],
+                "session": result_session,
+                "session_id": result_session.get("session_id") or "",
+                "provider_session_id": result_session.get("provider_session_id") or "",
+                "session_resumed": bool(result_session.get("resume")),
+            }
+            yield {"type": "result", "result": {"text": result["text"], "metadata": metadata}}
+
     def _request_session(self, provider, request_context):
         request_context = request_context if isinstance(request_context, dict) else {}
         session = request_context.get("session") if isinstance(request_context.get("session"), dict) else {}
@@ -3087,6 +3159,190 @@ class CodexRuntime:
                 return "".join(chunks).strip()
         return raw
 
+    def _run_codex_stream(self, provider, runtime_home, last_message_path, prompt, mcp_context_path, enabled_tools, session_info=None):
+        executable = self._codex_login_executable(provider)
+        config_args = self._codex_login_config_args(provider, mcp_context_path, enabled_tools)
+        session_info = session_info if isinstance(session_info, dict) else {}
+        provider_session_id = self._normalize_session_id(session_info.get("provider_session_id"))
+        resume_session = bool(provider_session_id and session_info.get("resume"))
+        global_args = [
+            "--sandbox",
+            "danger-full-access",
+            "-C",
+            str(WORKSPACE_ROOT),
+        ]
+        exec_args = [
+            "--json",
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            *config_args,
+            "-m",
+            provider["model"],
+            "--output-last-message",
+            str(last_message_path),
+        ]
+        if resume_session:
+            command = [executable, *global_args, "exec", "resume", *exec_args, provider_session_id, "-"]
+        else:
+            command = [executable, *global_args, "exec", *exec_args, "-"]
+        run_env = self._codex_env(provider)
+        run_env["NO_COLOR"] = "1"
+        timeout_seconds = int(provider.get("timeout_seconds") or CODEX_TIMEOUT_SECONDS)
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                env=run_env,
+            )
+        except OSError as exc:
+            raise CodexRuntimeError(
+                502,
+                "Codex 실행을 시작할 수 없습니다.",
+                "CODEX_EXEC_START_FAILED",
+                {"stderr": str(exc), "command": command},
+            )
+
+        stream_queue = queue.Queue()
+        stdout_chunks = []
+        stderr_chunks = []
+
+        def consume_stdout():
+            try:
+                for line in process.stdout or []:
+                    stream_queue.put(("stdout", line))
+            finally:
+                stream_queue.put(("stdout_done", None))
+
+        def consume_stderr():
+            try:
+                for line in process.stderr or []:
+                    stream_queue.put(("stderr", line))
+            finally:
+                stream_queue.put(("stderr_done", None))
+
+        def write_stdin():
+            try:
+                if process.stdin:
+                    process.stdin.write(prompt)
+                    process.stdin.close()
+            except BrokenPipeError:
+                pass
+            except OSError:
+                pass
+
+        threading.Thread(target=consume_stdout, daemon=True).start()
+        threading.Thread(target=consume_stderr, daemon=True).start()
+        threading.Thread(target=write_stdin, daemon=True).start()
+
+        stdout_done = False
+        stderr_done = False
+        started_at = time.time()
+        last_progress_phase = ""
+        last_progress_at = 0
+        deadline = time.time() + timeout_seconds
+        while not (stdout_done and stderr_done):
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                process.kill()
+                raise CodexRuntimeError(
+                    504,
+                    "Codex 실행 시간이 초과되었습니다.",
+                    "CODEX_EXEC_TIMEOUT",
+                    {"stdout": _trim("".join(stdout_chunks)), "stderr": _trim("".join(stderr_chunks)), "command": command},
+                )
+            try:
+                kind, payload = stream_queue.get(timeout=min(1.0, max(0.1, remaining)))
+            except queue.Empty:
+                now = time.time()
+                if now - last_progress_at >= 6:
+                    elapsed_seconds = max(1, int(now - started_at))
+                    phases = [
+                        ("context", "Agent가 Docker Infra 화면과 대화 맥락을 실행 컨텍스트로 정리하고 있습니다."),
+                        ("tool_match", "Agent가 MCP/API 후보와 요청 의도를 대조하고 있습니다."),
+                        ("runtime_lookup", "Agent가 필요한 런타임 조회 결과를 기다리고 있습니다."),
+                        ("answer_shape", "Agent가 조회 결과를 최종 답변 구조로 정리하고 있습니다."),
+                    ]
+                    phase, message = phases[min(len(phases) - 1, elapsed_seconds // 18)]
+                    if phase != last_progress_phase or now - last_progress_at >= 12:
+                        last_progress_phase = phase
+                        last_progress_at = now
+                        yield {
+                            "type": "runtime_event",
+                            "event": {
+                                "type": "agent.progress",
+                                "phase": phase,
+                                "message": message,
+                                "elapsed_seconds": elapsed_seconds,
+                            },
+                        }
+                continue
+            if kind == "stdout_done":
+                stdout_done = True
+                continue
+            if kind == "stderr_done":
+                stderr_done = True
+                continue
+            if kind == "stderr":
+                stderr_chunks.append(payload)
+                continue
+            if kind != "stdout":
+                continue
+            stdout_chunks.append(payload)
+            line = str(payload or "").strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except Exception:
+                yield {"type": "runtime_output", "stream": "stdout", "text": _trim(line, 1000)}
+                continue
+            if isinstance(event, dict):
+                yield {"type": "runtime_event", "event": event}
+
+        try:
+            return_code = process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            raise CodexRuntimeError(
+                504,
+                "Codex 실행 종료를 확인할 수 없습니다.",
+                "CODEX_EXEC_TIMEOUT",
+                {"stdout": _trim("".join(stdout_chunks)), "stderr": _trim("".join(stderr_chunks)), "command": command},
+            )
+        stdout = "".join(stdout_chunks)
+        stderr = "".join(stderr_chunks)
+        text = last_message_path.read_text(encoding="utf-8").strip() if last_message_path.exists() else ""
+        if return_code != 0:
+            raise CodexRuntimeError(
+                502,
+                "Codex 실행이 실패했습니다.",
+                "CODEX_EXEC_FAILED",
+                {
+                    "exit_code": return_code,
+                    "stdout": _trim(stdout),
+                    "stderr": _trim(stderr),
+                    "command": command,
+                },
+            )
+        if not text:
+            text = self._last_json_event_output(stdout)
+        if not text:
+            raise CodexRuntimeError(
+                502,
+                "Codex 최종 응답이 비어 있습니다.",
+                "CODEX_EMPTY_RESPONSE",
+                {"stdout": _trim(stdout), "stderr": _trim(stderr), "command": command},
+            )
+        result_session = dict(session_info or {})
+        extracted_session_id = self._json_event_session_id(stdout)
+        result_session["provider_session_id"] = extracted_session_id or provider_session_id
+        result_session["resume"] = resume_session
+        return {"text": text, "exit_code": return_code, "executable": executable, "session": result_session}
+
     def _run_agent(self, provider, runtime_home, last_message_path, prompt, mcp_context_path, enabled_tools, session_info=None):
         mcp_config_path = runtime_home / "docker-infra-agent-mcp.json"
         mcp_config_path.write_text(
@@ -3153,6 +3409,167 @@ class CodexRuntime:
                 or (result_session.get("session_id") if self._is_uuid(result_session.get("session_id")) else "")
             )
         return {"text": text, "exit_code": completed.returncode, "executable": provider["executable"], "session": result_session}
+
+    def _run_agent_stream(self, provider, runtime_home, last_message_path, prompt, mcp_context_path, enabled_tools, session_info=None):
+        mcp_config_path = runtime_home / "docker-infra-agent-mcp.json"
+        mcp_config_path.write_text(
+            json.dumps(self._agent_mcp_config(mcp_context_path, enabled_tools), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        if provider.get("type") == "hermes":
+            self._write_hermes_runtime_mcp_config(provider, mcp_context_path, enabled_tools)
+        command = self._agent_stream_command(provider, mcp_config_path, mcp_context_path, last_message_path, prompt, session_info)
+        timeout_seconds = int(provider.get("timeout_seconds") or CODEX_TIMEOUT_SECONDS)
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                cwd=str(WORKSPACE_ROOT),
+                env=self._agent_env(provider),
+            )
+        except OSError as exc:
+            raise CodexRuntimeError(
+                502,
+                "%s 실행을 시작할 수 없습니다." % _provider_label(provider["type"]),
+                "AI_AGENT_EXEC_START_FAILED",
+                {"stderr": str(exc), "command": command},
+            )
+
+        stream_queue = queue.Queue()
+        stdout_chunks = []
+        stderr_chunks = []
+
+        def consume_stdout():
+            try:
+                for line in process.stdout or []:
+                    stream_queue.put(("stdout", line))
+            finally:
+                stream_queue.put(("stdout_done", None))
+
+        def consume_stderr():
+            try:
+                for line in process.stderr or []:
+                    stream_queue.put(("stderr", line))
+            finally:
+                stream_queue.put(("stderr_done", None))
+
+        def write_stdin():
+            try:
+                if process.stdin:
+                    process.stdin.write(prompt)
+                    process.stdin.close()
+            except BrokenPipeError:
+                pass
+            except OSError:
+                pass
+
+        threading.Thread(target=consume_stdout, daemon=True).start()
+        threading.Thread(target=consume_stderr, daemon=True).start()
+        threading.Thread(target=write_stdin, daemon=True).start()
+
+        stdout_done = False
+        stderr_done = False
+        deadline = time.time() + timeout_seconds
+        while not (stdout_done and stderr_done):
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                process.kill()
+                raise CodexRuntimeError(
+                    504,
+                    "%s 실행 시간이 초과되었습니다." % _provider_label(provider["type"]),
+                    "AI_AGENT_EXEC_TIMEOUT",
+                    {"stdout": _trim("".join(stdout_chunks)), "stderr": _trim("".join(stderr_chunks)), "command": command},
+                )
+            try:
+                kind, payload = stream_queue.get(timeout=min(1.0, max(0.1, remaining)))
+            except queue.Empty:
+                continue
+            if kind == "stdout_done":
+                stdout_done = True
+                continue
+            if kind == "stderr_done":
+                stderr_done = True
+                continue
+            if kind == "stderr":
+                stderr_chunks.append(payload)
+                continue
+            if kind != "stdout":
+                continue
+            stdout_chunks.append(payload)
+            line = str(payload or "").strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except Exception:
+                yield {"type": "runtime_output", "stream": "stdout", "text": _trim(line, 1000)}
+                continue
+            if isinstance(event, dict):
+                yield {"type": "runtime_event", "event": event}
+
+        try:
+            return_code = process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            raise CodexRuntimeError(
+                504,
+                "%s 실행 종료를 확인할 수 없습니다." % _provider_label(provider["type"]),
+                "AI_AGENT_EXEC_TIMEOUT",
+                {"stdout": _trim("".join(stdout_chunks)), "stderr": _trim("".join(stderr_chunks)), "command": command},
+            )
+        stdout = "".join(stdout_chunks)
+        stderr = "".join(stderr_chunks)
+        text = self._agent_output_text(stdout, last_message_path)
+        if return_code != 0:
+            raise CodexRuntimeError(
+                502,
+                "%s 실행이 실패했습니다." % _provider_label(provider["type"]),
+                "AI_AGENT_EXEC_FAILED",
+                {
+                    "exit_code": return_code,
+                    "stdout": _trim(stdout),
+                    "stderr": _trim(stderr),
+                    "command": command,
+                },
+            )
+        if not text:
+            raise CodexRuntimeError(
+                502,
+                "%s 최종 응답이 비어 있습니다." % _provider_label(provider["type"]),
+                "AI_AGENT_EMPTY_RESPONSE",
+                {"stdout": _trim(stdout), "stderr": _trim(stderr), "command": command},
+            )
+        result_session = dict(session_info or {})
+        if provider.get("type") == "claude_code":
+            result_session["provider_session_id"] = (
+                result_session.get("provider_session_id")
+                or self._json_event_session_id(stdout)
+                or (result_session.get("session_id") if self._is_uuid(result_session.get("session_id")) else "")
+            )
+        return {"text": text, "exit_code": return_code, "executable": provider["executable"], "session": result_session}
+
+    def _agent_stream_command(self, provider, mcp_config_path, mcp_context_path, last_message_path, prompt="", session_info=None):
+        if provider.get("type") == "claude_code":
+            command = [
+                provider["executable"],
+                "--print",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+                "--mcp-config",
+                str(mcp_config_path),
+                "--model",
+                str(provider.get("model") or ""),
+                *self._agent_session_args(provider, session_info),
+                "--dangerously-skip-permissions",
+            ]
+            return [arg for arg in command if arg != ""]
+        return self._render_agent_command(provider, mcp_config_path, mcp_context_path, last_message_path, prompt=prompt, session_info=session_info)
 
     def _run_codex(self, provider, runtime_home, last_message_path, prompt, mcp_context_path, enabled_tools, session_info=None):
         executable = self._codex_login_executable(provider)
@@ -3275,6 +3692,18 @@ class CodexRuntime:
                 event = json.loads(line)
             except Exception:
                 continue
+            if event.get("type") == "result":
+                value = event.get("result") or event.get("message") or event.get("text")
+                if isinstance(value, str) and value.strip():
+                    result = value
+                structured = event.get("structured_output")
+                if not result and isinstance(structured, (dict, list)):
+                    result = json.dumps(structured, ensure_ascii=False)
+            if event.get("type") == "assistant":
+                message = event.get("message") if isinstance(event.get("message"), dict) else {}
+                text = self._json_event_content_text(message.get("content"))
+                if text:
+                    result = text
             if event.get("type") in {"agent_message", "thread.item.completed"}:
                 result = event.get("message") or event.get("text") or result
             if event.get("type") in {"item.completed", "thread.item.completed"}:
@@ -3295,6 +3724,22 @@ class CodexRuntime:
                 if output:
                     result = output
         return result.strip()
+
+    def _json_event_content_text(self, value):
+        if isinstance(value, str):
+            return value.strip()
+        if not isinstance(value, list):
+            return ""
+        chunks = []
+        for item in value:
+            if isinstance(item, dict):
+                if item.get("type") in {"text", "output_text"}:
+                    chunks.append(str(item.get("text") or ""))
+                elif isinstance(item.get("content"), str):
+                    chunks.append(str(item.get("content")))
+            elif item:
+                chunks.append(str(item))
+        return "".join(chunks).strip()
 
 
 Model = CodexRuntime()

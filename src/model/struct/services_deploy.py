@@ -743,6 +743,13 @@ class ServiceDeployMixin:
                 return self._deploy_failure(operation_id, "서비스 네트워크를 준비할 수 없습니다.", ensure, env=env)
 
         placement = self._apply_stack_placement(compose_path, service, operation_id, env=env)
+        if not placement.get("applied") or not placement.get("node"):
+            return self._deploy_failure(
+                operation_id,
+                "배포 서버를 확인할 수 없어 공개 포트 점검을 중단했습니다.",
+                {"status": "error", "message": "deployment node unavailable", "placement": placement},
+                env=env,
+            )
         update_order_adjustments = self._ensure_host_port_update_order(compose_path)
         if update_order_adjustments:
             operations.append_output(
@@ -752,7 +759,15 @@ class ServiceDeployMixin:
                 metadata={"step": "update order", "adjustments": update_order_adjustments},
                 env=env,
             )
-        allocations = service_ports.allocate_file(compose_path)
+        try:
+            allocations = service_ports.allocate_file(compose_path, node=placement.get("node"), env=env)
+        except Exception as exc:
+            return self._deploy_failure(
+                operation_id,
+                "배포 서버의 공개 포트를 확인할 수 없습니다.",
+                {"status": "error", "message": str(exc), "placement": placement},
+                env=env,
+            )
         if allocations.get("allocations"):
             operations.append_output(
                 operation_id,

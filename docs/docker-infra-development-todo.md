@@ -323,11 +323,11 @@ Harbor는 외부 연동 대상이 아니라 Docker Infra가 마스터 노드에 
 
 상태: Rework
 
-도메인 관리 화면은 Cloudflare DNS와 업로드 인증서 상태를 담당한다. 서비스 화면은 특정 서비스에 도메인과 인증서를 적용하는 흐름을 담당한다.
+도메인 관리 화면은 DDNS 관리 서버와 등록 레코드 상태를 담당한다. 서비스 화면은 특정 서비스에 DDNS 도메인과 인증서를 적용하는 흐름을 담당한다.
 
 Done:
 
-- 도메인별 Cloudflare Zone ID/token 관리
+- DDNS wildcard suffix와 API Key 관리
 - DNS record 동기화와 CRUD
 - DNS record 필터
 - 도메인별 인증서 업로드와 만료일 분석
@@ -338,7 +338,7 @@ Done:
 - [Done] chain/fullchain 업로드 지원 여부 결정
 - [Done] 인증서가 어떤 서비스에 적용 중인지 표시
 - 서비스 화면 certbot 발급과 도메인 화면 인증서 목록 연동
-- Cloudflare token이 없어도 수동 도메인 관리 가능하게 유지
+- DDNS 관리 서버가 없어도 도메인 미사용 서비스 생성 가능하게 유지
 - A record helper와 Docker Infra master IP 자동 제안
 
 ## 9. 시스템 설정

@@ -353,6 +353,8 @@
     overflow: auto;
     padding: 16px 18px;
     background: #ffffff;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ai-agent-empty-suggestions {
@@ -427,6 +429,12 @@
     color: #27272a;
     font-size: 13px;
     line-height: 1.5;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.ai-agent-message-assistant {
+    max-width: 100%;
 }
 
 .ai-agent-message small {
@@ -467,10 +475,26 @@
 
 .ai-agent-markdown {
     overflow-wrap: anywhere;
+    color: #27272a;
+    font-size: 13px;
+    line-height: 1.62;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.ai-agent-markdown * {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+:host ::ng-deep .ai-agent-markdown,
+:host ::ng-deep .ai-agent-markdown * {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ai-agent-markdown p {
-    margin: 0 0 8px;
+    margin: 0 0 10px;
     white-space: normal;
 }
 
@@ -491,7 +515,7 @@
 .ai-agent-markdown h4,
 .ai-agent-markdown h5,
 .ai-agent-markdown h6 {
-    margin: 0 0 7px;
+    margin: 3px 0 7px;
     color: #18181b;
     font-size: 13px;
     font-weight: 700;
@@ -500,13 +524,19 @@
 
 .ai-agent-markdown ol,
 .ai-agent-markdown ul {
-    margin: 6px 0 8px 18px;
+    margin: 6px 0 12px 18px;
     padding: 0;
 }
 
 .ai-agent-markdown li {
-    margin: 4px 0;
+    margin: 5px 0;
     padding-left: 2px;
+}
+
+.ai-agent-markdown p > strong:only-child {
+    display: block;
+    margin-top: 3px;
+    margin-bottom: 6px;
 }
 
 .ai-agent-markdown strong {
@@ -683,6 +713,8 @@
     margin-top: 10px;
     padding-top: 8px;
     border-top: 1px solid #e4e4e7;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .ai-agent-suggested-title {
@@ -767,6 +799,8 @@
     flex-direction: column;
     overflow: hidden;
     background: #ffffff;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ai-agent-history-toolbar,
@@ -869,6 +903,8 @@
     min-height: 0;
     overflow: auto;
     padding: 10px 12px;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ai-agent-history-pagination {
@@ -953,12 +989,26 @@
     color: #18181b;
     padding: 9px 10px;
     text-align: left;
+    cursor: pointer;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.ai-agent-history-main * {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ai-agent-history-main:hover,
 .ai-agent-history-item.selected .ai-agent-history-main {
     border-color: #fdba74;
     background: #fff7ed;
+}
+
+.ai-agent-history-main:focus-visible {
+    border-color: #f97316;
+    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.18);
+    outline: none;
 }
 
 .ai-agent-history-row {
@@ -1059,6 +1109,8 @@
     border-top: 1px solid #e4e4e7;
     background: #fafafa;
     padding: 12px;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ai-agent-history-detail header {
@@ -1141,6 +1193,8 @@
     border-top: 1px solid #e4e4e7;
     padding-top: 10px;
     margin-top: 10px;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ai-agent-history-section strong {
@@ -1178,6 +1232,20 @@
     border-radius: 6px;
     background: #ffffff;
     padding: 9px;
+    cursor: text;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.ai-agent-history-turn * {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+:host ::ng-deep .ai-agent-history-turn,
+:host ::ng-deep .ai-agent-history-turn * {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ai-agent-history-turn-meta {
@@ -1223,6 +1291,13 @@
     border-radius: 6px;
     background: #ffffff;
     padding: 8px 9px;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.ai-agent-history-copy-text * {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ai-agent-history-copy-text strong,
@@ -1474,6 +1549,10 @@
     color: #ffffff;
     box-shadow: 0 14px 30px rgba(249, 115, 22, 0.32);
     font-size: 20px;
+}
+
+.ai-agent-toggle-services-create {
+    bottom: 96px;
 }
 
 .ai-agent-toggle:hover {
@@ -1884,11 +1963,336 @@
         height: 52px;
     }
 
+    .ai-agent-toggle-services-create {
+        bottom: 112px;
+    }
+
     .ai-agent-shell-open {
         grid-template-rows: minmax(0, 1fr) minmax(380px, 48vh);
     }
 
     .ai-agent-shell-history-detail-open {
         grid-template-rows: minmax(0, 1fr) minmax(240px, 34vh) minmax(380px, 48vh);
+    }
+}
+
+:host ::ng-deep .infra-shell {
+    --infra-border: #e3e7ee;
+    --infra-surface: rgba(255, 255, 255, 0.92);
+    --infra-surface-solid: #ffffff;
+    --infra-muted: #64748b;
+    --infra-ink: #111827;
+    --infra-shadow: 0 14px 34px rgba(15, 23, 42, 0.07);
+    --infra-shadow-soft: 0 8px 20px rgba(15, 23, 42, 0.045);
+    background:
+        radial-gradient(circle at 12% 0%, rgba(20, 184, 166, 0.10), transparent 30%),
+        radial-gradient(circle at 82% 8%, rgba(14, 165, 233, 0.09), transparent 30%),
+        linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+}
+
+:host-context(.dark) ::ng-deep .infra-shell {
+    --infra-border: #27272f;
+    --infra-surface: rgba(24, 24, 27, 0.88);
+    --infra-surface-solid: #18181b;
+    --infra-muted: #a1a1aa;
+    --infra-ink: #f4f4f5;
+    --infra-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
+    --infra-shadow-soft: 0 10px 24px rgba(0, 0, 0, 0.22);
+    background:
+        radial-gradient(circle at 18% 0%, rgba(20, 184, 166, 0.12), transparent 28%),
+        radial-gradient(circle at 88% 8%, rgba(99, 102, 241, 0.13), transparent 28%),
+        linear-gradient(180deg, #09090b 0%, #111113 100%);
+}
+
+:host ::ng-deep .infra-shell .infra-sidebar-panel {
+    box-shadow: 12px 0 36px rgba(15, 23, 42, 0.06);
+}
+
+:host-context(.dark) ::ng-deep .infra-shell .infra-sidebar-panel {
+    box-shadow: 12px 0 36px rgba(0, 0, 0, 0.24);
+}
+
+:host ::ng-deep .infra-shell .infra-content {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 180px),
+        transparent;
+}
+
+:host ::ng-deep .infra-shell header.sticky {
+    border-bottom: 1px solid rgba(226, 232, 240, 0.86) !important;
+    background: rgba(255, 255, 255, 0.82) !important;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.75), 0 10px 24px rgba(15, 23, 42, 0.04);
+    backdrop-filter: blur(18px);
+}
+
+:host-context(.dark) ::ng-deep .infra-shell header.sticky {
+    border-bottom-color: rgba(63, 63, 70, 0.78) !important;
+    background: rgba(9, 9, 11, 0.78) !important;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+}
+
+:host ::ng-deep .infra-shell header.sticky > div {
+    padding: 18px 28px;
+}
+
+:host ::ng-deep .infra-shell header.sticky h1 {
+    font-size: 22px;
+    line-height: 1.25;
+    color: var(--infra-ink);
+}
+
+:host ::ng-deep .infra-shell header.sticky button,
+:host ::ng-deep .infra-shell header.sticky a {
+    box-shadow: none;
+}
+
+:host ::ng-deep .infra-shell main {
+    padding: 24px 28px 32px;
+}
+
+:host ::ng-deep .infra-shell :where(section, article, aside, div)[class*="rounded-md"][class*="border-zinc-200"][class*="bg-white"],
+:host ::ng-deep .infra-shell :where(section, article, aside, div)[class*="rounded-lg"][class*="border-zinc-200"][class*="bg-white"] {
+    border-color: var(--infra-border) !important;
+    background: var(--infra-surface) !important;
+    box-shadow: var(--infra-shadow-soft);
+    backdrop-filter: blur(10px);
+}
+
+:host-context(.dark) ::ng-deep .infra-shell :where(section, article, aside, div)[class*="border-zinc-200"][class*="bg-white"] {
+    border-color: var(--infra-border) !important;
+    background: var(--infra-surface) !important;
+}
+
+:host ::ng-deep .infra-shell table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+:host ::ng-deep .infra-shell thead {
+    background: rgba(248, 250, 252, 0.94) !important;
+}
+
+:host-context(.dark) ::ng-deep .infra-shell thead {
+    background: rgba(24, 24, 27, 0.96) !important;
+}
+
+:host ::ng-deep .infra-shell tbody tr {
+    transition: background 0.16s ease, box-shadow 0.16s ease;
+}
+
+:host ::ng-deep .infra-shell tbody tr[role="button"]:hover {
+    background: rgba(241, 245, 249, 0.92) !important;
+}
+
+:host-context(.dark) ::ng-deep .infra-shell tbody tr[role="button"]:hover {
+    background: rgba(39, 39, 42, 0.82) !important;
+}
+
+:host ::ng-deep .infra-shell input,
+:host ::ng-deep .infra-shell select,
+:host ::ng-deep .infra-shell textarea {
+    border-color: #d7dde8 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+:host ::ng-deep .infra-shell input:focus,
+:host ::ng-deep .infra-shell select:focus,
+:host ::ng-deep .infra-shell textarea:focus {
+    border-color: #0f172a !important;
+    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.10) !important;
+}
+
+:host-context(.dark) ::ng-deep .infra-shell input,
+:host-context(.dark) ::ng-deep .infra-shell select,
+:host-context(.dark) ::ng-deep .infra-shell textarea {
+    border-color: #3f3f46 !important;
+    background-color: #111113 !important;
+    color: #f4f4f5 !important;
+    box-shadow: none;
+}
+
+:host-context(.dark) ::ng-deep .infra-shell input:focus,
+:host-context(.dark) ::ng-deep .infra-shell select:focus,
+:host-context(.dark) ::ng-deep .infra-shell textarea:focus {
+    border-color: #e4e4e7 !important;
+    box-shadow: 0 0 0 3px rgba(228, 228, 231, 0.12) !important;
+}
+
+:host ::ng-deep .infra-shell button,
+:host ::ng-deep .infra-shell a {
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+:host ::ng-deep .infra-shell button[class~="bg-zinc-950"],
+:host ::ng-deep .infra-shell a[class~="bg-zinc-950"] {
+    background: #111827 !important;
+    box-shadow: 0 8px 18px rgba(17, 24, 39, 0.16);
+}
+
+:host ::ng-deep .infra-shell button[class~="bg-zinc-950"]:hover,
+:host ::ng-deep .infra-shell a[class~="bg-zinc-950"]:hover {
+    background: #030712 !important;
+    transform: translateY(-1px);
+}
+
+:host ::ng-deep .infra-shell button[class~="border-zinc-300"],
+:host ::ng-deep .infra-shell a[class~="border-zinc-300"] {
+    border-color: #d7dde8 !important;
+    background-color: rgba(255, 255, 255, 0.82);
+}
+
+:host ::ng-deep .infra-shell button[class~="border-zinc-300"]:hover,
+:host ::ng-deep .infra-shell a[class~="border-zinc-300"]:hover {
+    border-color: #b8c1d1 !important;
+    background-color: #ffffff;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+:host-context(.dark) ::ng-deep .infra-shell button[class~="border-zinc-300"],
+:host-context(.dark) ::ng-deep .infra-shell a[class~="border-zinc-300"] {
+    border-color: #3f3f46 !important;
+    background-color: rgba(24, 24, 27, 0.82);
+}
+
+:host-context(.dark) ::ng-deep .infra-shell button[class~="border-zinc-300"]:hover,
+:host-context(.dark) ::ng-deep .infra-shell a[class~="border-zinc-300"]:hover {
+    border-color: #52525b !important;
+    background-color: #18181b;
+}
+
+:host ::ng-deep .infra-shell header.sticky > div {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+:host ::ng-deep .infra-shell header.sticky > div > :last-child:not(:first-child) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+:host ::ng-deep .infra-shell button:has(> i.fa-arrow-left),
+:host ::ng-deep .infra-shell a:has(> i.fa-arrow-left) {
+    flex-shrink: 0;
+    justify-content: center;
+    min-width: 76px;
+    white-space: nowrap;
+}
+
+:host ::ng-deep .infra-shell :where(button, a)[class~="h-8"][class~="w-8"] {
+    width: 32px !important;
+    min-width: 32px;
+    height: 32px !important;
+}
+
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-md"],
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-lg"] {
+    border-radius: 8px !important;
+    box-shadow: 0 24px 56px rgba(15, 23, 42, 0.22);
+}
+
+:host-context(.dark) ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-md"],
+:host-context(.dark) ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-lg"] {
+    box-shadow: 0 24px 56px rgba(0, 0, 0, 0.46);
+}
+
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-md"] > :first-child[class*="border-b"],
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-lg"] > :first-child[class*="border-b"] {
+    min-height: 64px;
+    background: rgba(255, 255, 255, 0.96) !important;
+}
+
+:host-context(.dark) ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-md"] > :first-child[class*="border-b"],
+:host-context(.dark) ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-lg"] > :first-child[class*="border-b"] {
+    background: rgba(24, 24, 27, 0.96) !important;
+}
+
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > .service-runtime-console-modal {
+    border-color: #27272a !important;
+    background: #09090b !important;
+    color: #f4f4f5 !important;
+}
+
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > .service-runtime-console-modal[class*="rounded-md"] > .service-runtime-console-header:first-child[class*="border-b"] {
+    min-height: 64px;
+    border-bottom-color: #27272a !important;
+    background: #09090b !important;
+    color: #f4f4f5 !important;
+}
+
+:host ::ng-deep .infra-shell .service-runtime-console-header h2 {
+    color: #f4f4f5 !important;
+}
+
+:host ::ng-deep .infra-shell .service-runtime-console-header p {
+    color: #a1a1aa !important;
+}
+
+:host ::ng-deep .infra-shell .service-runtime-console-header .service-runtime-console-status {
+    border-color: rgba(245, 158, 11, 0.34) !important;
+    background: rgba(245, 158, 11, 0.16) !important;
+    color: #fcd34d !important;
+}
+
+:host ::ng-deep .infra-shell .service-runtime-console-header button {
+    border-color: #3f3f46 !important;
+    background: #18181b !important;
+    color: #f4f4f5 !important;
+    box-shadow: none !important;
+}
+
+:host ::ng-deep .infra-shell .service-runtime-console-header button:hover:not(:disabled) {
+    background: #27272a !important;
+}
+
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-md"] > :last-child[class*="border-t"],
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-lg"] > :last-child[class*="border-t"] {
+    min-height: 64px;
+    background: rgba(248, 250, 252, 0.86) !important;
+}
+
+:host-context(.dark) ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-md"] > :last-child[class*="border-t"],
+:host-context(.dark) ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-lg"] > :last-child[class*="border-t"] {
+    background: rgba(17, 17, 19, 0.92) !important;
+}
+
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-md"] > :last-child[class*="border-t"] button,
+:host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-lg"] > :last-child[class*="border-t"] button {
+    justify-content: center;
+    min-height: 36px;
+    min-width: 76px;
+    white-space: nowrap;
+}
+
+@media (min-width: 768px) {
+    :host ::ng-deep .infra-shell header.sticky > div {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    :host ::ng-deep .infra-shell header.sticky > div > :last-child:not(:first-child) {
+        justify-content: flex-end;
+    }
+}
+
+@media (max-width: 640px) {
+    :host ::ng-deep .infra-shell header.sticky > div,
+    :host ::ng-deep .infra-shell main {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+
+    :host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-md"] > :last-child[class*="border-t"],
+    :host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-lg"] > :last-child[class*="border-t"] {
+        align-items: stretch;
+    }
+
+    :host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-md"] > :last-child[class*="border-t"] button,
+    :host ::ng-deep .infra-shell [class*="fixed"][class*="inset-0"] > :where(section, div)[class*="rounded-lg"] > :last-child[class*="border-t"] button {
+        flex: 1 1 auto;
     }
 }

@@ -6,15 +6,9 @@ header(class="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-bl
                 span Domains
             h1(class="mt-1 text-xl font-semibold text-zinc-950 dark:text-zinc-50") 도메인 관리
         div(class="flex flex-wrap items-center gap-2")
-            button(type="button", (click)="openDdnsModal()", class="inline-flex h-9 items-center gap-2 rounded-md border border-violet-300 bg-violet-50 px-3 text-sm font-semibold text-violet-800 hover:bg-violet-100 dark:border-violet-900/70 dark:bg-violet-950/30 dark:text-violet-200 dark:hover:bg-violet-950/50")
-                i(class="fa-solid fa-network-wired")
-                span DDNS 서버 추가
-            button(type="button", (click)="syncAllZones()", class="inline-flex h-9 items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-3 text-sm font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200 dark:hover:bg-sky-950/50")
-                i(class="fa-solid fa-cloud-arrow-down")
-                span {{syncLoading() ? '동기화 중...' : '전체 동기화'}}
-            button(type="button", (click)="openZoneModal()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+            button(type="button", (click)="openDdnsModal()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                 i(class="fa-solid fa-plus")
-                span 도메인 추가
+                span DDNS 서버 추가
 
 main(class="space-y-5 px-5 py-5")
     div(*ngIf="loading()", class="h-32 rounded-md border border-zinc-200 bg-white p-5 text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400") 정보를 불러오는 중입니다.
@@ -22,13 +16,15 @@ main(class="space-y-5 px-5 py-5")
 
     div(*ngIf="!loading() && !error()", class="space-y-5")
         section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-            div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+            div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 lg:flex-row lg:items-center lg:justify-between")
                 div
                     div(class="flex flex-wrap items-center gap-2")
                         h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") DDNS 관리 서버
                         span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="ddnsDispatcherBadgeClass()") {{ddnsDispatcherLabel()}}
-                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 중간 DDNS API로 wildcard suffix 하위 DNS 레코드를 등록합니다.
+                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 서비스 도메인은 등록된 DDNS wildcard suffix 하위 주소로만 생성됩니다.
                 div(class="flex flex-wrap items-center gap-2")
+                    span(class="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") 서버 {{ddnsSummary().endpoint_count || ddnsEndpoints().length}}개
+                    span(class="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") 등록 {{ddnsSummary().registration_count || ddnsRegistrations().length}}개
                     button(*ngIf="ddnsDispatcher()?.registered !== true", type="button", (click)="ensureDdnsDispatcher()", [disabled]="ddnsDispatcherBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-amber-300 px-2.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-900/70 dark:text-amber-300 dark:hover:bg-amber-950/30")
                         i(class="fa-solid fa-plug-circle-plus")
                         span {{ddnsDispatcherBusy() ? '등록 중...' : 'Dispatcher 등록'}}
@@ -36,185 +32,98 @@ main(class="space-y-5 px-5 py-5")
                         i(class="fa-solid fa-plus")
                         span 추가
             div(*ngIf="ddnsWarning()", class="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{ddnsWarning()}}
-            div(*ngIf="!ddnsWarning() && ddnsEndpoints().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 DDNS 관리 서버가 없습니다.
+            div(*ngIf="!ddnsWarning() && ddnsEndpoints().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 DDNS 관리 서버가 없습니다.
             div(*ngIf="ddnsEndpoints().length > 0", class="overflow-x-auto")
-                table(class="w-full min-w-[920px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
+                table(class="w-full min-w-[1100px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
                     thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
                         tr
-                            th(class="w-64 px-4 py-2 text-left font-semibold") 서버
+                            th(class="w-32 px-4 py-2 text-left font-semibold") 서버명
+                            th(class="w-24 whitespace-nowrap px-4 py-2 text-left font-semibold") 상태
+                            th(class="w-36 px-4 py-2 text-left font-semibold") Wildcard suffix
                             th(class="px-4 py-2 text-left font-semibold") DDNS 서버 API
-                            th(class="w-64 px-4 py-2 text-left font-semibold") Dispatcher 마지막 요청
-                            th(class="w-24 px-4 py-2 text-right font-semibold") 등록
-                            th(class="w-56 px-4 py-2 text-right font-semibold") 작업
+                            th(class="w-36 whitespace-nowrap px-4 py-2 text-left font-semibold") Dispatcher 요청
+                            th(class="w-28 whitespace-nowrap px-4 py-2 text-left font-semibold") IP
+                            th(class="w-28 px-4 py-2 text-left font-semibold") Host
+                            th(class="w-24 px-4 py-2 text-center font-semibold") 등록
+                            th(class="w-36 px-4 py-2 text-right font-semibold") 작업
                     tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                        tr(*ngFor="let endpoint of ddnsEndpoints()", class="align-top")
+                        tr(*ngFor="let endpoint of pagedDdnsEndpoints()", class="align-top")
                             td(class="px-4 py-3")
-                                div(class="flex min-w-0 flex-col gap-2")
-                                    div(class="flex flex-wrap items-center gap-2")
-                                        p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{endpoint.name || endpoint.domain_suffix}}
-                                        span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(endpoint.status)") {{ddnsStatusLabel(endpoint)}}
-                                    span(class="inline-flex w-fit rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300") *.{{endpoint.domain_suffix}}
+                                p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{endpoint.name || endpoint.domain_suffix}}
+                            td(class="whitespace-nowrap px-4 py-3")
+                                span(class="inline-flex whitespace-nowrap rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(endpoint.status)") {{ddnsStatusLabel(endpoint)}}
+                            td(class="px-4 py-3")
+                                span(class="inline-flex max-w-full rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300")
+                                    span(class="truncate") *.{{endpoint.domain_suffix}}
                             td(class="px-4 py-3")
                                 p(class="break-all font-mono text-xs text-zinc-700 dark:text-zinc-200") {{endpoint.api_url || endpoint.api_base_url}}
+                            td(class="whitespace-nowrap px-4 py-3")
+                                p(class="truncate whitespace-nowrap text-xs font-medium text-zinc-700 dark:text-zinc-200", [title]="formatDate(endpoint.dispatcher?.last_sent_at)") {{formatDate(endpoint.dispatcher?.last_sent_at)}}
+                            td(class="whitespace-nowrap px-4 py-3")
+                                p(class="truncate whitespace-nowrap font-mono text-xs text-zinc-700 dark:text-zinc-200", [title]="endpoint.dispatcher?.last_sent_ip || '-'") {{endpoint.dispatcher?.last_sent_ip || '-'}}
                             td(class="px-4 py-3")
-                                p(class="text-xs font-medium text-zinc-700 dark:text-zinc-200") {{formatDate(endpoint.dispatcher?.last_sent_at)}}
-                                p(class="mt-1 break-all font-mono text-xs text-zinc-500 dark:text-zinc-400") IP {{endpoint.dispatcher?.last_sent_ip || '-'}}
-                                p(class="mt-1 break-all text-xs text-zinc-400 dark:text-zinc-500") Host {{endpoint.dispatcher?.last_hostname || '-'}} · agent 레코드 {{endpoint.dispatcher?.record_count || 0}}개
-                            td(class="px-4 py-3 text-right")
-                                span(class="inline-flex justify-end rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{endpoint.registration_count || 0}}개
-                            td(class="px-4 py-3")
-                                div(class="flex items-center justify-end gap-2")
-                                    button(type="button", (click)="forceUpdateDdnsEndpoint(endpoint)", [disabled]="ddnsUpdateEndpointId() === endpoint.id", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-sky-300 px-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-sky-900/70 dark:text-sky-300 dark:hover:bg-sky-950/30")
-                                        i(class="fa-solid fa-arrows-rotate")
-                                        span {{ddnsUpdateEndpointId() === endpoint.id ? '호출 중...' : 'API 호출'}}
-                                    button(type="button", (click)="openDdnsModal(endpoint)", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                p(class="truncate text-xs font-medium text-zinc-700 dark:text-zinc-200") {{endpoint.dispatcher?.last_hostname || '-'}}
+                                p(class="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500") agent 레코드 {{endpoint.dispatcher?.record_count || 0}}개
+                            td(class="whitespace-nowrap px-4 py-3 text-center")
+                                div(class="flex flex-col items-center gap-1")
+                                    span(class="inline-flex min-w-[4rem] justify-center whitespace-nowrap rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200") {{endpointRegistrationCount(endpoint)}}개
+                            td(class="whitespace-nowrap px-4 py-3")
+                                div(class="flex flex-nowrap items-center justify-end gap-1 whitespace-nowrap")
+                                    button(type="button", (click)="forceUpdateDdnsEndpoint(endpoint)", [disabled]="ddnsUpdateEndpointId() === endpoint.id", title="DDNS API 호출", aria-label="DDNS API 호출", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-sky-300 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-sky-900/70 dark:text-sky-300 dark:hover:bg-sky-950/30")
+                                        i(class="fa-solid", [ngClass]="ddnsUpdateEndpointId() === endpoint.id ? 'fa-spinner fa-spin' : 'fa-arrows-rotate'")
+                                    button(type="button", (click)="openDdnsModal(endpoint)", title="DDNS 서버 수정", aria-label="DDNS 서버 수정", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                         i(class="fa-solid fa-pen")
-                                        span 수정
-                                    button(type="button", (click)="deleteDdnsEndpoint(endpoint)", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                    button(type="button", (click)="deleteDdnsEndpoint(endpoint)", title="DDNS 서버 삭제", aria-label="DDNS 서버 삭제", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-300 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                                         i(class="fa-solid fa-trash")
-                                        span 삭제
+            div(*ngIf="ddnsEndpointPagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
+                wiz-portal-season-pagination([current]="ddnsEndpointPagination().current", [start]="ddnsEndpointPagination().start", [end]="ddnsEndpointPagination().end", [maxlength]="10", (pageMove)="moveDdnsEndpointPage($event)")
 
-        section(class="grid grid-cols-1 gap-5 xl:grid-cols-[360px_1fr]")
-            div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-                div(class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                    div
-                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") Domain Zones
-                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 도메인 이름, 레코드 수, 동기화 상태
-                    button(type="button", (click)="openZoneModal()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                        i(class="fa-solid fa-plus")
-                        span 추가
-                div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                    button(*ngFor="let zone of zones()", type="button", (click)="loadDetail(zone.id)", class="block w-full px-4 py-3 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-950", [ngClass]="selectedZoneId() === zone.id ? 'bg-zinc-50 dark:bg-zinc-950' : ''")
-                        div(class="flex items-start justify-between gap-3")
-                            div(class="min-w-0")
-                                p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{zone.domain}}
-                            span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(zone.status)") {{zoneStatusLabel(zone)}}
-                        div(class="mt-2 flex flex-wrap items-center gap-2")
-                            span(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") Record {{zone.record_count || 0}}
-                            span(class="inline-flex max-w-full truncate rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") Last sync {{formatDate(zone.last_sync_at)}}
-                    div(*ngIf="zones().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 도메인이 없습니다.
-
-            div(class="space-y-5")
-                div(*ngIf="!selectedZone()", class="rounded-md border border-dashed border-zinc-300 bg-white px-6 py-16 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400")
-                    p(class="font-semibold text-zinc-700 dark:text-zinc-200") 선택된 도메인이 없습니다.
-                    p(class="mt-2") 좌측에서 도메인을 선택하거나 새 도메인을 추가하세요.
-
-                div(*ngIf="selectedZone()", class="space-y-5")
-                    div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-                        div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 lg:flex-row lg:items-start lg:justify-between")
-                            div(class="min-w-0")
-                                div(class="flex flex-wrap items-center gap-2")
-                                    h2(class="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50") {{selectedZone()?.domain}}
-                                    span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(selectedZone()?.status)") {{zoneStatusLabel(selectedZone())}}
-                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 레코드 {{selectedZone()?.record_count || 0}}개 · 마지막 동기화 {{formatDate(selectedZone()?.last_sync_at)}}
-                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{selectedZone()?.last_sync_message || '아직 동기화 이력이 없습니다.'}}
-                                div(class="mt-3 flex flex-wrap gap-2")
-                                    span(*ngIf="sslSummaryItems().length === 0", class="inline-flex rounded-md border border-zinc-200 px-2 py-1 text-xs font-semibold text-zinc-500 dark:border-zinc-700 dark:text-zinc-300") 연결된 SSL 인증서 없음
-                                    span(*ngFor="let item of sslSummaryItems()", class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(item.status)") {{item.label}} {{item.value}}
-                            div(class="flex flex-wrap items-center gap-2")
-                                button(type="button", (click)="syncSelectedZone()", class="inline-flex h-9 items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-3 text-sm font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200 dark:hover:bg-sky-950/50")
-                                    i(class="fa-solid fa-arrows-rotate")
-                                    span {{syncLoading() ? '동기화 중...' : '지금 동기화'}}
-                                button(type="button", (click)="openZoneModal(selectedZone())", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                    i(class="fa-solid fa-pen")
-                                    span 설정 수정
-                                button(type="button", (click)="deleteZone(selectedZone())", class="inline-flex h-9 items-center gap-2 rounded-md border border-rose-300 px-3 text-sm font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                                    i(class="fa-solid fa-trash")
-                                    span 삭제
-
-                        div(*ngIf="detailLoading()", class="px-4 py-6 text-sm text-zinc-500 dark:text-zinc-400") 상세 정보를 불러오는 중입니다.
-                        div(*ngIf="!detailLoading()", class="grid grid-cols-1 gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_320px]")
-                            div(class="space-y-4")
-                                div(class="rounded-md border border-zinc-200 dark:border-zinc-800")
-                                    div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                                        div(class="flex items-center justify-between gap-3")
-                                            div
-                                                h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") DNS Records
-                                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") Type, Name, Content를 관리합니다.
-                                            button(type="button", (click)="openRecordModal()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                                i(class="fa-solid fa-plus")
-                                                span 레코드 추가
-                                        div(class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between")
-                                            div(class="flex flex-wrap gap-2")
-                                                button(*ngFor="let type of recordTypeOptions()", type="button", (click)="toggleRecordType(type)", class="group relative inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-semibold", [ngClass]="isRecordTypeActive(type) ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'")
-                                                    | {{type}}
-                                                    span(class="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 hidden w-60 -translate-x-1/2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-left text-xs font-medium leading-5 text-zinc-600 opacity-0 shadow-lg transition group-hover:block group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300")
-                                                        | {{recordTypeDescription(type)}}
-                                                        span(class="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-950")
-                                            div(class="flex flex-1 flex-col gap-2 md:flex-row")
-                                                div(*ngIf="hasIpv4Filter()", class="min-w-0 md:w-64")
-                                                    wiz-component-search-select([items]="ipv4FilterItems()", [value]="recordFilters.ipv4", (valueChange)="setIpv4Filter($event)", [placeholder]="'모든 A 레코드 IP'", [searchPlaceholder]="'IP 주소 검색'", [emptyText]="'표시할 IP가 없습니다.'")
-                                                input(type="text", [(ngModel)]="recordFilters.query", placeholder="Name 또는 Content 검색", class="h-9 min-w-0 rounded-md border border-zinc-300 bg-white px-3 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 md:min-w-[22rem]")
-                                                button(type="button", (click)="resetRecordFilters()", class="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800") 초기화
-                                    div(class="overflow-x-auto")
-                                        table(class="w-full min-w-[620px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
-                                            thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
-                                                tr
-                                                    th(class="w-20 px-4 py-2 text-left font-semibold") Type
-                                                    th(class="px-4 py-2 text-left font-semibold") Name
-                                                    th(class="w-44 px-4 py-2 text-left font-semibold") Content
-                                                    th(class="w-24 px-4 py-2 text-right font-semibold") 작업
-                                            tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                                                tr(*ngFor="let record of visibleRecords()")
-                                                    td(class="px-4 py-3 font-semibold text-zinc-950 dark:text-zinc-50") {{record.record_type}}
-                                                    td(class="min-w-0 px-4 py-3 text-zinc-600 dark:text-zinc-300")
-                                                        div(class="truncate font-medium text-zinc-900 dark:text-zinc-100") {{record.record_name}}
-                                                        div(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400") {{fqdn(record.record_name, selectedZone()?.domain)}}
-                                                    td(class="px-4 py-3 text-zinc-600 dark:text-zinc-300")
-                                                        span(*ngIf="isAddressRecord(record)", class="inline-flex max-w-full truncate font-mono text-xs text-zinc-700 dark:text-zinc-200", [attr.title]="record.content") {{contentSummary(record)}}
-                                                        button(*ngIf="!isAddressRecord(record)", type="button", (click)="openRecordDetail(record)", class="inline-flex h-8 max-w-full items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                                            i(class="fa-solid fa-eye")
-                                                            span(class="truncate") {{contentSummary(record)}}
-                                                    td(class="px-4 py-3")
-                                                        div(class="flex items-center justify-end gap-2")
-                                                            button(type="button", (click)="openRecordModal(record)", class="inline-flex h-8 items-center justify-center rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                                                i(class="fa-solid fa-pen")
-                                                            button(type="button", (click)="deleteRecord(record)", class="inline-flex h-8 items-center justify-center rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                                                                i(class="fa-solid fa-trash")
-                                                tr(*ngIf="visibleRecords().length === 0")
-                                                    td(colspan="4", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 표시할 DNS 레코드가 없습니다.
-
-                            div(class="space-y-4")
-                                div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-                                    div(class="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                                        div
-                                            h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") SSL 인증서
-                                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 인증서 파일을 업로드하면 만료일과 도메인 이름을 자동으로 확인합니다.
-                                        button(type="button", (click)="openCertificateModal()", class="inline-flex h-8 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-zinc-300 px-3 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                            i(class="fa-solid fa-upload")
-                                            span(class="whitespace-nowrap") 업로드
-                                    div(*ngIf="detail()?.ssl_certificates?.length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400")
-                                        p 연결된 SSL 인증서가 없습니다.
-                                        p(class="mt-1 text-xs") 무료 인증서 발급은 서비스 관리에서 진행합니다.
-                                    div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                                        div(*ngFor="let cert of detail()?.ssl_certificates", class="px-4 py-3")
-                                            div(class="flex items-center justify-between gap-3")
-                                                p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{cert.label || cert.cert_path}}
-                                                div(class="flex items-center gap-2")
-                                                    span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(cert.status)") {{certificateStatusLabel(cert.status)}}
-                                                    button(type="button", (click)="deleteCertificate(cert)", class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-300 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                                                        i(class="fa-solid fa-trash")
-                                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{cert.days_remaining ?? '-'}}일 남음 · {{formatDate(cert.not_after)}} · {{cert.key_exists ? 'KEY 있음' : 'KEY 없음'}}
-                                            p(class="mt-1 text-xs", [ngClass]="cert.key_matches === false || cert.key_permission_secure === false ? 'text-rose-600 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300'") {{certificateKeyText(cert)}}
-                                            p(class="mt-1 break-all text-[11px] text-zinc-400 dark:text-zinc-500") {{cert.cert_path}}
-                                            div(*ngIf="cert.dns_names?.length > 0", class="mt-2 flex flex-wrap gap-2")
-                                                span(*ngFor="let name of cert.dns_names", class="inline-flex rounded-md border border-zinc-200 px-2 py-1 text-[11px] font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300") {{name}}
-                                div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-                                    div(class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                                        h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 인증서 적용 서비스
-                                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 이 도메인 또는 하위 도메인을 사용하는 서비스입니다.
-                                    div(*ngIf="serviceLinks().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 연결된 서비스가 없습니다.
-                                    div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                                        div(*ngFor="let item of serviceLinks()", class="px-4 py-3")
-                                            div(class="flex items-start justify-between gap-3")
-                                                div(class="min-w-0")
-                                                    p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{item.service_name}}
-                                                    p(class="mt-1 break-all text-xs text-zinc-500 dark:text-zinc-400") {{item.domain}} · {{serviceCertificateLabel(item)}}
-                                                div(class="flex shrink-0 items-center gap-2")
-                                                    span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(item.certificate_applied ? 'valid' : 'pending')") {{item.certificate_applied ? '적용됨' : '대기'}}
-                                                    a(*ngIf="item.service_id", [routerLink]="serviceDetailHref(item)", class="inline-flex h-7 items-center justify-center gap-1.5 rounded-md border border-zinc-300 px-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                                        i(class="fa-solid fa-arrow-right")
-                                                        span 상세
+        section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+            div(class="flex flex-col gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                div
+                    h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 등록된 DDNS 레코드
+                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 서비스 배포가 DDNS API로 등록한 hostname, 연결 서비스, Docker Infra 연결 대상입니다.
+                span(class="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{ddnsRegistrations().length}}개
+            div(*ngIf="ddnsRegistrations().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 DDNS 레코드가 없습니다.
+            div(*ngIf="ddnsRegistrations().length > 0", class="overflow-x-auto")
+                table(class="w-full min-w-[1040px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
+                    thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
+                        tr
+                            th(class="px-4 py-2 text-left font-semibold") Hostname
+                            th(class="w-48 px-4 py-2 text-left font-semibold") 연결 서비스
+                            th(class="w-56 px-4 py-2 text-left font-semibold") 연결 대상
+                            th(class="w-36 px-4 py-2 text-left font-semibold") DDNS 서버
+                            th(class="w-24 px-4 py-2 text-left font-semibold") 상태
+                            th(class="w-36 px-4 py-2 text-left font-semibold") 마지막 갱신
+                    tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                        tr(*ngFor="let item of pagedDdnsRegistrations()", class="align-top")
+                            td(class="px-4 py-3")
+                                a([href]="registrationHostnameHref(item)", target="_blank", rel="noopener noreferrer", class="inline-flex max-w-full items-center font-semibold text-zinc-950 hover:underline dark:text-zinc-50")
+                                    span(class="min-w-0 break-all") {{item.domain}}
+                                    i(class="fa-solid fa-arrow-up-right-from-square ml-2 mr-2 flex-none text-xs text-zinc-500 dark:text-zinc-400")
+                                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{item.remote_record_id || '-'}}
+                            td(class="px-4 py-3")
+                                div(class="flex items-start justify-between gap-3")
+                                    div(class="min-w-0")
+                                        p(class="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-100") {{registrationServiceLabel(item)}}
+                                        p(class="mt-1 truncate text-[11px] text-zinc-400 dark:text-zinc-500") {{registrationServiceSubtitle(item)}}
+                                    a(*ngIf="hasLinkedService(item)", [routerLink]="serviceDetailLink(item)", title="서비스 상세", [attr.aria-label]="'서비스 상세로 이동'", class="inline-flex h-8 w-8 flex-none items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100")
+                                        i(class="fa-solid fa-arrow-up-right-from-square")
+                            td(class="px-4 py-3")
+                                div(class="flex items-start justify-between gap-3")
+                                    div(class="min-w-0")
+                                        p(class="break-words text-xs font-semibold text-zinc-700 dark:text-zinc-200") {{registrationTargetTitle(item)}}
+                                        p(*ngIf="registrationTargetSubtitle(item)", class="mt-1 break-words text-[11px] text-zinc-500 dark:text-zinc-400") {{registrationTargetSubtitle(item)}}
+                                    a(*ngIf="hasTargetDetail(item)", [routerLink]="targetDetailLink(item)", title="서버 상세", [attr.aria-label]="'서버 상세로 이동'", class="inline-flex h-8 w-8 flex-none items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100")
+                                        i(class="fa-solid fa-server")
+                            td(class="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300") {{registrationEndpointLabel(item)}}
+                            td(class="px-4 py-3")
+                                span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(item.status)") {{registrationStatusLabel(item)}}
+                            td(class="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300") {{formatDate(item.last_sync_at)}}
+            div(*ngIf="ddnsRegistrationPagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
+                wiz-portal-season-pagination([current]="ddnsRegistrationPagination().current", [start]="ddnsRegistrationPagination().start", [end]="ddnsRegistrationPagination().end", [maxlength]="10", (pageMove)="moveDdnsRegistrationPage($event)")
 
 div(*ngIf="ddnsModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6")
     div(class="w-full max-w-2xl rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900")
@@ -255,127 +164,3 @@ div(*ngIf="ddnsModalOpen()", class="fixed inset-0 z-50 flex items-center justify
             button(type="button", (click)="saveDdnsEndpoint()", class="inline-flex h-10 items-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                 i(class="fa-solid fa-floppy-disk")
                 span 저장
-
-div(*ngIf="zoneModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6")
-    div(class="w-full max-w-2xl rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900")
-        div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            div
-                h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{zoneForm.id ? '도메인 설정 수정' : '도메인 추가'}}
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") Zone ID와 token은 이 도메인 전용으로 저장됩니다.
-            button(type="button", (click)="closeZoneModal()", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                i(class="fa-solid fa-xmark")
-        div(class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2")
-            label(class="block")
-                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 도메인 이름
-                input(type="text", [(ngModel)]="zoneForm.domain", placeholder="example.com", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-            label(class="block")
-                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Zone ID
-                input(type="text", [(ngModel)]="zoneForm.zone_id", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-            label(class="block md:col-span-2")
-                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") API Token
-                div(class="flex items-center gap-2")
-                    input([type]="zoneForm.token_visible ? 'text' : 'password'", [(ngModel)]="zoneForm.api_token_value", class="h-10 min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                    button(type="button", (click)="zoneForm.token_visible = !zoneForm.token_visible", class="inline-flex h-10 flex-none items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                        i(class="fa-solid", [ngClass]="zoneForm.token_visible ? 'fa-eye-slash' : 'fa-eye'")
-            label(class="inline-flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-200")
-                input(type="checkbox", [(ngModel)]="zoneForm.enabled")
-                span Cloudflare 동기화 사용
-        div(class="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            button(type="button", (click)="closeZoneModal()", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                span 취소
-            button(type="button", (click)="saveZone()", class="inline-flex h-10 items-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
-                i(class="fa-solid fa-floppy-disk")
-                span 저장
-
-div(*ngIf="recordModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6")
-    div(class="w-full max-w-3xl rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900")
-        div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            div
-                h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{recordForm.id ? 'DNS 레코드 수정' : 'DNS 레코드 추가'}}
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 변경 내용은 Cloudflare API에 바로 적용되고 캐시도 함께 갱신됩니다.
-            button(type="button", (click)="closeRecordModal()", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                i(class="fa-solid fa-xmark")
-        div(class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2")
-            div(class="block md:col-span-2")
-                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 레코드 타입
-                div(class="flex flex-wrap gap-2")
-                    button(*ngFor="let type of recordTypes()", type="button", (click)="setRecordType(type)", class="inline-flex h-9 items-center rounded-md border px-3 text-xs font-semibold", [ngClass]="recordForm.record_type === type ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'")
-                        | {{type}}
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{recordTypeDescription(recordForm.record_type)}}
-            label(class="block")
-                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Name
-                input(type="text", [(ngModel)]="recordForm.record_name", placeholder="@ 또는 www", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                p(*ngIf="recordNameHelper()", class="mt-1 text-xs leading-5 text-sky-700 dark:text-sky-300") {{recordNameHelper()}}
-            label(class="block md:col-span-2")
-                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Content
-                input(type="text", [(ngModel)]="recordForm.content", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                p(*ngIf="aRecordHelper()", class="mt-1 text-xs text-sky-700 dark:text-sky-300") {{aRecordHelper()}}
-            label(class="block md:col-span-2")
-                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Comment
-                input(type="text", [(ngModel)]="recordForm.comment", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-        div(class="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            button(type="button", (click)="closeRecordModal()", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                span 취소
-            button(type="button", (click)="saveRecord()", class="inline-flex h-10 items-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
-                i(class="fa-solid fa-floppy-disk")
-                span 저장
-
-div(*ngIf="recordDetailModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6")
-    div(class="w-full max-w-2xl rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900")
-        div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            div
-                h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") DNS 레코드 상세
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{recordDetail?.record_type}} {{fqdn(recordDetail?.record_name, selectedZone()?.domain)}}
-            button(type="button", (click)="closeRecordDetail()", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                i(class="fa-solid fa-xmark")
-        div(class="space-y-3 p-5")
-            div(*ngFor="let row of recordDetailRows()", class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{row.label}}
-                p(class="mt-1 break-all text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{row.value}}
-        div(class="flex items-center justify-end border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            button(type="button", (click)="closeRecordDetail()", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                span 닫기
-
-div(*ngIf="certificateModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6")
-    div(class="w-full max-w-2xl rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900")
-        div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            div
-                h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") SSL 인증서 업로드
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{selectedZone()?.domain}}에 사용할 인증서와 개인 키 파일을 선택하세요.
-            button(type="button", (click)="closeCertificateModal()", [disabled]="certificateBusy()", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                i(class="fa-solid fa-xmark")
-        div(class="space-y-4 p-5")
-            label(class="block")
-                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 표시 이름
-                input(type="text", [(ngModel)]="certificateForm.label", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-            div(class="grid grid-cols-1 gap-3 md:grid-cols-2")
-                div(class="rounded-md border border-zinc-200 p-4 dark:border-zinc-800")
-                    p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 인증서 파일
-                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") PEM, CRT, CER 또는 fullchain 파일을 선택합니다.
-                    input(id="domain-certificate-cert_file", type="file", accept=".pem,.crt,.cer,.cert", class="hidden", (change)="selectCertificateFile('cert_file', $event)")
-                    button(type="button", (click)="openCertificateFilePicker('cert_file')", [disabled]="certificateBusy()", class="mt-3 inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                        i(class="fa-solid fa-file-arrow-up")
-                        span 파일 선택
-                    p(class="mt-2 truncate text-xs text-zinc-500 dark:text-zinc-400") {{certificateForm.cert_file_name || '선택된 파일 없음'}}
-                div(class="rounded-md border border-zinc-200 p-4 dark:border-zinc-800")
-                    p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 키 파일
-                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 인증서와 짝이 맞는 private key 파일입니다.
-                    input(id="domain-certificate-key_file", type="file", accept=".key,.pem", class="hidden", (change)="selectCertificateFile('key_file', $event)")
-                    button(type="button", (click)="openCertificateFilePicker('key_file')", [disabled]="certificateBusy()", class="mt-3 inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                        i(class="fa-solid fa-file-shield")
-                        span 파일 선택
-                    p(class="mt-2 truncate text-xs text-zinc-500 dark:text-zinc-400") {{certificateForm.key_file_name || '선택된 파일 없음'}}
-            div(class="rounded-md border border-zinc-200 p-4 dark:border-zinc-800")
-                p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 체인 / Fullchain 파일
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 별도 chain 또는 CA bundle이 있으면 선택합니다. 선택 시 fullchain.pem으로 합쳐 저장합니다.
-                input(id="domain-certificate-chain_file", type="file", accept=".pem,.crt,.cer,.chain,.bundle,.ca-bundle", class="hidden", (change)="selectCertificateFile('chain_file', $event)")
-                button(type="button", (click)="openCertificateFilePicker('chain_file')", [disabled]="certificateBusy()", class="mt-3 inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                    i(class="fa-solid fa-link")
-                    span 파일 선택
-                p(class="mt-2 truncate text-xs text-zinc-500 dark:text-zinc-400") {{certificateForm.chain_file_name || '선택하지 않음'}}
-        div(class="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            button(type="button", (click)="closeCertificateModal()", [disabled]="certificateBusy()", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                span 취소
-            button(type="button", (click)="uploadCertificate()", [disabled]="certificateBusy()", class="inline-flex h-10 min-w-[6rem] items-center justify-center gap-2 whitespace-nowrap rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
-                i(class="fa-solid", [ngClass]="certificateBusy() ? 'fa-spinner fa-spin' : 'fa-upload'")
-                span(class="whitespace-nowrap") {{certificateBusy() ? '업로드 중' : '업로드'}}

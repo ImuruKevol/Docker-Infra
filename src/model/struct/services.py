@@ -225,16 +225,17 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
                     item_port = _safe_int((item or {}).get("port"), port)
                     item_ssl_mode = (item or {}).get("ssl_mode") or ssl_mode
                     item_metadata = {"source": "ui_wizard", **dict((item or {}).get("metadata") or {})}
-                    if not item_metadata.get("zone_id"):
-                        ddns_endpoint = ddns_model.match_domain(item_domain, endpoint_id=item_metadata.get("ddns_endpoint_id"), env=env)
-                        if ddns_endpoint:
-                            item_metadata.update({
-                                "dns_provider": "ddns",
-                                "routing_provider": "nginx",
-                                "ddns_endpoint_id": str(ddns_endpoint["id"]),
-                                "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
-                                "ddns_mode": "ddns_management",
-                            })
+                    ddns_endpoint = ddns_model.match_domain(item_domain, endpoint_id=item_metadata.get("ddns_endpoint_id"), env=env)
+                    if not ddns_endpoint:
+                        raise ServiceError(400, "서비스 도메인은 DDNS 관리 서버에 등록된 suffix 하위 주소만 사용할 수 있습니다.", "DDNS_ENDPOINT_REQUIRED", domain=item_domain)
+                    item_metadata.pop("zone_id", None)
+                    item_metadata.update({
+                        "dns_provider": "ddns",
+                        "routing_provider": "nginx",
+                        "ddns_endpoint_id": str(ddns_endpoint["id"]),
+                        "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                        "ddns_mode": "ddns_management",
+                    })
                     cursor.execute(
                         """
                         INSERT INTO service_domains(service_id, domain, port, proxy_type, ssl_mode, test_run_id, metadata)

@@ -5224,30 +5224,8 @@
                 "method": "POST",
                 "path": "/wiz/api/page.domains/load",
                 "safety": "read",
-                "summary": "도메인 관리 목록 조회",
+                "summary": "DDNS 도메인 관리 목록 조회",
                 "required": []
-            },
-            {
-                "operationId": "domains.detail",
-                "menu": "domains",
-                "method": "POST",
-                "path": "/wiz/api/page.domains/detail",
-                "safety": "read",
-                "summary": "도메인 상세 조회",
-                "required": [
-                    "zone_id"
-                ]
-            },
-            {
-                "operationId": "domains.save_zone",
-                "menu": "domains",
-                "method": "POST",
-                "path": "/wiz/api/page.domains/save_zone",
-                "safety": "write",
-                "summary": "도메인 존 설정 저장",
-                "required": [
-                    "domain"
-                ]
             },
             {
                 "operationId": "domains.save_ddns_endpoint",
@@ -5258,7 +5236,7 @@
                 "summary": "DDNS 관리 서버 설정 저장",
                 "required": [
                     "domain_suffix",
-                    "endpoint_url"
+                    "api_url"
                 ]
             },
             {
@@ -5278,7 +5256,7 @@
                 "method": "POST",
                 "path": "/wiz/api/page.domains/force_update_ddns_endpoint",
                 "safety": "write",
-                "summary": "DDNS 엔드포인트 강제 갱신",
+                "summary": "DDNS API 수동 호출",
                 "required": [
                     "endpoint_id"
                 ]
@@ -5301,75 +5279,6 @@
                 "summary": "DDNS 엔드포인트 상태 점검",
                 "required": [
                     "endpoint_id"
-                ]
-            },
-            {
-                "operationId": "domains.delete_zone",
-                "menu": "domains",
-                "method": "POST",
-                "path": "/wiz/api/page.domains/delete_zone",
-                "safety": "destructive",
-                "summary": "도메인 존 설정 삭제",
-                "required": [
-                    "zone_id"
-                ]
-            },
-            {
-                "operationId": "domains.sync_zone",
-                "menu": "domains",
-                "method": "POST",
-                "path": "/wiz/api/page.domains/sync_zone",
-                "safety": "write",
-                "summary": "도메인 존 동기화",
-                "required": [
-                    "zone_id"
-                ]
-            },
-            {
-                "operationId": "domains.sync_all",
-                "menu": "domains",
-                "method": "POST",
-                "path": "/wiz/api/page.domains/sync_all",
-                "safety": "write",
-                "summary": "전체 도메인 동기화",
-                "required": []
-            },
-            {
-                "operationId": "domains.save_record",
-                "menu": "domains",
-                "method": "POST",
-                "path": "/wiz/api/page.domains/save_record",
-                "safety": "write",
-                "summary": "DNS 레코드 저장",
-                "required": [
-                    "zone_id",
-                    "name",
-                    "type",
-                    "content"
-                ]
-            },
-            {
-                "operationId": "domains.delete_record",
-                "menu": "domains",
-                "method": "POST",
-                "path": "/wiz/api/page.domains/delete_record",
-                "safety": "destructive",
-                "summary": "DNS 레코드 삭제",
-                "required": [
-                    "zone_id",
-                    "record_id"
-                ]
-            },
-            {
-                "operationId": "domains.delete_certificate",
-                "menu": "domains",
-                "method": "POST",
-                "path": "/wiz/api/page.domains/delete_certificate",
-                "safety": "destructive",
-                "summary": "도메인 인증서 삭제",
-                "required": [
-                    "zone_id",
-                    "certificate_id"
                 ]
             },
             {

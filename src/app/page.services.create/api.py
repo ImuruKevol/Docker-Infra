@@ -91,23 +91,7 @@ def _zone_certificate_summary(certificate_cache, domain, zone_id=None):
 
 def _domain_options_payload():
     domains_model = wiz.model("struct").domains
-    webserver = wiz.model("struct/webserver")
-    zones = []
-    certificate_cache = None
-    for zone in domains_model.service_options().get("zones", []):
-        if zone.get("provider") == "ddns":
-            zones.append(zone)
-            continue
-        if certificate_cache is None:
-            certificate_cache = webserver.load().get("certificates") or []
-        zones.append({
-            **zone,
-            "certificate_summary": _zone_certificate_summary(
-                certificate_cache,
-                zone.get("domain"),
-                zone_id=zone.get("id"),
-            ),
-        })
+    zones = [zone for zone in domains_model.service_options().get("zones", []) if zone.get("provider") == "ddns"]
     return {"zones": zones}
 
 

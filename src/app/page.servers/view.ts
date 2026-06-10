@@ -14,6 +14,7 @@ export class Component implements OnInit, OnDestroy {
     public error = signal<string>('');
     public detailError = signal<string>('');
     public nodes = signal<any[]>([]);
+    public nodesPagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
     public selected = signal<any>(null);
     public detailTab = signal<string>('overview');
     public containerStats = signal<any>({ total: 0, running: 0, stopped: 0 });
@@ -45,6 +46,7 @@ export class Component implements OnInit, OnDestroy {
     public resourceHistory = signal<any>({ rows: [] });
     public resourceHistoryStartDate = signal<string>(this.todayDateInput());
     public resourceHistoryEndDate = signal<string>(this.todayDateInput());
+    public pageSize = 20;
     public fileBrowserOpen = signal<boolean>(false);
     public fileBrowserBusy = signal<boolean>(false);
     public fileBrowserPath = signal<string>('');
@@ -379,10 +381,11 @@ export class Component implements OnInit, OnDestroy {
         return Boolean(nodeId) && this.selectionEpoch === epoch && this.selected()?.id === nodeId;
     }
 
-    private applyOverview(data: any) {
+    private applyOverview(data: any, syncSelected: boolean = true) {
         this.nodes.set(data.nodes || []);
+        this.nodesPagination.set(this.paginationFor(this.nodes().length, this.nodesPagination().current));
         if (data.monitoring) this.monitoringState.set(data.monitoring);
-        this.setSelectedNode(data.selected || null);
+        if (syncSelected) this.setSelectedNode(data.selected || null);
         this.detailError.set('');
     }
 
@@ -581,6 +584,57 @@ export class Component implements OnInit, OnDestroy {
         });
     }
 
+    private paginationStart(page: number) {
+        return Math.floor((Math.max(1, Number(page || 1)) - 1) / 10) * 10 + 1;
+    }
+
+    private paginationFor(total: number, page: number = 1) {
+        const limit = this.pageSize;
+        const end = Math.max(1, Math.ceil(Number(total || 0) / limit));
+        const current = Math.min(Math.max(1, Number(page || 1)), end);
+        return {
+            current,
+            start: this.paginationStart(current),
+            end,
+            total: Number(total || 0),
+            limit,
+        };
+    }
+
+    public pagedNodes() {
+        const pagination = this.nodesPagination();
+        const limit = Number(pagination?.limit || this.pageSize);
+        const start = (Number(pagination?.current || 1) - 1) * limit;
+        return this.nodes().slice(start, start + limit);
+    }
+
+    public nodesBoardSummary() {
+        const pagination = this.nodesPagination();
+        const total = Number(pagination?.total || 0);
+        if (!total) return '총 0개';
+        const current = Number(pagination?.current || 1);
+        const limit = Number(pagination?.limit || this.pageSize);
+        const start = (current - 1) * limit + 1;
+        const end = Math.min(total, current * limit);
+        return `총 ${total}개 · ${start}-${end}`;
+    }
+
+    public isServerDetailScreen() {
+        return Boolean(this.selected()?.id);
+    }
+
+    public async closeServerDetail() {
+        this.beginSelection(null);
+        this.detailTab.set('overview');
+        await this.syncNodeRoute('');
+        await this.service.render();
+    }
+
+    public async moveNodePage(page: number) {
+        this.nodesPagination.set(this.paginationFor(this.nodes().length, page));
+        await this.service.render();
+    }
+
     public async load(selectedId: string = '', replaceRoute: boolean = false) {
         this.loading.set(true);
         this.error.set('');
@@ -591,16 +645,17 @@ export class Component implements OnInit, OnDestroy {
         const { code, data } = await wiz.call("load", { selected_id: selectedId });
         if (code === 200) {
             this.detailTab.set(this.routeDetailTab());
-            this.applyOverview(data);
-            const epoch = this.beginSelection(data.selected || null);
+            this.applyOverview(data, Boolean(selectedId));
+            const selected = selectedId ? (data.selected || { id: selectedId }) : null;
+            const epoch = this.beginSelection(selected);
             this.detailTab.set(this.routeDetailTab());
-            await this.syncNodeRoute(data.selected?.id || '', replaceRoute);
+            await this.syncNodeRoute(selected?.id || '', replaceRoute);
             this.restartAutoRefresh();
             this.loading.set(false);
             await this.service.render();
-            if (data.selected?.id) {
-                void this.loadMacros(data.selected.id);
-                void this.fetchCachedDetail(data.selected.id, true, epoch);
+            if (selected?.id) {
+                void this.loadMacros(selected.id);
+                void this.fetchCachedDetail(selected.id, true, epoch);
             }
             return;
         } else {

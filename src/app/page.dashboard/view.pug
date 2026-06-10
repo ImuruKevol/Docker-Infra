@@ -61,7 +61,9 @@ main(class="space-y-6 px-5 py-5")
                     div
                         h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") Servers
                         p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") {{metricHistoryText()}}
-                    a(routerLink="/servers", class="text-xs font-semibold text-sky-700 hover:text-sky-800 dark:text-sky-300") Open
+                    a(routerLink="/servers", class="inline-flex h-8 items-center justify-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                        i(class="fa-solid fa-arrow-up-right-from-square")
+                        span 서버 보기
                 div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
                     div(*ngIf="isCardLoading('servers')", class="flex items-center justify-center gap-2 px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400")
                         i(class="fa-solid fa-spinner fa-spin")
@@ -89,7 +91,9 @@ main(class="space-y-6 px-5 py-5")
                     div
                         h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 서비스 목록
                         p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") Docker Infra 기준 {{serviceSummary()?.service_count || counts()?.services || 0}}개 · 확인 필요 {{serviceSummary()?.warning_count || 0}}개
-                    a(routerLink="/services", class="text-xs font-semibold text-sky-700 hover:text-sky-800 dark:text-sky-300") Services
+                    a(routerLink="/services", class="inline-flex h-8 items-center justify-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                        i(class="fa-solid fa-arrow-up-right-from-square")
+                        span 서비스 보기
                 div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
                     div(*ngIf="isCardLoading('services')", class="flex items-center justify-center gap-2 px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400")
                         i(class="fa-solid fa-spinner fa-spin")
@@ -103,6 +107,9 @@ main(class="space-y-6 px-5 py-5")
                             span(class="inline-flex shrink-0 rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(item.status)") {{statusLabel(item.status)}}
                         div(class="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold")
                             span(class="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{serviceRuntimeText(item)}}
+                            span(class="inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-0.5", [ngClass]="serviceServerBadgeClass(item)", [title]="serviceServerSummaryText(item)")
+                                i(class="fa-solid fa-server shrink-0")
+                                span(class="truncate") {{serviceServerSummaryText(item)}}
                             span(class="rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300") 도메인 {{item.domain_count || 0}}개
                             span(*ngIf="serviceWarning(item) as warning", class="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="attentionBadgeClass(warning.level)")
                                 i(class="fa-solid fa-triangle-exclamation")
@@ -113,9 +120,11 @@ main(class="space-y-6 px-5 py-5")
             div(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
                 div(class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
                     div
-                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 등록된 도메인
-                        p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") Docker Infra 기준 {{domainSummary()?.domain_count || 0}}개
-                    a(routerLink="/domains", class="text-xs font-semibold text-sky-700 hover:text-sky-800 dark:text-sky-300") Domains
+                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") DDNS 도메인
+                        p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") DDNS 기준 {{domainSummary()?.domain_count || 0}}개
+                    a(routerLink="/domains", class="inline-flex h-8 items-center justify-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                        i(class="fa-solid fa-arrow-up-right-from-square")
+                        span 도메인 보기
                 div(class="grid grid-cols-3 divide-x divide-zinc-100 border-b border-zinc-200 text-center dark:divide-zinc-800 dark:border-zinc-800")
                     div(class="px-3 py-3")
                         p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 도메인
@@ -136,14 +145,16 @@ main(class="space-y-6 px-5 py-5")
                             p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{domain.domain}}
                             p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400") {{domainServiceSummary(domain)}}
                         span(class="inline-flex shrink-0 rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="domainBadgeClass(domain)") 서비스 {{domain.service_count || 0}}개
-                    div(*ngIf="!isCardLoading('domains') && !cardError('domains') && domainRows().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 도메인이 없습니다.
+                    div(*ngIf="!isCardLoading('domains') && !cardError('domains') && domainRows().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 DDNS 도메인이 없습니다.
 
         section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
             div(class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
                 div
                     h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 최근 작업
                     p(class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400") 실행 서버와 작업 내용을 함께 표시합니다.
-                a(routerLink="/operations", class="text-xs font-semibold text-sky-700 hover:text-sky-800 dark:text-sky-300") 로그 보기
+                a(routerLink="/operations", class="inline-flex h-8 items-center justify-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                    i(class="fa-solid fa-arrow-up-right-from-square")
+                    span 로그 보기
             div(class="divide-y divide-zinc-100 dark:divide-zinc-800")
                 div(*ngIf="isCardLoading('operations')", class="flex items-center justify-center gap-2 px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400")
                     i(class="fa-solid fa-spinner fa-spin")

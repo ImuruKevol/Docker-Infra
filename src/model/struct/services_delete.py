@@ -107,19 +107,19 @@ class ServiceDeleteMixin:
         try:
             result = domains_model.delete_service_dns_records(domains, env=env)
         except domains_model.DomainError as exc:
-            metadata = {"step": "cloudflare dns remove", "error_code": exc.error_code, **exc.extra}
+            metadata = {"step": "legacy dns remove", "error_code": exc.error_code, **exc.extra}
             operations.append_output(operation_id, exc.message, stream="stderr", metadata=metadata, env=env)
             raise ServiceError(
                 409,
-                "Cloudflare DNS 레코드를 삭제할 수 없습니다.",
+                "외부 DNS 레코드를 삭제할 수 없습니다.",
                 "SERVICE_DNS_RECORD_REMOVE_FAILED",
                 dns={"message": exc.message, "error_code": exc.error_code, **exc.extra},
             )
         operations.append_output(
             operation_id,
-            f"checked Cloudflare DNS records: deleted={len(result.get('deleted') or [])}, skipped={len(result.get('skipped') or [])}",
+            f"checked legacy DNS records: deleted={len(result.get('deleted') or [])}, skipped={len(result.get('skipped') or [])}",
             stream="system",
-            metadata={"step": "cloudflare dns remove", "result": result},
+            metadata={"step": "legacy dns remove", "result": result},
             env=env,
         )
         return result

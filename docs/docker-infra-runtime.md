@@ -54,7 +54,7 @@ docker compose -f docker/compose/test.yaml --profile proxy run --rm proxy-sandbo
 - local executor allowlist
 - system asset/data directory
 - backup system data directory
-- Cloudflare token encryption key
+- DDNS key encryption key
 - SSH key directory
 - nginx command allowlist
 
@@ -198,7 +198,7 @@ nginx 기본값:
 |---|---|
 | `GET /api/domains` | 도메인 목록 |
 | `POST /api/domains` | 도메인 등록 |
-| `POST /api/domains/{id}/sync` | Cloudflare DNS record 동기화 |
+| `POST /wiz/api/page.domains/force_update_ddns_endpoint` | DDNS API 수동 호출 |
 | `POST /api/domains/{id}/records` | DNS record 생성 |
 | `PATCH /api/domains/{id}/records/{record_id}` | DNS record 수정 |
 | `DELETE /api/domains/{id}/records/{record_id}` | DNS record 삭제 |

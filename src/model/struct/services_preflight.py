@@ -378,17 +378,15 @@ class ServicesPreflight:
                 ddns_endpoint = ddns_model.match_domain(domain, endpoint_id=ddns_endpoint_id, env=env)
             elif not zone_id:
                 ddns_endpoint = ddns_model.match_domain(domain, env=env)
-            ddns_requested = metadata.get("routing_provider") == "ddns" or metadata.get("dns_provider") == "ddns" or bool(metadata.get("ddns_endpoint_id"))
-            if ddns_requested and not ddns_endpoint:
+            if not ddns_endpoint:
                 issues.append(_item("domain.ddns.endpoint", "DDNS 도메인", "error", f"{domain} 도메인을 처리할 DDNS 관리 서버를 찾을 수 없습니다."))
                 continue
             dns_provider = ""
             external_proxy = ""
             ssl_mode = ""
-            if ddns_endpoint:
-                dns_provider = "ddns"
-                external_proxy = "ddns_management"
-            certs = webserver.certificates_for_domain(domain, zone_id=None if ddns_endpoint else ((item or {}).get("zone_id") or payload.get("zone_id")), env=env)
+            dns_provider = "ddns"
+            external_proxy = "ddns_management"
+            certs = webserver.certificates_for_domain(domain, zone_id=None, env=env)
             ssl_mode = "existing" if int((certs.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
             if ssl_mode == "certbot" and shutil.which("certbot") is None:
                 issues.append(_item("domain.certbot", "SSL 인증서", "warning", f"{domain} 인증서가 없어 무료 인증서 발급 대상입니다. certbot 설치 여부는 배포 단계에서 다시 확인합니다."))

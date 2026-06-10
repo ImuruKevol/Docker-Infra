@@ -15,6 +15,7 @@ _merge_defaults = rules.merge_defaults
 _has_health_check_override = rules.has_health_check_override
 _load_compose = rules.load_compose
 _network_names = rules.network_names
+_qualify_environment_refs = rules.qualify_environment_refs
 
 
 def _safe_int(value, fallback=0):
@@ -141,6 +142,13 @@ class ComposeValidator:
                         "FORBIDDEN_HOSTNAME",
                         "hostname은 기본 정책상 사용할 수 없습니다.",
                     )
+                )
+
+            if isinstance(namespace, str) and NAMESPACE_PATTERN.fullmatch(namespace) and "environment" in service:
+                service["environment"] = _qualify_environment_refs(
+                    service.get("environment"),
+                    namespace,
+                    services.keys(),
                 )
 
             service_networks = service.get("networks")

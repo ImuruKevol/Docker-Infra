@@ -1,4 +1,4 @@
-div(class="ai-agent-shell", [class.ai-agent-shell-open]="agentVisible() && agentWidgetOpen", [class.ai-agent-shell-history-detail-open]="agentHistoryDetailDockVisible()", [style.--ai-agent-dock-width.px]="agentDockWidth")
+div(class="ai-agent-shell", [class.ai-agent-shell-open]="agentVisible() && agentWidgetOpen", [class.ai-agent-shell-history-detail-open]="agentHistoryDetailDockVisible()", [class.ai-agent-shell-services-create]="isServicesCreateRoute()", [style.--ai-agent-dock-width.px]="agentDockWidth")
     main(class="ai-agent-content")
         router-outlet
 
@@ -32,7 +32,7 @@ div(class="ai-agent-shell", [class.ai-agent-shell-open]="agentVisible() && agent
                     dd {{history.turn_count}}턴
             div(class="ai-agent-history-section ai-agent-history-turns")
                 strong 대화
-                div(*ngFor="let turn of agentHistoryTurns(history)", class="ai-agent-history-turn")
+                div(*ngFor="let turn of agentHistoryTurns(history)", class="ai-agent-history-turn", data-ai-agent-selectable-text="true")
                     div(class="ai-agent-history-turn-meta")
                         span {{'턴 ' + (turn.turn_index || 1)}}
                         time {{agentHistoryDate(turn.created_at)}}
@@ -132,7 +132,7 @@ div(class="ai-agent-shell", [class.ai-agent-shell-open]="agentVisible() && agent
                         span 불러오는 중입니다.
                     div(*ngIf="!agentHistoryLoading && agentHistoryItems.length === 0", class="ai-agent-history-empty") 표시할 히스토리가 없습니다.
                     div(*ngFor="let item of agentHistoryItems", class="ai-agent-history-item", [class.selected]="agentHistorySelected?.id === item.id")
-                        button(type="button", class="ai-agent-history-main", (click)="selectAgentHistory(item)")
+                        div(class="ai-agent-history-main", role="button", tabindex="0", data-ai-agent-selectable-text="true", (click)="selectAgentHistory(item, $event)", (keydown.enter)="selectAgentHistoryByKey(item, $event)", (keydown.space)="selectAgentHistoryByKey(item, $event)")
                             div(class="ai-agent-history-row")
                                 span([class]="agentHistoryStatusClass(item)") {{agentHistoryStatusLabel(item)}}
                                 time {{agentHistoryDate(item.created_at)}}
@@ -167,6 +167,6 @@ div(class="ai-agent-shell", [class.ai-agent-shell-open]="agentVisible() && agent
             button(type="submit", class="ai-agent-send", [disabled]="agentSending || !agentInput.trim()", aria-label="전송")
                 i(class="fa-solid fa-paper-plane")
 
-button(*ngIf="agentVisible() && !agentWidgetOpen", type="button", class="ai-agent-surface ai-agent-toggle", [class.ai-agent-toggle-loading]="agentStatusLoading()", [class.ai-agent-toggle-unavailable]="agentUnavailable()", (click)="toggleAgentWidget()", aria-label="AI Agent 열기")
+button(*ngIf="agentVisible() && !agentWidgetOpen", type="button", class="ai-agent-surface ai-agent-toggle", [class.ai-agent-toggle-services-create]="isServicesCreateRoute()", [class.ai-agent-toggle-loading]="agentStatusLoading()", [class.ai-agent-toggle-unavailable]="agentUnavailable()", (click)="toggleAgentWidget()", aria-label="AI Agent 열기")
     i(*ngIf="agentStatusLoading()", class="fa-solid fa-circle-notch fa-spin")
     i(*ngIf="!agentStatusLoading()", class="fa-solid fa-comment-dots")

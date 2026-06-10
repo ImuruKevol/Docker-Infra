@@ -97,7 +97,7 @@ Agent CLI는 installer가 자동 설치하지 않는다. 관리자는 시스템 
 - installer는 운영 DB password와 secret key를 `/etc/docker-infra/docker-infra.env`에 `0640` 권한으로 저장하고, 이 파일을 GitHub 업로드 대상으로 보지 않는다.
 - PostgreSQL role password 설정은 password 원문이 shell debug log나 process argument에 남지 않도록 표준 입력으로 SQL을 전달한다.
 - installer HTML의 관리자 password payload는 `initial-setup.json`에 `0600` 권한으로 임시 저장하고 `setup` 성공 후 삭제한다.
-- SSH private key, API token, DDNS key, Cloudflare token, AI Agent 세션/설정 secret 원문은 API 응답, operation log, audit log, installer log, devlog에 기록하지 않는다.
+- SSH private key, API token, DDNS key, AI Agent 세션/설정 secret 원문은 API 응답, operation log, audit log, installer log, devlog에 기록하지 않는다.
 
 ## DDNS 공인 IP 갱신
 

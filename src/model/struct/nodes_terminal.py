@@ -176,6 +176,19 @@ class NodeTerminal:
         if not running or running[-1].strip().lower() != "true":
             raise NodeError(409, "실행 중인 컨테이너만 터미널에 연결할 수 있습니다.", "CONTAINER_NOT_RUNNING", check=result)
 
+    def _ensure_container_exists(self, node, container_id, env=None):
+        result = self._run_node_command(
+            node,
+            ["docker", "inspect", "--format", "{{.Id}}", container_id],
+            timeout_seconds=8,
+            env=env,
+        )
+        if result.get("status") != "ok" or result.get("exit_code") not in (None, 0):
+            reason = self._command_failure(result, "container inspect failed")
+            raise NodeError(404, f"선택한 컨테이너를 확인할 수 없습니다. {reason}", "CONTAINER_INSPECT_FAILED", check=result)
+        ids = str(result.get("stdout") or "").strip().splitlines()
+        return ids[-1].strip() if ids else container_id
+
     def _shell_probe_command(self, container_id, shell):
         if shell == "bash":
             return ["docker", "exec", container_id, "bash", "-lc", "printf __docker_infra_shell_ok__"]
@@ -212,6 +225,14 @@ class NodeTerminal:
             container_id,
             shell,
         ]
+
+    def _container_logs_command(self, container_id, tail=200):
+        try:
+            tail = int(tail)
+        except Exception:
+            tail = 200
+        tail = min(max(tail, 0), 5000)
+        return ["docker", "logs", "--tail", str(tail), "-f", container_id]
 
     def create_session(self, node_id, cols=120, rows=32, env=None):
         node = self._node(node_id, env=env)
@@ -276,6 +297,48 @@ class NodeTerminal:
             "node_name": node.get("name"),
             "container_id": container_id,
             "shell": shell,
+            "command": shlex.join(command),
+            "master_fd": master_fd,
+            "process": process,
+            "shell_path": identity.get("shell"),
+        }
+
+    def create_container_logs_session(self, node_id, container_id, tail=200, cols=120, rows=32, env=None):
+        node_id = str(node_id or "").strip()
+        container_id = str(container_id or "").strip()
+        if not node_id:
+            raise NodeError(400, "node_id는 필수입니다.", "NODE_ID_REQUIRED")
+        if not container_id:
+            raise NodeError(400, "container_id는 필수입니다.", "CONTAINER_ID_REQUIRED")
+
+        node = self._node(node_id, env=env)
+        self._ensure_container_exists(node, container_id, env=env)
+        docker_command = self._container_logs_command(container_id, tail=tail)
+        command, identity = (
+            (docker_command, {"shell": None, "home": None, "username": None})
+            if self._is_local_master_node(node)
+            else self._remote_exec_command(node, docker_command, env=env)
+        )
+
+        master_fd, slave_fd = pty.openpty()
+        self._set_winsize(slave_fd, cols, rows)
+        process = subprocess.Popen(
+            command,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=self._shell_env(shell_path=identity.get("shell"), home=identity.get("home"), username=identity.get("username")),
+            preexec_fn=os.setsid,
+            close_fds=True,
+        )
+        os.close(slave_fd)
+        flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+        fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        return {
+            "node_id": str(node["id"]),
+            "node_name": node.get("name"),
+            "container_id": container_id,
+            "shell": "docker logs -f",
             "command": shlex.join(command),
             "master_fd": master_fd,
             "process": process,

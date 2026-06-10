@@ -9,9 +9,9 @@ def _filters(body):
 
 def _limit(value):
     try:
-        return max(1, min(int(value or 80), 200))
+        return max(1, min(int(value or 20), 200))
     except Exception:
-        return 80
+        return 20
 
 
 def _page(value):

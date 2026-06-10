@@ -1,6 +1,5 @@
 import datetime
 import json
-import queue
 import re
 import shlex
 import subprocess
@@ -28,7 +27,6 @@ operations = wiz.model("struct/operations")
 
 
 MAX_AI_REPAIR_ATTEMPTS = 20
-AI_STREAM_HEARTBEAT_SECONDS = 15
 AI_STREAM_PROVIDER_TIMEOUT_SECONDS = 900
 AI_VERIFY_MAX_ATTEMPTS = 3
 AI_VERIFY_RUNTIME_WAIT_ATTEMPTS = 12
@@ -37,6 +35,11 @@ AI_VERIFY_UNCHANGED_BLOCKED_ATTEMPTS = 3
 AI_VERIFY_DEPLOY_WAIT_SECONDS = 300
 SENSITIVE_ENV_PATTERN = re.compile(r"(PASSWORD|SECRET|TOKEN|KEY|AUTH|CREDENTIAL)", re.IGNORECASE)
 FILE_ENV_PATTERN = re.compile(r"_FILE$", re.IGNORECASE)
+PUBLIC_TEMPLATE_INTENT_PATTERN = re.compile(
+    r"(public|publish|published|external|browser|http|https|domain|web|website|site|dashboard|api|ui|"
+    r"공개|외부|브라우저|도메인|웹|사이트|화면|접속|포트|퍼블리시)",
+    re.IGNORECASE,
+)
 
 
 def _utc_now():
@@ -178,11 +181,31 @@ class AIAssistant:
                 "provider": self._provider_public(self._builtin_provider()),
             }
 
-        return {
-            "summary": "요청을 하나의 Agent 실행 TODO로 정리했습니다.",
-            "todos": self._normalize_chat_todos([], message),
-            "provider": self._provider_public(self._builtin_provider()),
-        }
+        provider = None
+        try:
+            selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else payload
+            provider = self._select_provider(env=env, selection=selection)
+            result = codex_runtime.complete_json(
+                provider,
+                self._ui_todo_plan_system_prompt(),
+                self._todo_plan_context(payload, message, provider, env=env),
+                env=env,
+            )
+            data = self._extract_json(result.get("text") or "")
+            todos = self._normalize_chat_todos(data.get("todos"), message)
+            todos = self._refine_chat_todos(todos, message)
+            return {
+                "summary": self._clean_text(data.get("summary")) or "요청을 실행 가능한 TODO로 정리했습니다.",
+                "todos": todos,
+                "provider": self._provider_public(provider, result.get("metadata") or {}),
+            }
+        except Exception:
+            fallback = self._heuristic_chat_todos(message) or self._normalize_chat_todos([], message)
+            return {
+                "summary": "요청을 실행 가능한 TODO로 정리했습니다.",
+                "todos": fallback,
+                "provider": self._provider_public(provider or self._builtin_provider()),
+            }
 
     def stream_chat(self, payload=None, env=None):
         payload = payload if isinstance(payload, dict) else {}
@@ -246,31 +269,18 @@ class AIAssistant:
                     "phase": "action_candidate",
                 }
 
-            result = None
-
-            def run_agent():
-                yield {
-                    "type": "agent_result",
-                    "result": codex_runtime.complete_json(
-                        provider,
-                        self._ui_chat_system_prompt(),
-                        self._chat_context_for_provider(payload, message, provider, env=env),
-                        env=env,
-                    ),
-                }
-
             yield {
                 "type": "thinking",
                 "message": "선택한 Agent CLI가 Docker Infra MCP 컨텍스트를 읽고 최종 응답 JSON을 생성합니다.",
                 "phase": "agent_execution",
             }
-            yield {"type": "status", "message": "AI Agent 응답을 기다리는 중입니다."}
-            for event in self._iter_with_heartbeat(run_agent()):
-                if event.get("type") == "heartbeat":
-                    yield self._agent_chat_heartbeat_event(event)
-                    continue
-                if event.get("type") == "agent_result":
-                    result = event.get("result")
+            yield {"type": "status", "message": "AI Agent 실행 이벤트를 스트리밍합니다."}
+            result = yield from self._stream_complete_json_result(
+                provider,
+                self._ui_chat_system_prompt(),
+                self._chat_context_for_provider(payload, message, provider, env=env),
+                env=env,
+            )
 
             yield {
                 "type": "thinking",
@@ -290,22 +300,6 @@ class AIAssistant:
             if message:
                 self._record_chat_history(payload, provider, None, status="failed", error=exc, started_at=started_at, env=env)
             yield self._error_event(exc)
-
-    def _agent_chat_heartbeat_event(self, event):
-        elapsed = int((event or {}).get("elapsed_seconds") or 0)
-        if elapsed >= 60:
-            label = "Agent가 MCP 조회와 응답 생성을 계속 진행 중입니다. (%s분 %s초 경과)" % (elapsed // 60, elapsed % 60)
-        else:
-            label = "Agent가 MCP 조회와 응답 생성을 계속 진행 중입니다. (%s초 경과)" % elapsed
-        return {
-            "type": "thinking",
-            "label": "처리 중",
-            "message": label,
-            "phase": "agent_execution_wait",
-            "elapsed_seconds": elapsed,
-            "heartbeat_count": (event or {}).get("heartbeat_count") or 0,
-            "progress_message": "Agent가 MCP 조회와 응답 생성을 계속 진행 중입니다.",
-        }
 
     def _chat_context_for_provider(self, payload, message, provider, env=None):
         context = self._chat_context(payload, message)
@@ -369,6 +363,7 @@ class AIAssistant:
                         "reason": "Korean reason for the action.",
                     }
                 ],
+                "refresh_action": "Use type=refresh when the visible screen data should be reloaded by calling that WIZ page's load APIs without reloading the browser window.",
                 "follow_up": "Optional Korean follow-up question.",
                 "suggested_actions": [
                     {
@@ -428,6 +423,7 @@ class AIAssistant:
                 raise
             data = {"answer": text, "summary": "", "needs_confirmation": False, "client_actions": []}
         answer = self._clean_text(data.get("answer") or data.get("message") or data.get("summary") or text)
+        answer = self._format_chat_answer(answer)
         if not answer:
             raise AIAssistantError(502, "AI Agent 응답 내용이 비어 있습니다.", "AI_AGENT_EMPTY_RESPONSE")
         payload = {
@@ -550,6 +546,35 @@ class AIAssistant:
             "provider": self._provider_public(self._builtin_provider()),
         }
 
+    def _format_chat_answer(self, answer):
+        text = self._clean_text(answer)
+        if not text:
+            return ""
+        if self._chat_answer_looks_structured(text) or len(text) < 260:
+            return text
+        parts = [self._clean_text(item) for item in re.split(r"(?<=[.!?])\s+", text) if self._clean_text(item)]
+        if len(parts) < 3:
+            return text
+        summary = parts[0]
+        detail_parts = parts[1:6]
+        tail_parts = parts[6:9]
+        lines = ["#### 요약", "- %s" % summary, "", "#### 확인한 내용"]
+        lines.extend("- %s" % item for item in detail_parts)
+        if tail_parts:
+            lines.extend(["", "#### 남은 관찰점"])
+            lines.extend("- %s" % item for item in tail_parts)
+        return "\n".join(lines)
+
+    def _chat_answer_looks_structured(self, answer):
+        text = self._clean_text(answer)
+        if not text:
+            return False
+        return bool(
+            re.search(r"(^|\n)\s*(#{1,6}\s+|\*\*[^*\n]+\*\*|[-*]\s+|\d+\.\s+)", text)
+            or re.search(r"(^|\n)\s*\|.+\|\s*(\n|$)", text)
+            or "```" in text
+        )
+
     def _builtin_chat_todos(self, message):
         delete_target = self._service_delete_target(message)
         if delete_target:
@@ -577,6 +602,96 @@ class AIAssistant:
                 }
             ]
         return []
+
+    def _refine_chat_todos(self, todos, message):
+        normalized = self._normalize_chat_todos(todos, message)
+        heuristic = self._heuristic_chat_todos(message)
+        if heuristic and self._chat_todos_look_like_raw_request(normalized, message):
+            return heuristic
+        return normalized
+
+    def _chat_todos_look_like_raw_request(self, todos, message):
+        message = self._clean_text(message)
+        if not message or len(todos or []) != 1:
+            return False
+        todo = todos[0] if isinstance(todos[0], dict) else {}
+        title = self._clean_text(todo.get("title"))
+        prompt = self._clean_text(todo.get("prompt"))
+        compact_message = re.sub(r"\s+", "", message)
+        return any(
+            re.sub(r"\s+", "", value or "") == compact_message
+            for value in [title, prompt]
+        )
+
+    def _heuristic_chat_todos(self, message):
+        text = self._clean_text(message)
+        if not text:
+            return []
+        changes = self._todo_requirement_changes(text)
+        if not changes:
+            return []
+        target = "템플릿" if re.search(r"(템플릿|template)", text, re.IGNORECASE) else "요청 대상"
+        title = "%s 요구사항 반영: %s" % (target, ", ".join(changes[:4]))
+        prompt = "%s을 수정해 %s 요구사항을 현재 상태에 맞게 반영해줘." % (target, ", ".join(changes))
+        if target == "템플릿":
+            prompt = (
+                "현재 또는 방금 만든 템플릿을 수정해 %s 요구사항을 "
+                "docker-compose.yaml, values.default.yaml, values.schema.json, README.md에 일관되게 반영해줘."
+            ) % ", ".join(changes)
+        return [
+            {
+                "id": "todo-1",
+                "title": title[:140],
+                "prompt": prompt[:800],
+                "reason": "원문을 그대로 실행하지 않고 변경 의도를 작업 항목으로 정리했습니다.",
+            }
+        ]
+
+    def _todo_requirement_changes(self, message):
+        clauses = [
+            self._clean_text(item)
+            for item in re.split(r"(?:[.!?\n]+|그리고|또한|추가로|;)", message)
+            if self._clean_text(item)
+        ]
+        changes = []
+        for clause in clauses:
+            subject = self._todo_subject_from_clause(clause)
+            if not subject:
+                continue
+            if re.search(r"(필요\s*없|제거|삭제|빼|없애|말고|하지\s*마|하지\s*않)", clause, re.IGNORECASE):
+                action = "%s 제거" % subject
+            elif re.search(r"(추가|사용할 수 있도록|지원|포함|넣어|붙여)", clause, re.IGNORECASE):
+                action = "%s 지원 추가" % subject
+            elif re.search(r"(수정|변경|바꿔|고쳐)", clause, re.IGNORECASE):
+                action = "%s 수정" % subject
+            else:
+                continue
+            if action not in changes:
+                changes.append(action)
+        return changes[:5]
+
+    def _todo_subject_from_clause(self, clause):
+        text = self._clean_text(clause)
+        lowered = text.lower()
+        known = [
+            ("mariadb", "MariaDB"),
+            ("maria db", "MariaDB"),
+            ("nginx", "nginx 설치 과정" if "설치" in text else "nginx"),
+            ("healthcheck", "헬스체크"),
+            ("health check", "헬스체크"),
+            ("헬스체크", "헬스체크"),
+            ("헬스 체크", "헬스체크"),
+        ]
+        for token, label in known:
+            if token in lowered or token in text:
+                return label
+        quoted = re.search(r"[\"'`“”‘’]([^\"'`“”‘’]{2,80})[\"'`“”‘’]", text)
+        if quoted:
+            return self._clean_text(quoted.group(1))
+        ascii_match = re.search(r"\b([a-zA-Z][a-zA-Z0-9_.-]{1,60})\b", text)
+        if ascii_match:
+            return ascii_match.group(1)
+        return ""
 
     def _service_delete_response(self, service_name):
         return {
@@ -775,6 +890,7 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 "You may return client_actions to operate the current browser UI. Use refs from screen.interactive_elements when visible, or semantic targets such as button text, label text, placeholder, route path, or app_event command keys when an action must happen after navigation.",
                 "The browser executes client_actions in order and waits after navigation, so multi-step workflows can navigate first and then click, fill, focus, or dispatch an app_event on the destination screen.",
                 "The browser already shows the current TODO item above the input. Do not repeat the planning TODO list in the answer; explain the result of the current TODO instead.",
+                "When useful, use Codex's built-in TODO/plan update mechanism early in the turn. The UI consumes those plan updates from the Codex JSON stream; do not put the TODO list only in the final answer JSON.",
                 "Use app_event for first-class Docker Infra page commands that are safer than brittle field automation. Supported app_event commands: target='macro.create_global' with payload {name, description, script, enabled, update_existing}; target='server.run_macro' with payload {node_selector, node_id, macro_name, macro, args}.",
                 "Use api_request when the user asks you to operate a Docker Infra menu through the Swagger/OpenAPI catalog. Prefer api_request over brittle click/fill automation whenever openapi_guidance.operations contains the needed page command. Choose operation_id only from openapi_guidance.operations and provide body/params with required fields.",
                 "Treat openapi_guidance.mcp_action_catalog as the Docker Infra MCP tool catalog. Pick the matching docker_infra.* tool first, then emit the corresponding api_request operation_id.",
@@ -792,6 +908,8 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 "If you cannot complete the requested analysis, put the concrete failure reason in answer and summary instead of returning an empty answer.",
                 "When referring to the visible page, use screen_context_summary or a specific title from screen.headings. Do not say only '현재 화면'; name the exact page such as '서비스 관리 . notion 서비스 상세' or '이미지 관리 . 서버 로컬 저장소 . local-master'.",
                 "Format answer as concise Markdown bullets, numbered lists, or tables whenever possible. Avoid long unstructured paragraphs.",
+                "For status checks, inspection results, and recommendations, use short Markdown sections such as **요약**, **확인한 내용**, **권장 조치**, and **남은 관찰점** with bullets under each section.",
+                "Do not include runtime progress, MCP event logs, or thinking/status summaries in the final answer field.",
                 "Always include 2 to 4 suggested_actions that are useful next chat requests based on your answer. Each suggested action must have a concise Korean label and a self-contained Korean prompt.",
                 "Suggested actions are not direct browser actions. Do not put dangerous or irreversible operations as a direct suggested prompt; suggest a confirmation, impact check, or preview first.",
                 "The output object must include answer, summary, needs_confirmation, client_actions, follow_up, suggested_actions, and confidence.",
@@ -807,6 +925,9 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 "Do not create separate TODOs for navigation, clicking, selecting tabs, waiting, api_request, or app_event details.",
                 "A single TODO may require many client_actions during execution.",
                 "For a request like '마스터 노드에서 서버 상태 한눈에 보기 매크로를 실행해줘', return exactly one TODO for running that macro on the master node.",
+                "Do not copy the user's raw sentence as the TODO title. Convert it into the concrete change or operation the user asked for.",
+                "When the user asks to modify a recently created template, summarize the actual edits in the TODO title and prompt.",
+                "For example, '방금 만든 템플릿에서 nginx 설치 과정은 필요 없어. 헬스체크도 필요 없고. 그리고 여기에 mariadb도 사용할 수 있도록 추가해줘.' should become a TODO like '템플릿에서 nginx 설치와 헬스체크 제거, MariaDB 지원 추가'.",
                 "Use Korean user-facing text. Keep route names, ids, and command keys in ASCII.",
                 "Each todo.prompt must be self-contained so a later AI Agent request can execute that single TODO without reading hidden planning state.",
                 "Limit todos to 1 to 5 items. Prefer fewer TODOs when actions belong to one user goal.",
@@ -985,7 +1106,7 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 {
                     "key": "zones",
                     "required": False,
-                    "description": "등록 가능한 Cloudflare DNS 존 또는 DDNS 관리 서버 엔드포인트 목록",
+                    "description": "등록 가능한 DDNS 관리 서버 엔드포인트 목록",
                 },
             ],
             "output": [
@@ -1100,6 +1221,13 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                     "secret-like properties must include secret=true and a safe change_me-style default",
                     "service_name/namespace should be the only mandatory identity input unless the image truly requires more",
                 ],
+                "port_rules": [
+                    "Any browser/API/user-facing service must declare services.<name>.ports; expose alone is internal-only and is not enough.",
+                    "Public ports must explicitly map a published port to the container target port, for example \"{{ service_port }}:3000\" or long syntax with target, published, protocol, and mode.",
+                    "The published port should be a reusable integer placeholder in values.default.yaml and values.schema.json.",
+                    "metadata.public_endpoint.service and metadata.public_endpoint.port must match a service and target port declared under services.<name>.ports.",
+                    "Internal dependency services such as databases, caches, and queues should omit ports unless the user explicitly asks to publish them.",
+                ],
                 "compose_rules": self.compose_validation_contract(),
                 "forbidden_fields": [
                     "description",
@@ -1157,6 +1285,8 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                         "values.schema.json is a JSON Schema object for the same placeholders",
                         "README.md is Korean user-facing usage notes shown in the service creation screen",
                         "the placeholder set must match across docker-compose.yaml, values.default.yaml, and values.schema.json",
+                        "services that provide browser/API/user-facing access must include services.<name>.ports with an explicit published-to-target port mapping",
+                        "do not use expose as a substitute for public access; expose is internal-only",
                         "do not include a deployment target, concrete domain, concrete registered server, host-specific path, container_name, or hostname",
                     ],
                 },
@@ -1384,7 +1514,7 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 if data is None:
                     raise AIAssistantError(502, "AI 응답 JSON 객체가 비어 있습니다.", "AI_EMPTY_RESPONSE")
                 template = self._normalize_template_draft(data, context)
-                validation = self._validate_template_draft(template)
+                validation = self._validate_template_draft(template, context)
                 yield {
                     "type": "done",
                     "data": {
@@ -3639,6 +3769,10 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 "Use {{ variable_name }} placeholders for values users should provide at service creation time.",
                 "Every placeholder in docker-compose.yaml must exist in values.default.yaml and values.schema.json.",
                 "Keep required user input minimal. Prefer service_name/namespace plus only truly necessary image, port, credential, and product settings.",
+                "For every browser/API/user-facing service, set services.<service>.ports in docker-compose.yaml with an explicit published-to-target mapping.",
+                "Prefer a published port placeholder such as \"{{ service_port }}:3000\"; add that placeholder to values.default.yaml and values.schema.json as an integer.",
+                "Do not rely on expose for public access; expose is internal-only. Internal dependency services may omit ports unless the user asks to publish them.",
+                "When metadata.public_endpoint is present, its service and port must match the service key and target port in docker-compose.yaml ports.",
                 "For secret-like placeholders, set a safe change_me-style default and mark the schema property with secret=true.",
                 "README.md is mandatory and must explain what this template creates and which values matter, in Korean.",
                 "Do not include template description or primary_image. Use tags[] for classification.",
@@ -3718,6 +3852,129 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
             return str(value)
 
         return re.sub(r"{{\s*([a-zA-Z0-9_.-]+)\s*}}", replace, content or "")
+
+    def _template_public_intent(self, context):
+        intent = self._clean_text((context or {}).get("intent"))
+        if not intent:
+            return False
+        return bool(PUBLIC_TEMPLATE_INTENT_PATTERN.search(intent))
+
+    def _compose_template_port_entry(self, item):
+        if isinstance(item, dict):
+            target = self._safe_int(item.get("target") or item.get("container"), 0)
+            published_present = "published" in item or "host" in item
+            published = self._safe_int(item.get("published") or item.get("host"), 0)
+            return {
+                "target": target,
+                "published": published,
+                "protocol": self._clean_text(item.get("protocol") or "tcp") or "tcp",
+                "explicit_published": bool(published_present and published > 0),
+                "raw": item,
+            }
+
+        raw = self._clean_text(item).strip().strip('"').strip("'")
+        if not raw:
+            return None
+        base, _, protocol = raw.partition("/")
+        chunks = base.split(":")
+        target = self._safe_int(chunks[-1] if chunks else "", 0)
+        published_present = len(chunks) >= 2
+        published = self._safe_int(chunks[-2] if published_present else "", 0)
+        return {
+            "target": target,
+            "published": published,
+            "protocol": protocol or "tcp",
+            "explicit_published": bool(published_present and published > 0),
+            "raw": raw,
+        }
+
+    def _template_service_ports(self, service):
+        result = []
+        service = service if isinstance(service, dict) else {}
+        for item in service.get("ports") or []:
+            port = self._compose_template_port_entry(item)
+            if port and port.get("target") > 0:
+                result.append(port)
+        return result
+
+    def _validate_template_public_ports(self, template, validation, context):
+        normalized = (validation or {}).get("normalized") if isinstance(validation, dict) else {}
+        services = (normalized or {}).get("services") if isinstance(normalized, dict) else {}
+        services = services if isinstance(services, dict) else {}
+        metadata = template.get("metadata") if isinstance(template.get("metadata"), dict) else {}
+        public_endpoint = metadata.get("public_endpoint") if isinstance(metadata.get("public_endpoint"), dict) else {}
+        public_service = self._clean_text(public_endpoint.get("service"))
+        public_port = self._safe_int(public_endpoint.get("port") or public_endpoint.get("target_port"), 0)
+        ports_by_service = {name: self._template_service_ports(service) for name, service in services.items()}
+        explicit_ports = [
+            {"service": name, **port}
+            for name, ports in ports_by_service.items()
+            for port in ports
+            if port.get("explicit_published") and port.get("published") > 0 and port.get("target") > 0
+        ]
+        issues = []
+
+        if public_endpoint:
+            if not public_service:
+                issues.append({
+                    "path": "metadata.public_endpoint.service",
+                    "error_code": "AI_TEMPLATE_PUBLIC_ENDPOINT_SERVICE_REQUIRED",
+                    "message": "public_endpoint.service는 공개할 Compose service key를 지정해야 합니다.",
+                })
+            elif public_service not in services:
+                issues.append({
+                    "path": "metadata.public_endpoint.service",
+                    "error_code": "AI_TEMPLATE_PUBLIC_ENDPOINT_SERVICE_NOT_FOUND",
+                    "message": "public_endpoint.service가 docker-compose.yaml services에 존재하지 않습니다.",
+                    "service": public_service,
+                })
+            else:
+                service_ports = ports_by_service.get(public_service) or []
+                matched = [item for item in service_ports if public_port <= 0 or item.get("target") == public_port]
+                if not service_ports:
+                    issues.append({
+                        "path": f"services.{public_service}.ports",
+                        "error_code": "AI_TEMPLATE_PUBLIC_PORT_REQUIRED",
+                        "message": "공개 endpoint로 지정된 서비스는 ports를 선언해야 합니다.",
+                        "service": public_service,
+                    })
+                elif public_port > 0 and not matched:
+                    issues.append({
+                        "path": f"services.{public_service}.ports",
+                        "error_code": "AI_TEMPLATE_PUBLIC_PORT_TARGET_MISMATCH",
+                        "message": "public_endpoint.port와 일치하는 target port가 services.<service>.ports에 없습니다.",
+                        "service": public_service,
+                        "target_port": public_port,
+                    })
+                elif not any(item.get("explicit_published") for item in matched):
+                    issues.append({
+                        "path": f"services.{public_service}.ports",
+                        "error_code": "AI_TEMPLATE_PUBLIC_PORT_PUBLISHED_REQUIRED",
+                        "message": "공개 서비스 port는 published 포트가 명시된 매핑이어야 합니다.",
+                        "service": public_service,
+                        "target_port": public_port or (matched[0].get("target") if matched else 0),
+                    })
+
+        if not public_endpoint and self._template_public_intent(context) and not explicit_ports:
+            exposed_services = [
+                name
+                for name, service in services.items()
+                if isinstance(service, dict) and service.get("expose") and not ports_by_service.get(name)
+            ]
+            issues.append({
+                "path": "services.*.ports",
+                "error_code": "AI_TEMPLATE_PUBLIC_PORT_REQUIRED",
+                "message": "공개/외부 접속 목적의 템플릿은 공개 서비스에 ports 매핑을 포함해야 합니다.",
+                "exposed_internal_only_services": exposed_services,
+            })
+
+        if issues:
+            raise AIAssistantError(
+                422,
+                "AI 응답의 공개 포트 설정이 누락되었거나 불완전합니다.",
+                "AI_TEMPLATE_PUBLIC_PORT_INVALID",
+                {"details": issues},
+            )
 
     def _normalize_template_draft(self, data, context):
         data = data if isinstance(data, dict) else {}
@@ -3802,7 +4059,7 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
             "warnings": self._string_list(data.get("warnings")),
         }
 
-    def _validate_template_draft(self, template):
+    def _validate_template_draft(self, template, context=None):
         files = template.get("files") or {}
         compose = self._clean_text(files.get("compose"))
         readme = self._clean_text(files.get("readme"))
@@ -3828,7 +4085,23 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 "warning_codes": ["FORBIDDEN_CONTAINER_NAME"],
             }
         )
+        self._validate_template_public_ports(template, validation, context or {})
         components = services_wizard.components_from_content(rendered, metadata=template.get("metadata") or {})
+        metadata = template.get("metadata") if isinstance(template.get("metadata"), dict) else {}
+        if not isinstance(metadata.get("public_endpoint"), dict) and self._template_public_intent(context):
+            for component in components:
+                ports = component.get("ports") or []
+                if not ports:
+                    continue
+                metadata["public_endpoint"] = {
+                    "service": component.get("key"),
+                    "port": ports[0].get("target"),
+                    "label": component.get("label") or component.get("key") or "공개 서비스",
+                }
+                component["role"] = "public"
+                ports[0]["public_endpoint"] = True
+                break
+        template["metadata"] = metadata
         template["metadata"] = {
             **(template.get("metadata") or {}),
             "components": [item.get("key") for item in components if item.get("key")],
@@ -4128,22 +4401,443 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
         except Exception as exc:
             yield self._error_event(exc)
 
+    def _stream_complete_json_result(self, provider, system, context, env=None):
+        result = None
+        todo_state = {}
+        try:
+            stream_fn = getattr(codex_runtime, "complete_json_stream", None)
+            if callable(stream_fn):
+                for event in stream_fn(provider, system, context, env=env):
+                    if event.get("type") == "result":
+                        result = event.get("result") or {}
+                        continue
+                    progress = self._agent_runtime_progress_event(event, todo_state=todo_state)
+                    if progress:
+                        yield progress
+            else:
+                result = codex_runtime.complete_json(provider, system, context, env=env)
+        except Exception as exc:
+            raise AIAssistantError(
+                getattr(exc, "status_code", 502),
+                getattr(exc, "message", str(exc)),
+                getattr(exc, "error_code", "CODEX_RUNTIME_FAILED"),
+                getattr(exc, "details", {}),
+            )
+        if not result:
+            raise AIAssistantError(502, "AI Agent 응답 내용이 비어 있습니다.", "AI_AGENT_EMPTY_RESPONSE")
+        return result
+
+    def _agent_runtime_progress_event(self, event, todo_state=None):
+        event = event if isinstance(event, dict) else {}
+        event_type = self._clean_text(event.get("type"))
+        if event_type == "runtime_event":
+            return self._codex_runtime_progress_event(event.get("event"), todo_state=todo_state)
+        if event_type == "runtime_output":
+            text = self._clean_text(event.get("text"))
+            if not text or text.startswith("{"):
+                return None
+            return {
+                "type": "thinking",
+                "label": "Agent 출력",
+                "message": text[:220],
+                "phase": "agent_runtime_output",
+            }
+        return None
+
+    def _codex_runtime_progress_event(self, event, todo_state=None):
+        event = event if isinstance(event, dict) else {}
+        todo_state = todo_state if isinstance(todo_state, dict) else {}
+        todo_event = self._claude_runtime_todo_event(event, todo_state)
+        if todo_event:
+            return todo_event
+        todo_event = self._structured_runtime_todo_event(event, "Agent")
+        if todo_event:
+            return todo_event
+        hermes_event = self._hermes_runtime_progress_event(event)
+        if hermes_event:
+            return hermes_event
+        event_type = self._clean_text(event.get("type"))
+        if not event_type or event_type == "agent_message":
+            return None
+        if event_type in {"agent.progress", "progress"}:
+            message = self._clean_text(event.get("message") or event.get("summary") or event.get("text"))
+            if message:
+                return {
+                    "type": "thinking",
+                    "label": "진행 상황",
+                    "message": message[:220],
+                    "phase": self._clean_text(event.get("phase")) or "agent_progress",
+                }
+        item = event.get("item") if isinstance(event.get("item"), dict) else {}
+        item_type = self._clean_text(item.get("type") or event.get("item_type")).lower()
+        if item_type in {"todo_list", "plan_update"}:
+            todo_event = self._codex_runtime_todo_event(item)
+            if todo_event:
+                return todo_event
+        tool_name = self._runtime_event_tool_name(event, item)
+        if tool_name:
+            completed = "completed" in event_type or self._clean_text(event.get("status")).lower() in {"completed", "succeeded", "success"}
+            return {
+                "type": "thinking",
+                "label": "MCP 결과" if completed else "MCP 조회",
+                "message": "%s 도구 %s" % (tool_name, "결과를 반영합니다." if completed else "를 호출합니다."),
+                "phase": "mcp_tool_result" if completed else "mcp_tool_call",
+            }
+        if "reasoning" in event_type or item_type == "reasoning":
+            return {
+                "type": "thinking",
+                "label": "판단 요약",
+                "message": "요청과 Docker Infra 컨텍스트를 대조해 다음 작업을 정리합니다.",
+                "phase": "agent_reasoning",
+            }
+        if event_type in {"turn.started", "response.started"} or event_type.endswith(".started"):
+            return {
+                "type": "thinking",
+                "label": "Agent 실행",
+                "message": "Agent가 현재 화면, 대화 이력, MCP 컨텍스트를 읽기 시작했습니다.",
+                "phase": "agent_turn_started",
+            }
+        if event_type in {"turn.completed", "response.completed"} or event_type.endswith(".completed"):
+            return {
+                "type": "thinking",
+                "label": "Agent 정리",
+                "message": "Agent가 응답 초안을 검증 가능한 JSON으로 정리했습니다.",
+                "phase": "agent_turn_completed",
+            }
+        return None
+
+    def _codex_runtime_todo_event(self, item):
+        items = item.get("items") if isinstance(item.get("items"), list) else []
+        todos = []
+        for index, row in enumerate(items[:8]):
+            if isinstance(row, str):
+                text = self._clean_text(row)
+                completed = False
+            elif isinstance(row, dict):
+                text = self._clean_text(row.get("text") or row.get("title") or row.get("label") or row.get("summary"))
+                status = self._runtime_todo_status(row.get("status"), completed=bool(row.get("completed")))
+                completed = status == "succeeded"
+            else:
+                continue
+            if not text:
+                continue
+            if not isinstance(row, dict):
+                status = "succeeded" if completed else "queued"
+            todos.append(
+                {
+                    "id": "codex-todo-%s" % index,
+                    "title": text[:160],
+                    "prompt": text[:500],
+                    "completed": completed,
+                    "status": status,
+                }
+            )
+        if not todos:
+            return None
+        return {
+            "type": "todo_update",
+            "summary": "Codex가 생성한 작업 계획입니다.",
+            "todos": todos,
+            "phase": "codex_todo_list",
+        }
+
+    def _claude_runtime_todo_event(self, event, todo_state):
+        blocks = self._claude_message_blocks(event)
+        if not blocks:
+            return None
+        state = todo_state.setdefault("claude_tasks", {})
+        changed = False
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            block_type = self._clean_text(block.get("type")).lower()
+            name = self._clean_text(block.get("name"))
+            if block_type == "tool_use" and name == "TodoWrite":
+                todos = self._claude_todowrite_todos(block.get("input"))
+                if todos:
+                    state.clear()
+                    for todo in todos:
+                        state[todo["id"]] = dict(todo)
+                    return self._runtime_todo_update_event(state, "Claude Code가 생성한 작업 계획입니다.", "claude_todo_write")
+            if block_type == "tool_use" and name == "TaskCreate":
+                task = self._claude_task_from_create(block)
+                if task:
+                    state[task["id"]] = task
+                    changed = True
+                continue
+            if block_type == "tool_use" and name == "TaskUpdate":
+                changed = self._apply_claude_task_update(state, block) or changed
+                continue
+            if block_type == "tool_result":
+                changed = self._apply_claude_task_result(state, block) or changed
+        if changed:
+            return self._runtime_todo_update_event(state, "Claude Code가 생성한 작업 계획입니다.", "claude_task_list")
+        return None
+
+    def _claude_message_blocks(self, event):
+        message = event.get("message") if isinstance(event.get("message"), dict) else {}
+        content = message.get("content") if isinstance(message.get("content"), list) else None
+        if content is None and isinstance(event.get("content"), list):
+            content = event.get("content")
+        return content or []
+
+    def _claude_todowrite_todos(self, payload):
+        payload = payload if isinstance(payload, dict) else {}
+        items = payload.get("todos") if isinstance(payload.get("todos"), list) else []
+        todos = []
+        for index, item in enumerate(items[:8]):
+            if not isinstance(item, dict):
+                continue
+            status = self._runtime_todo_status(item.get("status"), completed=bool(item.get("completed")))
+            title = self._clean_text(item.get("activeForm") if status == "running" else item.get("content"))
+            title = title or self._clean_text(item.get("content") or item.get("title") or item.get("activeForm"))
+            if not title:
+                continue
+            todos.append(
+                {
+                    "id": "claude-todo-%s" % index,
+                    "title": title[:160],
+                    "prompt": self._clean_text(item.get("content") or title)[:500],
+                    "status": status,
+                    "completed": status == "succeeded",
+                }
+            )
+        return todos
+
+    def _claude_task_from_create(self, block):
+        payload = block.get("input") if isinstance(block.get("input"), dict) else {}
+        title = self._runtime_task_title(payload)
+        if not title:
+            return None
+        task_id = self._clean_text(payload.get("taskId") or payload.get("task_id") or payload.get("id") or block.get("id"))
+        task_id = task_id or "claude-task-%s" % abs(hash(title))
+        return {
+            "id": self._safe_todo_id("claude-task", task_id),
+            "title": title[:160],
+            "prompt": self._clean_text(payload.get("description") or payload.get("content") or title)[:500],
+            "status": self._runtime_todo_status(payload.get("status")),
+            "completed": False,
+        }
+
+    def _apply_claude_task_update(self, state, block):
+        payload = block.get("input") if isinstance(block.get("input"), dict) else {}
+        task_id = self._clean_text(payload.get("taskId") or payload.get("task_id") or payload.get("id") or block.get("id"))
+        if not task_id:
+            return False
+        key = self._safe_todo_id("claude-task", task_id)
+        raw_status = self._clean_text(payload.get("status")).lower()
+        if raw_status == "deleted":
+            return state.pop(key, None) is not None
+        current = state.get(key, {"id": key, "title": self._clean_text(task_id), "prompt": self._clean_text(task_id)})
+        title = self._runtime_task_title(payload) or current.get("title")
+        status = self._runtime_todo_status(payload.get("status"), completed=bool(payload.get("completed")))
+        current.update(
+            {
+                "title": title[:160],
+                "prompt": self._clean_text(payload.get("description") or payload.get("content") or current.get("prompt") or title)[:500],
+                "status": status,
+                "completed": status == "succeeded",
+            }
+        )
+        state[key] = current
+        return True
+
+    def _apply_claude_task_result(self, state, block):
+        data = self._json_from_runtime_value(block.get("content"))
+        if not isinstance(data, dict):
+            return False
+        changed = False
+        task = data.get("task") if isinstance(data.get("task"), dict) else None
+        if task:
+            task_id = self._clean_text(task.get("id") or task.get("taskId") or task.get("task_id"))
+            title = self._runtime_task_title(task)
+            if task_id and title:
+                key = self._safe_todo_id("claude-task", task_id)
+                status = self._runtime_todo_status(task.get("status"), completed=bool(task.get("completed")))
+                state[key] = {
+                    "id": key,
+                    "title": title[:160],
+                    "prompt": self._clean_text(task.get("description") or task.get("content") or title)[:500],
+                    "status": status,
+                    "completed": status == "succeeded",
+                }
+                changed = True
+        todos = data.get("todos") or data.get("tasks")
+        if isinstance(todos, list):
+            for index, item in enumerate(todos[:8]):
+                if not isinstance(item, dict):
+                    continue
+                title = self._runtime_task_title(item)
+                if not title:
+                    continue
+                task_id = self._clean_text(item.get("id") or item.get("taskId") or item.get("task_id") or index)
+                key = self._safe_todo_id("claude-task", task_id)
+                status = self._runtime_todo_status(item.get("status"), completed=bool(item.get("completed")))
+                state[key] = {
+                    "id": key,
+                    "title": title[:160],
+                    "prompt": self._clean_text(item.get("description") or item.get("content") or title)[:500],
+                    "status": status,
+                    "completed": status == "succeeded",
+                }
+                changed = True
+        return changed
+
+    def _structured_runtime_todo_event(self, event, label):
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        candidates = [event, payload]
+        for source in candidates:
+            entries = None
+            if isinstance(source.get("todos"), list):
+                entries = source.get("todos")
+            elif isinstance(source.get("tasks"), list):
+                entries = source.get("tasks")
+            elif source.get("session_update") == "plan" and isinstance(source.get("entries"), list):
+                entries = source.get("entries")
+            if not entries:
+                continue
+            state = {}
+            for index, item in enumerate(entries[:8]):
+                data = {"title": item} if isinstance(item, str) else (item if isinstance(item, dict) else {})
+                title = self._runtime_task_title(data)
+                if not title:
+                    continue
+                status = self._runtime_todo_status(data.get("status"), completed=bool(data.get("completed")))
+                todo_id = self._safe_todo_id("agent-task", data.get("id") or data.get("taskId") or index)
+                state[todo_id] = {
+                    "id": todo_id,
+                    "title": title[:160],
+                    "prompt": self._clean_text(data.get("prompt") or data.get("description") or title)[:500],
+                    "status": status,
+                    "completed": status == "succeeded",
+                }
+            if state:
+                return self._runtime_todo_update_event(state, "%s가 생성한 작업 계획입니다." % label, "agent_structured_todo")
+        return None
+
+    def _hermes_runtime_progress_event(self, event):
+        event_type = self._clean_text(event.get("type") or event.get("event")).lower()
+        if not event_type:
+            return None
+        if event_type not in {"hermes.tool.progress", "tool.progress", "tool.start", "tool.started", "tool.complete", "tool.completed", "tool.generating"}:
+            return None
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        source = {**data, **payload, **event}
+        tool_name = self._clean_text(source.get("name") or source.get("tool") or source.get("tool_name")) or "Hermes"
+        preview = self._clean_text(source.get("preview") or source.get("message") or source.get("text") or source.get("status"))
+        completed = event_type in {"tool.complete", "tool.completed"} or self._clean_text(source.get("status")).lower() in {"completed", "succeeded", "success"}
+        if not preview:
+            preview = "도구 결과를 반영합니다." if completed else "도구를 실행합니다."
+        return {
+            "type": "thinking",
+            "label": "Hermes 결과" if completed else "Hermes 진행",
+            "message": ("%s: %s" % (tool_name, preview))[:220],
+            "phase": "hermes_tool_result" if completed else "hermes_tool_progress",
+        }
+
+    def _runtime_todo_update_event(self, state, summary, phase):
+        todos = []
+        values = state.values() if isinstance(state, dict) else []
+        for index, item in enumerate(values):
+            if not isinstance(item, dict):
+                continue
+            title = self._clean_text(item.get("title") or item.get("text") or item.get("content"))
+            if not title:
+                continue
+            status = self._runtime_todo_status(item.get("status"), completed=bool(item.get("completed")))
+            todos.append(
+                {
+                    "id": self._clean_text(item.get("id")) or "agent-todo-%s" % index,
+                    "title": title[:160],
+                    "prompt": self._clean_text(item.get("prompt") or item.get("description") or title)[:500],
+                    "status": status,
+                    "completed": status == "succeeded",
+                    "detail": self._clean_text(item.get("detail")),
+                }
+            )
+        if not todos:
+            return None
+        return {
+            "type": "todo_update",
+            "summary": summary,
+            "todos": todos[:8],
+            "phase": phase,
+        }
+
+    def _runtime_todo_status(self, status, completed=False):
+        value = self._clean_text(status).lower()
+        if completed or value in {"completed", "succeeded", "success", "done"}:
+            return "succeeded"
+        if value in {"in_progress", "running", "active", "started"}:
+            return "running"
+        if value in {"failed", "error"}:
+            return "failed"
+        if value in {"blocked", "cancelled", "canceled"}:
+            return "blocked"
+        return "queued"
+
+    def _runtime_task_title(self, value):
+        if isinstance(value, str):
+            return self._clean_text(value)
+        value = value if isinstance(value, dict) else {}
+        for key in ["subject", "title", "content", "activeForm", "label", "name", "summary", "description", "task"]:
+            text = self._clean_text(value.get(key))
+            if text:
+                return text
+        return ""
+
+    def _safe_todo_id(self, prefix, value):
+        text = re.sub(r"[^A-Za-z0-9_.:-]+", "-", self._clean_text(value)).strip("-")
+        return ("%s-%s" % (prefix, text or "item"))[:120]
+
+    def _json_from_runtime_value(self, value):
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, list):
+            chunks = []
+            for item in value:
+                if isinstance(item, dict):
+                    chunks.append(str(item.get("text") or item.get("content") or ""))
+                elif item:
+                    chunks.append(str(item))
+            value = "".join(chunks)
+        text = self._clean_text(value)
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except Exception:
+            match = re.search(r"(\{.*\}|\[.*\])", text, re.S)
+            if match:
+                try:
+                    return json.loads(match.group(1))
+                except Exception:
+                    return None
+        return None
+
+    def _runtime_event_tool_name(self, event, item):
+        sources = [item if isinstance(item, dict) else {}, event if isinstance(event, dict) else {}]
+        for source in sources:
+            for key in ["tool_name", "tool", "name", "server", "operation_id"]:
+                value = self._clean_text(source.get(key))
+                if value:
+                    return value[:80]
+            for nested_key in ["call", "function", "tool_call", "mcp"]:
+                call = source.get(nested_key) if isinstance(source.get(nested_key), dict) else {}
+                for key in ["tool_name", "tool", "name", "server", "operation_id"]:
+                    value = self._clean_text(call.get(key))
+                    if value:
+                        return value[:80]
+        return ""
+
     def _stream_json_with_provider(self, target, context, provider, system=None, env=None):
         public_provider = self._provider_public(provider)
         yield {"type": "provider", "provider": public_provider}
         yield {"type": "status", "message": "요구사항과 현재 설정을 AI 실행 컨텍스트로 정리합니다."}
         system = system or self._system_prompt(target)
         yield {"type": "status", "message": "%s Agent가 MCP 컨텍스트로 AI 응답 JSON을 생성합니다." % self._provider_label(provider.get("type"))}
-        result = None
-        def run_codex():
-            yield {"type": "codex_result", "result": codex_runtime.complete_json(provider, system, context, env=env)}
-
-        for event in self._iter_with_heartbeat(run_codex()):
-            if event.get("type") == "heartbeat":
-                yield event
-                continue
-            if event.get("type") == "codex_result":
-                result = event.get("result")
+        result = yield from self._stream_complete_json_result(provider, system, context, env=env)
         metadata = (result or {}).get("metadata") or {}
         completed_provider = self._provider_public(provider, metadata)
         if metadata:
@@ -4159,25 +4853,7 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
         yield {"type": "complete", "data": data, "provider": completed_provider}
 
     def _stream_codex_json(self, system, context, provider, env=None, emit_delta=False):
-        result = None
-
-        def run_codex():
-            yield {"type": "codex_result", "result": codex_runtime.complete_json(provider, system, context, env=env)}
-
-        try:
-            for event in self._iter_with_heartbeat(run_codex()):
-                if event.get("type") == "heartbeat":
-                    yield event
-                    continue
-                if event.get("type") == "codex_result":
-                    result = event.get("result")
-        except Exception as exc:
-            raise AIAssistantError(
-                getattr(exc, "status_code", 502),
-                getattr(exc, "message", str(exc)),
-                getattr(exc, "error_code", "CODEX_RUNTIME_FAILED"),
-                getattr(exc, "details", {}),
-            )
+        result = yield from self._stream_complete_json_result(provider, system, context, env=env)
 
         metadata = (result or {}).get("metadata") or {}
         if metadata:
@@ -4190,43 +4866,6 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
         if thinking_summary:
             yield {"type": "thinking", "text": thinking_summary}
         return data
-
-    def _iter_with_heartbeat(self, iterator, interval=AI_STREAM_HEARTBEAT_SECONDS):
-        events = queue.Queue()
-        done = object()
-        started_at = time.time()
-        heartbeat_count = 0
-
-        def consume():
-            try:
-                for event in iterator:
-                    events.put(("event", event))
-            except Exception as exc:
-                events.put(("error", exc))
-            finally:
-                events.put(("done", done))
-
-        threading.Thread(target=consume, daemon=True).start()
-        while True:
-            try:
-                kind, payload = events.get(timeout=interval)
-            except queue.Empty:
-                heartbeat_count += 1
-                elapsed_seconds = max(0, int(time.time() - started_at))
-                yield {
-                    "type": "heartbeat",
-                    "label": "대기 중",
-                    "message": "선택한 AI Agent 응답을 기다리는 중입니다. (%s초 경과)" % elapsed_seconds,
-                    "elapsed_seconds": elapsed_seconds,
-                    "heartbeat_count": heartbeat_count,
-                }
-                continue
-            if kind == "event":
-                yield payload
-                continue
-            if kind == "error":
-                raise payload
-            return
 
     def _extract_json(self, text):
         text = self._clean_text(text)
@@ -4274,17 +4913,15 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
             ],
             "automation_scope": payload.get("automation_scope") or [
                 {"title": "서비스 구성", "description": "이미지, 포트, 환경변수, 데이터 보관"},
-                {"title": "도메인 연결", "description": "Cloudflare 또는 DDNS 도메인, 공개 포트, SSL 방식"},
+                {"title": "도메인 연결", "description": "DDNS suffix, 공개 포트, nginx 연결"},
                 {"title": "자동 보정", "description": "검증 실패 시 AI 재호출 후 다시 검사"},
             ],
             "domain_provider_policy": {
-                "cloudflare": "provider=cloudflare uses zone_id as a DNS zone id and Docker Infra can create DNS records directly.",
-                "ddns": "provider=ddns uses zone_id as the DDNS endpoint id; generated domains must be child subdomains under wildcard_suffix and deploy registers or updates the DDNS management server.",
+                "ddns_only": "Only provider=ddns is allowed. zone_id is the DDNS endpoint id; generated domains must be child subdomains under wildcard_suffix and deploy registers or updates the DDNS management server.",
             },
             "domain_zone_summary": {
                 "total": len(zones),
                 "ddns": len(ddns_zones),
-                "cloudflare": len([zone for zone in zones if zone.get("provider") != "ddns"]),
             },
             "ddns_registration_flow": {
                 "enabled": bool(ddns_zones),
@@ -4579,7 +5216,9 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
         for item in zones or []:
             if not isinstance(item, dict):
                 continue
-            provider = self._clean_text(item.get("provider") or item.get("dns_provider") or "cloudflare")
+            provider = self._clean_text(item.get("provider") or item.get("dns_provider") or "ddns")
+            if provider != "ddns":
+                continue
             domain = self._clean_text(item.get("domain") or item.get("name"))
             zone_id = item.get("id") or item.get("zone_id")
             compact = {

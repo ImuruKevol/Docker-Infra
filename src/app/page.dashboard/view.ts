@@ -293,6 +293,23 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
         return '상태 확인 전';
     }
 
+    public serviceServerSummaryText(item: any) {
+        const summary = String(item?.runtime_server_summary || '').trim();
+        if (summary) return summary;
+        const names = Array.isArray(item?.runtime_server_names) ? item.runtime_server_names.filter((name: any) => Boolean(name)) : [];
+        if (names.length > 2) return `${names.slice(0, 2).join(', ')} 외 ${names.length - 2}대`;
+        if (names.length) return names.join(', ');
+        return this.serviceRuntimeStatus(item)?.checked_at ? '서버 확인 필요' : '상태 확인 전';
+    }
+
+    public serviceServerBadgeClass(item: any) {
+        const names = Array.isArray(item?.runtime_server_names) ? item.runtime_server_names.filter((name: any) => Boolean(name)) : [];
+        if (names.length || item?.runtime_servers?.length) {
+            return 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
     public attentionBadgeClass(level: string = 'warning') {
         if (level === 'error') {
             return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300';

@@ -131,17 +131,21 @@ export class Component implements OnInit, OnDestroy {
         this.loading.set(true);
         this.error.set('');
         await this.service.render();
-        const { code, data } = await wiz.call('load', {});
+        const section = this.activeTab();
+        const { code, data } = await wiz.call('load', { section });
         if (code === 200) {
             this.general = data.general || this.general;
-            this.backupSystem = data.backup_system || {};
+            if (data.backup_system) {
+                this.backupSystem = data.backup_system || {};
+                this.syncBackupPolicy();
+            }
             this.syncAiPayload(data.ai_settings || {});
-            this.syncBackupPolicy();
         } else {
             this.error.set(data?.message || '시스템 설정을 불러올 수 없습니다.');
         }
         this.loading.set(false);
         await this.service.render();
+        if (code === 200 && this.activeTab() === 'ai') this.refreshVisibleAiStatus();
     }
 
     private systemTabKeys() {
@@ -168,7 +172,10 @@ export class Component implements OnInit, OnDestroy {
         this.applyRouteSelection();
         const currentAiTab = this.activeAiTab();
         if (this.activeTab() === previousTab && currentAiTab === previousAiTab) return;
-        if (this.activeTab() === 'ai' && !this.agentModelCatalogs?.[currentAiTab]) this.refreshAgentModels(currentAiTab);
+        if (this.activeTab() === 'ai') {
+            if (!this.agentModelCatalogs?.[currentAiTab]) this.refreshAgentModels(currentAiTab);
+            this.refreshVisibleAiStatus();
+        }
         await this.service.render();
     }
 
@@ -188,6 +195,8 @@ export class Component implements OnInit, OnDestroy {
         if (!this.systemTabKeys().includes(tab)) return;
         this.activeTab.set(tab);
         await this.syncSystemRoute();
+        if (tab === 'backup') void this.load();
+        if (tab === 'ai') this.refreshVisibleAiStatus();
     }
 
     public async setActiveAiTab(tab: string) {
@@ -196,6 +205,16 @@ export class Component implements OnInit, OnDestroy {
         this.activeAiTab.set(nextTab);
         await this.syncSystemRoute();
         if (!this.agentModelCatalogs?.[nextTab]) this.refreshAgentModels(nextTab);
+        this.refreshVisibleAiStatus();
+    }
+
+    private refreshVisibleAiStatus() {
+        const tab = this.activeAiTab();
+        if (tab === 'codex') {
+            void this.refreshAiCodexStatus();
+            return;
+        }
+        if (this.systemSubTabKeys().includes(tab)) void this.refreshAgentStatus(tab);
     }
 
     public async saveAiSettings() {

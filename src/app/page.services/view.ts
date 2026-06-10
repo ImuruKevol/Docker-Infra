@@ -5,8 +5,9 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
-type EditSection = 'basic' | 'components' | 'domain' | 'advanced' | 'ai';
+type EditSection = 'basic' | 'components' | 'domain' | 'advanced';
 type DetailTab = 'overview' | 'logs' | 'source' | 'files' | 'versions';
+type ContainerTerminalMode = 'terminal' | 'logs';
 
 export class Component implements OnInit, OnDestroy {
     public loading = signal<boolean>(true);
@@ -16,6 +17,7 @@ export class Component implements OnInit, OnDestroy {
     public supportOptionsLoading = signal<boolean>(false);
     public error = signal<string>('');
     public services = signal<any[]>([]);
+    public servicePagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
     public nodes = signal<any[]>([]);
     public zones = signal<any[]>([]);
     public selected = signal<any>(null);
@@ -52,13 +54,14 @@ export class Component implements OnInit, OnDestroy {
     public filePreviewBusy = signal<boolean>(false);
     public filePreviewTitle = signal<string>('');
     public filePreviewContent = signal<string>('');
+    public containerFileTargetKey = signal<string>('');
     public editModalOpen = signal<boolean>(false);
     public editSection = signal<EditSection>('basic');
     public editLoading = signal<boolean>(false);
     public editBusy = signal<boolean>(false);
-    public editAiBusy = signal<boolean>(false);
     public runtimeAiBusy = signal<boolean>(false);
     public editAdvancedSettings = signal<boolean>(false);
+    public editAdvancedComponentKey = signal<string>('');
     public rollbackModalOpen = signal<boolean>(false);
     public rollbackBusy = signal<boolean>(false);
     public rollbackTarget = signal<any>(null);
@@ -80,15 +83,22 @@ export class Component implements OnInit, OnDestroy {
     public containerTerminalStatus = signal<string>('연결되지 않음');
     public containerTerminalError = signal<string>('');
     public containerTerminalTarget = signal<any>(null);
+    public containerTerminalMode = signal<ContainerTerminalMode>('terminal');
+    public containerLogsOpen = signal<boolean>(false);
+    public containerLogsConnecting = signal<boolean>(false);
+    public containerLogsConnected = signal<boolean>(false);
+    public containerLogsStatus = signal<string>('연결되지 않음');
+    public containerLogsError = signal<string>('');
+    public containerLogsTarget = signal<any>(null);
+    public containerLogsText = signal<string>('');
     public serviceForm: any = this.emptyForm();
     public compose: any = this.emptyCompose();
     public envVars: any[] = [];
     public volumes: any[] = [];
     public editForm: any = {};
     public editComponents: any[] = [];
+    public editCurrentDomain: any = null;
     public editOperatorComment = signal<string>('');
-    public editAiIntent = signal<string>('');
-    public editAiResult: any = null;
     public runtimeAiResult: any = null;
     public runtimeAiModalOpen = signal<boolean>(false);
     public runtimeAiIntent = signal<string>('');
@@ -96,14 +106,12 @@ export class Component implements OnInit, OnDestroy {
     public runtimeAiAllowSshDiagnostics = signal<boolean>(true);
     public runtimeAiStreamEvents = signal<any[]>([]);
     public runtimeAiOutputTokenCount = signal<number>(0);
-    public editAiModelRef = signal<string>('auto');
     public runtimeAiModelRef = signal<string>('auto');
     public aiModelOptions = signal<any[]>([]);
     public aiDefaultModelRef = signal<string>('auto');
     public aiAvailable = signal<boolean>(false);
     public aiUnavailableMessage = signal<string>('');
-    public editAiStreamEvents = signal<any[]>([]);
-    public editAiOutputTokenCount = signal<number>(0);
+    public pageSize = 20;
     public nginxConfigDrafts: any = {};
     private operationPollTimer: any = null;
     private activeOperationPollTimer: any = null;
@@ -113,11 +121,17 @@ export class Component implements OnInit, OnDestroy {
     private aiModelOptionsLoaded = false;
     private supportOptionsLoaded = false;
     private supportOptionsRequest: Promise<boolean> | null = null;
+    private editInitialBasic: any = null;
     private themeObserver: MutationObserver | null = null;
     private containerTerminalRoom = '';
     private containerTerminalSocket: any = null;
     private containerTerminalInstance: Terminal | null = null;
     private containerTerminalFitAddon: FitAddon | null = null;
+    private containerLogsRoom = '';
+    private containerLogsSocket: any = null;
+    private containerLogsRenderTimer: any = null;
+    private containerLogsConnectTimer: any = null;
+    private containerLogsPollTimer: any = null;
     private routeSub: any = null;
 
     constructor(public service: Service, private router: Router) { }
@@ -140,6 +154,7 @@ export class Component implements OnInit, OnDestroy {
         this.stopActiveOperationPolling();
         this.stopThemeObserver();
         this.disconnectContainerTerminal(true);
+        this.disconnectContainerLogs(true);
     }
 
     @HostListener('window:resize')
@@ -262,6 +277,11 @@ export class Component implements OnInit, OnDestroy {
         return merged;
     }
 
+    private applyServiceListUpdate(service: any) {
+        if (!service?.id) return;
+        this.services.set(this.services().map((item: any) => item.id === service.id ? { ...item, ...service } : item));
+    }
+
     private applyDetail(data: any) {
         if (!data) {
             this.disconnectContainerTerminal(true);
@@ -274,6 +294,7 @@ export class Component implements OnInit, OnDestroy {
             this.advancedEditorTarget.set(null);
             this.advancedEditorContent.set('');
             this.advancedEditorDirty.set(false);
+            this.containerFileTargetKey.set('');
             this.stopActiveOperationPolling();
             return;
         }
@@ -282,6 +303,7 @@ export class Component implements OnInit, OnDestroy {
         const incomingServiceId = data?.service?.id || '';
         const currentServiceId = current?.service?.id || '';
         const sameService = Boolean(current && (!incomingServiceId || incomingServiceId === currentServiceId));
+        if (!sameService) this.containerFileTargetKey.set('');
         const merged = sameService
             ? {
                 ...current,
@@ -292,6 +314,7 @@ export class Component implements OnInit, OnDestroy {
             : { ...data, detail_sections: this.mergeDetailSections({}, data.detail_sections, false) };
         this.detail.set(merged || null);
         this.selected.set(merged?.service || null);
+        if (merged?.service) this.applyServiceListUpdate(merged.service);
         if (merged?.service) this.detailLoading.set(false);
         this.syncActiveOperationPolling();
 
@@ -452,17 +475,61 @@ export class Component implements OnInit, OnDestroy {
         return `${data?.message || fallback}\n\n${rows.join('\n')}${suffix}`;
     }
 
-    public async load(selectedId: string = '', replaceRoute: boolean = false) {
+    private paginationStart(page: number) {
+        return Math.floor((Math.max(1, Number(page || 1)) - 1) / 10) * 10 + 1;
+    }
+
+    public serviceBoardSummary() {
+        const pagination = this.servicePagination();
+        const total = Number(pagination?.total || 0);
+        if (!total) return '총 0개';
+        const current = Number(pagination?.current || 1);
+        const limit = Number(pagination?.limit || this.pageSize);
+        const start = (current - 1) * limit + 1;
+        const end = Math.min(total, current * limit);
+        return `총 ${total}개 · ${start}-${end}`;
+    }
+
+    public isServiceDetailScreen() {
+        return Boolean(this.selected()?.id || this.detailLoading());
+    }
+
+    public async closeServiceDetail() {
+        this.detailRequestSeq += 1;
+        this.applyDetail(null);
+        this.detailTab.set('overview');
+        await this.syncServiceRoute('');
+        await this.service.render();
+    }
+
+    public async moveServicePage(page: number) {
+        await this.load(this.selected()?.id || '', false, page);
+    }
+
+    public async load(selectedId: string = '', replaceRoute: boolean = false, page: number = this.servicePagination().current || 1) {
         this.loading.set(true);
         this.error.set('');
+        const requestedPage = Math.max(1, Number(page || 1));
         await this.service.render();
-        const { code, data } = await wiz.call('load', {});
+        const { code, data } = await wiz.call('load', { page: requestedPage, limit: this.pageSize });
         if (code === 200) {
             const services = data.services || [];
+            const pagination = data.pagination || {};
+            const total = Number(pagination.total ?? services.length ?? 0);
+            const limit = Math.max(1, Number(pagination.limit || this.pageSize));
+            const end = Math.max(1, Number(pagination.end || (total ? Math.ceil(total / limit) : 1)));
+            const current = Math.min(Math.max(1, Number(pagination.current || requestedPage)), end);
             this.services.set(services);
+            this.servicePagination.set({
+                current,
+                start: Math.max(1, Number(pagination.start || this.paginationStart(current))),
+                end,
+                total,
+                limit,
+            });
             if (this.hasOwn(data, 'nodes')) this.nodes.set(data.nodes || []);
             if (this.hasOwn(data, 'zones')) this.zones.set(data.zones || []);
-            const next = services.find((item: any) => item.id === selectedId) || services[0] || null;
+            const next = selectedId ? (services.find((item: any) => item.id === selectedId) || { id: selectedId }) : null;
             if (next?.id) {
                 const nextTab = this.routeDetailTab();
                 this.detailRequestSeq += 1;
@@ -496,7 +563,6 @@ export class Component implements OnInit, OnDestroy {
             this.aiAvailable.set(options.length > 0);
             this.aiUnavailableMessage.set(options.length ? '' : (data.message || '시스템 설정에서 사용 중인 AI 모델이 없습니다.'));
             this.aiDefaultModelRef.set(data.default_model_ref || '');
-            this.editAiModelRef.set(data.default_model_ref || '');
             this.runtimeAiModelRef.set(data.default_model_ref || '');
             this.aiModelOptionsLoaded = true;
             return options.length > 0;
@@ -519,6 +585,7 @@ export class Component implements OnInit, OnDestroy {
     public async selectService(service: any, silent: boolean = false, replaceRoute: boolean = false, targetTab: DetailTab | null = null) {
         if (!service?.id) return;
         const requestSeq = ++this.detailRequestSeq;
+        void this.ensureSupportOptions(true);
         if (this.selected()?.id !== service.id) {
             this.disconnectContainerTerminal(true);
         }
@@ -607,13 +674,9 @@ export class Component implements OnInit, OnDestroy {
         return this.zones().map((zone: any) => ({
             value: zone.id,
             label: zone.domain,
-            description: zone.provider === 'ddns'
-                ? 'DDNS 관리 서버로 DNS 레코드를 등록합니다.'
-                : `DNS 레코드 ${zone.record_count || 0}개 · ${zone.secret_configured ? 'Cloudflare 연결됨' : '토큰 없음'}`,
-            badge: zone.provider === 'ddns' ? 'DDNS' : (zone.status || 'domain'),
-            badgeClass: zone.provider === 'ddns'
-                ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300'
-                : this.statusClass(zone.status || 'draft'),
+            description: 'DDNS 관리 서버로 DNS 레코드를 등록합니다.',
+            badge: 'DDNS',
+            badgeClass: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300',
         }));
     }
 
@@ -1033,6 +1096,36 @@ export class Component implements OnInit, OnDestroy {
         return String(policy.node_id || placement.node_id || '').trim();
     }
 
+    private servicePlacementNode() {
+        const nodeId = this.servicePlacementNodeId();
+        if (!nodeId) return null;
+        const registered = this.nodes().find((node: any) => String(node?.id || '') === nodeId);
+        if (registered) return registered;
+
+        const service = this.detail()?.service || this.selected() || {};
+        const policy = service?.target_node_policy || {};
+        const placement = service?.metadata?.placement || {};
+        const candidates = [
+            policy?.recommendation?.selected?.node,
+            placement?.recommendation?.selected?.node,
+            placement?.migration?.target_node,
+            service?.metadata?.last_migration?.target_node,
+        ];
+        return candidates.find((node: any) => node && (!node.id || String(node.id) === nodeId)) || null;
+    }
+
+    private servicePlacementNodeLabel() {
+        const nodeId = this.servicePlacementNodeId();
+        if (!nodeId) return '';
+        const node = this.servicePlacementNode() || {};
+        const label = String(node.label || '').trim();
+        const name = String(node.name || '').trim();
+        const host = String(node.host || '').trim();
+        if (label) return label;
+        if (name && host && name !== host) return `${name} (${host})`;
+        return name || host || nodeId;
+    }
+
     public currentMigrationSourceNodeId() {
         return this.runtimeServerDetailNodeId() || this.servicePlacementNodeId();
     }
@@ -1274,6 +1367,33 @@ export class Component implements OnInit, OnDestroy {
         return this.detail()?.nginx_configs || [];
     }
 
+    private filenameFromPath(path: any) {
+        return String(path || '').split('/').filter(Boolean).pop() || String(path || '');
+    }
+
+    private composeFileName() {
+        return this.filenameFromPath(this.detail()?.service?.compose_path || 'docker-compose.yaml') || 'docker-compose.yaml';
+    }
+
+    private editorLanguageForPath(path: any) {
+        const name = String(path || '').toLowerCase();
+        if (name.endsWith('.yaml') || name.endsWith('.yml')) return 'yaml';
+        if (name.endsWith('.json')) return 'json';
+        if (name.endsWith('.conf') || name.includes('nginx')) return 'nginx';
+        if (name.endsWith('.sh')) return 'shell';
+        if (name.endsWith('.py')) return 'python';
+        if (name.endsWith('.js') || name.endsWith('.ts')) return 'typescript';
+        if (name.endsWith('.html') || name.endsWith('.xml')) return 'html';
+        if (name.endsWith('.css') || name.endsWith('.scss')) return 'css';
+        if (name.endsWith('.md')) return 'markdown';
+        return 'text';
+    }
+
+    public selectedServiceSourcePath() {
+        const target = this.advancedEditorTarget();
+        return target?.kind === 'service-file' ? target.path || '' : '';
+    }
+
     public advancedEditorItems() {
         const detail = this.detail();
         if (!detail?.service) return [];
@@ -1302,6 +1422,32 @@ export class Component implements OnInit, OnDestroy {
             });
         }
         return items;
+    }
+
+    public async selectServiceSourceFile(file: any) {
+        if (!file?.path) return;
+        const path = String(file.path || '');
+        const content = String(file.content || '');
+        if (path === this.composeFileName()) {
+            const compose = this.advancedEditorItems().find((item: any) => item.kind === 'compose');
+            if (compose) {
+                this.advancedComposeDraft.set(content || compose.content || '');
+                this.selectAdvancedEditor({ ...compose, content: content || compose.content || '' });
+            }
+            return;
+        }
+        const target = {
+            key: `service-file:${path}`,
+            kind: 'service-file',
+            label: this.filenameFromPath(path) || path,
+            description: '서비스 디렉토리 파일입니다.',
+            path,
+            editable: true,
+            language: this.editorLanguageForPath(path),
+            content,
+        };
+        this.selectAdvancedEditor(target);
+        await this.service.render();
     }
 
     private selectAdvancedEditorByKey(key: string = 'compose') {
@@ -1337,6 +1483,7 @@ export class Component implements OnInit, OnDestroy {
 
     public advancedEditorBadgeClass(item: any) {
         if (item?.kind === 'compose') return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
+        if (item?.kind === 'service-file') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
         if (item?.editable) return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300';
         return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
     }
@@ -1344,7 +1491,19 @@ export class Component implements OnInit, OnDestroy {
     public advancedEditorTypeLabel(item: any = this.advancedEditorTarget()) {
         if (item?.kind === 'compose') return 'Compose';
         if (item?.kind === 'nginx') return 'nginx';
+        if (item?.kind === 'service-file') return '파일';
         return '원문';
+    }
+
+    public advancedEditorPathLabel(item: any = this.advancedEditorTarget()) {
+        const path = String(item?.path || '');
+        if (!path) return '';
+        if (item?.kind === 'service-file') return path;
+        const root = this.serviceDirectoryTitle();
+        if (root && path.startsWith(`${root}/`)) return path.slice(root.length + 1);
+        const parts = path.split('/').filter(Boolean);
+        if (parts.length <= 1) return path;
+        return parts.slice(-2).join('/');
     }
 
     public setAdvancedEditorContent(value: string) {
@@ -1356,6 +1515,8 @@ export class Component implements OnInit, OnDestroy {
             this.advancedComposeDraft.set(next);
         } else if (target?.kind === 'nginx' && target.domain_id) {
             this.nginxConfigDrafts[target.domain_id] = next;
+        } else if (target?.kind === 'service-file') {
+            this.advancedEditorTarget.set({ ...target, content: next });
         }
     }
 
@@ -1368,7 +1529,43 @@ export class Component implements OnInit, OnDestroy {
         }
         if (target.kind === 'nginx') {
             await this.saveNginxConfig(target.config);
+            return;
         }
+        if (target.kind === 'service-file') {
+            await this.saveServiceSourceFile(target);
+        }
+    }
+
+    private async saveServiceSourceFile(target: any) {
+        const serviceId = this.selected()?.id;
+        if (!serviceId || !target?.path) return;
+        const ok = await this.confirm(`${target.path} 파일을 저장합니다.`, '저장', 'warning');
+        if (!ok) return;
+        this.busy.set(true);
+        try {
+            const response = await fetch('/api/file-tree', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'write',
+                    scope: 'service',
+                    context: this.serviceFileTreeContext(),
+                    path: target.path,
+                    content: this.advancedEditorContent(),
+                }),
+            });
+            const json = await response.json();
+            const code = json?.code || response.status;
+            const data = json?.data || json;
+            if (code !== 200) throw new Error(data?.message || '파일을 저장할 수 없습니다.');
+            this.advancedEditorDirty.set(false);
+            this.advancedEditorTarget.set({ ...target, content: this.advancedEditorContent() });
+            await this.alert('파일을 저장했습니다.', 'success');
+        } catch (error: any) {
+            await this.alert(error?.message || '파일을 저장할 수 없습니다.');
+        }
+        this.busy.set(false);
+        await this.service.render();
     }
 
     private async persistComposeContent(content: string) {
@@ -1474,24 +1671,21 @@ export class Component implements OnInit, OnDestroy {
     public editSections() {
         const domainBadge = this.editForm.domain_mode === 'registered' ? '연결' : '없음';
         const advancedCount = this.editAdvancedCount();
+        const sections = [
+            { id: 'basic' as EditSection, icon: 'fa-pen-to-square', title: '기본 정보', description: this.editAdvancedSettings() ? '이름과 설명' : '이름, 설명, 도메인', badge: '' },
+        ];
+        if (!this.editAdvancedSettings()) return sections;
         return [
-            { id: 'basic' as EditSection, icon: 'fa-pen-to-square', title: '기본 정보', description: '이름과 설명', badge: '' },
+            ...sections,
             { id: 'components' as EditSection, icon: 'fa-cubes', title: '구성', description: '이미지와 포트', badge: this.editComponents.length ? `${this.editComponents.length}개` : '' },
             { id: 'domain' as EditSection, icon: 'fa-globe', title: '도메인', description: '공개 주소와 대상', badge: domainBadge },
             { id: 'advanced' as EditSection, icon: 'fa-sliders', title: '고급', description: '환경변수와 볼륨', badge: advancedCount ? `${advancedCount}개` : '' },
-            ...(this.hasAiModels() ? [{ id: 'ai' as EditSection, icon: 'fa-wand-magic-sparkles', title: 'AI 수정안', description: '요청으로 초안 반영', badge: this.editAiBusy() ? '생성 중' : (this.editAiResult ? '적용됨' : '') }] : []),
         ];
     }
 
     public async setEditSection(section: EditSection) {
-        if (section === 'ai' && !(await this.ensureAiModelOptions())) {
-            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
-            return;
-        }
+        if (!this.editAdvancedSettings() && section !== 'basic') return;
         this.editSection.set(section);
-        if (section === 'ai') {
-            await this.service.render();
-        }
     }
 
     public editSectionTitle() {
@@ -1539,31 +1733,26 @@ export class Component implements OnInit, OnDestroy {
             domain_target_port: 80,
         };
         this.editComponents = [];
+        this.editCurrentDomain = null;
+        this.editInitialBasic = null;
         this.editAdvancedSettings.set(false);
+        this.editAdvancedComponentKey.set('');
         this.editOperatorComment.set(service?.metadata?.operator_comment || '');
-        this.editAiIntent.set('');
-        this.editAiModelRef.set(this.aiDefaultModelRef() || 'auto');
-        this.resetEditAiStream();
-        this.editAiResult = null;
         this.editSection.set('basic');
         this.editModalOpen.set(true);
         this.editLoading.set(true);
         await this.service.render();
         try {
-            if (!(await this.loadDetailSection('source'))) {
-                if (requestSeq === this.editRequestSeq) this.editModalOpen.set(false);
-                return;
-            }
-            detail = this.detail();
-            service = detail?.service;
-            if (!service || requestSeq !== this.editRequestSeq || !this.editModalOpen()) return;
             if (!(await this.loadEditOptions())) {
                 if (requestSeq === this.editRequestSeq) this.editModalOpen.set(false);
                 return;
             }
             if (requestSeq !== this.editRequestSeq || !this.editModalOpen()) return;
+            detail = this.detail();
+            service = detail?.service;
+            if (!service || requestSeq !== this.editRequestSeq || !this.editModalOpen()) return;
             const domain = (detail.domains || [])[0] || null;
-            this.editComponents = this.clone(detail.components || []) || [];
+            this.editCurrentDomain = this.clone(domain);
             this.editForm = {
                 service_id: service.id,
                 name: service.name || '',
@@ -1576,7 +1765,7 @@ export class Component implements OnInit, OnDestroy {
                 domain_target_port: domain?.metadata?.target_port || domain?.port || 80,
             };
             if (domain?.domain) this.matchEditDomainZone(domain.domain);
-            this.ensureEditDomainTarget();
+            this.editInitialBasic = this.editBasicSnapshot(true);
         } finally {
             if (requestSeq === this.editRequestSeq) {
                 this.editLoading.set(false);
@@ -1590,6 +1779,82 @@ export class Component implements OnInit, OnDestroy {
         this.editRequestSeq++;
         this.editLoading.set(false);
         this.editModalOpen.set(false);
+        this.editCurrentDomain = null;
+        this.editInitialBasic = null;
+        this.editAdvancedComponentKey.set('');
+    }
+
+    private editBasicSnapshot(syncDomain: boolean = false) {
+        if (syncDomain) this.syncEditDomain();
+        return {
+            service_id: String(this.editForm.service_id || ''),
+            name: String(this.editForm.name || '').trim(),
+            description: String(this.editForm.description || '').trim(),
+            operator_comment: String(this.editOperatorComment() || '').trim(),
+            domain_mode: String(this.editForm.domain_mode || 'none'),
+            zone_id: String(this.editForm.zone_id || ''),
+            domain_prefix: String(this.editForm.domain_prefix || '').trim().toLowerCase(),
+            domain: String(this.editForm.domain || '').trim().toLowerCase(),
+            domain_target_port: Number(this.editForm.domain_target_port || this.editCurrentDomain?.port || 80),
+        };
+    }
+
+    private editBasicDomainKey(snapshot: any = this.editBasicSnapshot(false)) {
+        return [
+            snapshot.domain_mode,
+            snapshot.zone_id,
+            snapshot.domain_prefix,
+            snapshot.domain,
+            snapshot.domain_target_port,
+        ].join('|');
+    }
+
+    public editBasicDomainChanged(snapshot: any = this.editBasicSnapshot(false)) {
+        if (!this.editInitialBasic) return false;
+        return this.editBasicDomainKey(snapshot) !== this.editBasicDomainKey(this.editInitialBasic);
+    }
+
+    public editBasicDomainPortLabel() {
+        const port = Number(this.editForm.domain_target_port || this.editCurrentDomain?.port || 0);
+        return port ? `${port}/tcp` : '기존 연결 포트';
+    }
+
+    public editFooterMessage() {
+        if (this.editAdvancedSettings()) return '고급 저장은 Compose 초안을 갱신합니다. 서버 반영은 저장 후 적용에서 실행됩니다.';
+        if (this.editBasicDomainChanged()) return '기본 정보는 상태 변경 없이 저장됩니다. 도메인 변경은 저장 후 적용할 수 있습니다.';
+        return '이름과 설명은 서비스 상태를 바꾸지 않고 바로 저장됩니다.';
+    }
+
+    public showEditApplyButton() {
+        return this.editAdvancedSettings() || this.editBasicDomainChanged();
+    }
+
+    public async openAdvancedEditMode() {
+        if (this.editAdvancedSettings() || this.editLoading()) return;
+        const requestSeq = this.editRequestSeq;
+        this.editAdvancedSettings.set(true);
+        this.editSection.set('components');
+        this.editLoading.set(true);
+        await this.service.render();
+        try {
+            if (!(await this.loadDetailSection('source'))) {
+                if (requestSeq === this.editRequestSeq) {
+                    this.editAdvancedSettings.set(false);
+                    this.editSection.set('basic');
+                }
+                return;
+            }
+            if (requestSeq !== this.editRequestSeq || !this.editModalOpen()) return;
+            const detail = this.detail();
+            this.editComponents = this.clone(detail?.components || []) || [];
+            this.ensureEditAdvancedComponent();
+            this.ensureEditDomainTarget();
+        } finally {
+            if (requestSeq === this.editRequestSeq) {
+                this.editLoading.set(false);
+                await this.service.render();
+            }
+        }
     }
 
     private matchEditDomainZone(domain: string) {
@@ -1611,6 +1876,69 @@ export class Component implements OnInit, OnDestroy {
         return (item?.ports || []).filter((port: any) => Number(port.target || 0) > 0);
     }
 
+    private editComponentKey(item: any, index: number = 0) {
+        return String(item?.key || item?.label || index);
+    }
+
+    public editComponentIdentity(item: any, index: number = 0) {
+        return this.editComponentKey(item, index);
+    }
+
+    public editComponentLabel(item: any, fallbackIndex: number = 0) {
+        return String(item?.label || item?.key || `구성 ${fallbackIndex + 1}`);
+    }
+
+    public editComponentSummary(item: any) {
+        const ports = this.editPorts(item).length;
+        const envs = (item?.env_vars || []).length;
+        const volumes = (item?.volumes || []).length;
+        return `${ports} 포트 · ${envs} 환경변수 · ${volumes} 볼륨`;
+    }
+
+    private ensureEditAdvancedComponent() {
+        if (!this.editComponents.length) {
+            this.editAdvancedComponentKey.set('');
+            return;
+        }
+        const current = this.editAdvancedComponentKey();
+        const found = this.editComponents.some((item: any, index: number) => this.editComponentKey(item, index) === current);
+        if (!found) this.editAdvancedComponentKey.set(this.editComponentKey(this.editComponents[0], 0));
+    }
+
+    public selectEditAdvancedComponent(key: string) {
+        this.editAdvancedComponentKey.set(String(key || ''));
+    }
+
+    public selectedEditAdvancedComponent() {
+        const current = this.editAdvancedComponentKey();
+        return this.editComponents.find((item: any, index: number) => this.editComponentKey(item, index) === current) || this.editComponents[0] || null;
+    }
+
+    public selectedEditAdvancedComponentLabel() {
+        const item = this.selectedEditAdvancedComponent();
+        return item ? this.editComponentLabel(item) : '구성 선택';
+    }
+
+    public selectedEditAdvancedComponentSummary() {
+        const item = this.selectedEditAdvancedComponent();
+        return item ? this.editComponentSummary(item) : '';
+    }
+
+    public selectedEditEnvVars() {
+        return this.selectedEditAdvancedComponent()?.env_vars || [];
+    }
+
+    public selectedEditVolumes() {
+        return this.selectedEditAdvancedComponent()?.volumes || [];
+    }
+
+    public editAdvancedComponentClass(item: any, index: number = 0) {
+        const selectedKey = this.editAdvancedComponentKey() || this.editComponentKey(this.editComponents[0], 0);
+        return this.editComponentKey(item, index) === selectedKey
+            ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950'
+            : 'border-transparent bg-white text-zinc-700 hover:border-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-800 dark:hover:bg-zinc-800';
+    }
+
     public editDomainTargetOptions() {
         const options: any[] = [];
         for (const item of this.editComponents) {
@@ -1626,33 +1954,6 @@ export class Component implements OnInit, OnDestroy {
             }
         }
         return options.sort((a: any, b: any) => Number(!!b.recommended) - Number(!!a.recommended));
-    }
-
-    public editAiInputRows() {
-        return [
-            { key: 'intent', value: '수정 요구사항' },
-            { key: 'operator_comment', value: '서비스 수정 추가 코멘트' },
-            { key: 'model', value: 'AI 설정에서 사용 가능한 모델' },
-            { key: 'form', value: '현재 서비스와 도메인' },
-            { key: 'components', value: '현재 이미지, 포트, 환경변수, 볼륨' },
-            { key: 'base_content', value: '현재 Compose 원문' },
-        ];
-    }
-
-    private resetEditAiStream() {
-        this.editAiStreamEvents.set([]);
-        this.editAiOutputTokenCount.set(0);
-    }
-
-    private pushEditAiEvent(event: any) {
-        this.editAiStreamEvents.set([...this.editAiStreamEvents(), event].slice(-120));
-        if (event?.type === 'delta') {
-            this.editAiOutputTokenCount.set(this.editAiOutputTokenCount() + String(event.text || '').length);
-        }
-    }
-
-    public editAiStreamRows() {
-        return this.compactAiStreamRows(this.editAiStreamEvents());
     }
 
     private isMcpToolExposureNoise(value: any) {
@@ -1815,20 +2116,8 @@ export class Component implements OnInit, OnDestroy {
         return donePayload;
     }
 
-    private async streamEditAi(functionName: string, payload: any, onDone: (data: any) => Promise<void>) {
-        return await this.streamAi(functionName, payload, (event: any) => this.pushEditAiEvent(event), onDone);
-    }
-
     private async streamRuntimeAi(functionName: string, payload: any, onDone: (data: any) => Promise<void>) {
         return await this.streamAi(functionName, payload, (event: any) => this.pushRuntimeAiEvent(event), onDone);
-    }
-
-    public editAiOutputRows() {
-        return [
-            { key: 'form', value: '서비스 정보와 도메인 대상' },
-            { key: 'components', value: '수정된 컴포넌트 설정' },
-            { key: 'warnings', value: '확인 필요 항목' },
-        ];
     }
 
     public ensureEditDomainTarget() {
@@ -1885,94 +2174,79 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public editImageRef(item: any) {
+        const imageName = String(item?.image_name || '').trim();
+        if (!imageName) return '이미지 없음';
         const tag = String(item?.image_tag || 'latest').trim();
-        return tag.startsWith('sha256:') ? `${item.image_name}@${tag}` : `${item.image_name}:${tag}`;
+        return tag.startsWith('sha256:') ? `${imageName}@${tag}` : `${imageName}:${tag}`;
     }
 
     public addEditPort(item: any) {
+        if (!item) return;
         item.ports = item.ports || [];
         item.ports.push({ target: 80, protocol: 'tcp' });
         this.ensureEditDomainTarget();
     }
 
     public removeEditPort(item: any, index: number) {
+        if (!item?.ports) return;
         item.ports.splice(index, 1);
         this.ensureEditDomainTarget();
     }
 
     public addEditEnv(item: any) {
+        if (!item) return;
         item.env_vars = item.env_vars || [];
         item.env_vars.push({ key: '', value: '' });
     }
 
     public removeEditEnv(item: any, index: number) {
+        if (!item?.env_vars) return;
         item.env_vars.splice(index, 1);
     }
 
     public addEditVolume(item: any) {
+        if (!item) return;
         item.volumes = item.volumes || [];
         item.volumes.push({ source: `${item.key}_data`, target: '/data' });
     }
 
     public removeEditVolume(item: any, index: number) {
+        if (!item?.volumes) return;
         item.volumes.splice(index, 1);
     }
 
-    private applyEditAiDraft(draft: any) {
-        const serviceId = this.editForm.service_id;
-        if (draft?.form) {
-            this.editForm = {
-                ...this.editForm,
-                ...draft.form,
-                service_id: serviceId,
-            };
-        }
-        if (Array.isArray(draft?.components) && draft.components.length) {
-            this.editComponents = draft.components;
-            this.editAdvancedSettings.set(true);
-        }
-        this.ensureEditDomainTarget();
-        this.syncEditDomain();
-    }
-
-    public async generateEditServiceWithAi() {
-        const intent = String(this.editAiIntent() || '').trim();
-        const operatorComment = String(this.editOperatorComment() || '').trim();
-        if (!intent) {
-            await this.alert('AI 요청 내용을 입력해주세요.');
-            return;
-        }
-        if (!this.editComponents.length) {
-            await this.alert('서비스 구성을 불러오지 못했습니다.');
-            return;
-        }
-        if (!(await this.ensureAiModelOptions())) {
-            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
-            return;
-        }
-        this.editAiBusy.set(true);
-        this.resetEditAiStream();
-        try {
-            await this.streamEditAi('stream_service_ai', {
-                mode: 'service_update',
-                intent,
-                operator_comment: operatorComment,
-                model_ref: this.editAiModelRef() || this.aiDefaultModelRef() || 'auto',
-                form: this.editForm,
-                components: this.editComponents,
-                base_content: this.detail()?.compose_content || '',
-                zones: this.zones(),
-                service: this.detail()?.service || {},
-            }, async (data: any) => {
-                this.editAiResult = data;
-                this.applyEditAiDraft(data?.draft);
-            });
-            await this.alert(this.editAiResult?.summary || 'AI 수정안을 적용했습니다. 저장 전 내용을 검토하세요.', 'success');
-        } catch (error: any) {
-            await this.alert(error?.message || 'AI 수정안을 생성할 수 없습니다.');
-        }
-        this.editAiBusy.set(false);
-        await this.service.render();
+    private editBasicPayload() {
+        const snapshot = this.editBasicSnapshot(true);
+        const includeDomain = this.editBasicDomainChanged(snapshot);
+        const metadata = {
+            ...(this.editCurrentDomain?.metadata || {}),
+            target_port: snapshot.domain_target_port,
+            published_port: snapshot.domain_target_port,
+            zone_id: snapshot.zone_id,
+        };
+        return {
+            service_id: snapshot.service_id,
+            name: snapshot.name,
+            description: snapshot.description,
+            operator_comment: snapshot.operator_comment,
+            ...(includeDomain ? {
+                include_domain: true,
+                domain_mode: snapshot.domain_mode,
+                zone_id: snapshot.zone_id,
+                domain_prefix: snapshot.domain_prefix,
+                domain: snapshot.domain_mode === 'registered' ? snapshot.domain : '',
+                port: snapshot.domain_target_port,
+                domain_target_port: snapshot.domain_target_port,
+                domains: snapshot.domain_mode === 'registered' && snapshot.domain
+                    ? [{
+                        domain: snapshot.domain,
+                        port: snapshot.domain_target_port,
+                        ssl_mode: this.editCurrentDomain?.ssl_mode,
+                        metadata,
+                    }]
+                    : [],
+            } : {}),
+        };
     }
 
     private editPayload() {
@@ -2010,12 +2284,14 @@ export class Component implements OnInit, OnDestroy {
             await this.alert('서비스 이름을 입력해주세요.');
             return;
         }
-        if (this.editComponents.some((item: any) => !String(item.image_name || '').trim() || !String(item.image_tag || '').trim())) {
+        const advanced = this.editAdvancedSettings();
+        if (advanced && this.editComponents.some((item: any) => !String(item.image_name || '').trim() || !String(item.image_tag || '').trim())) {
             await this.alert('모든 구성의 이미지 이름과 버전을 입력해주세요.');
             return;
         }
+        const payload = advanced ? this.editPayload() : this.editBasicPayload();
         this.editBusy.set(true);
-        const { code, data } = await wiz.call('update_service', this.editPayload());
+        const { code, data } = await wiz.call(advanced ? 'update_service' : 'update_service_basic', payload);
         if (code !== 200) {
             this.editBusy.set(false);
             await this.alert(this.formatPreflightError(data));
@@ -2024,11 +2300,14 @@ export class Component implements OnInit, OnDestroy {
         this.applyDetail(data);
         this.editModalOpen.set(false);
         const serviceId = data.service?.id || this.selected()?.id;
-        await this.load(serviceId);
+        if (advanced) await this.load(serviceId);
         if (deployAfterSave && serviceId) {
             await this.deployService(serviceId, false);
         } else {
-            await this.alert('서비스 수정 내용을 저장했습니다. 적용 버튼을 누르면 서버에 반영됩니다.', 'success');
+            const message = advanced
+                ? '서비스 수정 내용을 저장했습니다. 적용 버튼을 누르면 서버에 반영됩니다.'
+                : (payload.include_domain ? '서비스 기본 정보를 저장했습니다. 도메인 변경은 적용 버튼으로 서버에 반영할 수 있습니다.' : '서비스 기본 정보를 저장했습니다.');
+            await this.alert(message, 'success');
         }
         this.editBusy.set(false);
         await this.service.render();
@@ -2554,6 +2833,69 @@ export class Component implements OnInit, OnDestroy {
         return { service_id: this.selected()?.id || '' };
     }
 
+    public serviceDirectoryTitle() {
+        return String(this.detail()?.file_root || this.selected()?.namespace || 'service');
+    }
+
+    public serviceDirectoryLabel() {
+        const root = this.serviceDirectoryTitle();
+        const parts = root.split('/').filter(Boolean);
+        return parts[parts.length - 1] || root;
+    }
+
+    public containerFileContainers() {
+        const browsable = new Set(['running', 'healthy', 'unhealthy', 'starting']);
+        return this.runtimeContainers().filter((container: any) => (
+            container?.id
+            && container?.node_id
+            && browsable.has(this.containerSignal(container))
+        ));
+    }
+
+    public containerFileKey(container: any) {
+        if (!container?.id || !container?.node_id) return '';
+        return `${container.node_id}:${container.id}`;
+    }
+
+    public containerFileTarget() {
+        const rows = this.containerFileContainers();
+        const key = this.containerFileTargetKey();
+        return rows.find((container: any) => this.containerFileKey(container) === key) || rows[0] || null;
+    }
+
+    public async selectContainerFileTarget(container: any) {
+        const key = this.containerFileKey(container);
+        if (!key) return;
+        this.containerFileTargetKey.set(key);
+        await this.service.render();
+    }
+
+    public containerFileTreeContext() {
+        const target = this.containerFileTarget();
+        return {
+            node_id: target?.node_id || '',
+            container_id: target?.id || '',
+        };
+    }
+
+    public containerFileRootLabel() {
+        const target = this.containerFileTarget();
+        return target ? this.containerDisplayName(target) : 'container';
+    }
+
+    public containerFileTargetClass(container: any) {
+        if (this.containerFileKey(container) === this.containerFileKey(this.containerFileTarget())) {
+            return 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950';
+        }
+        return 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800';
+    }
+
+    public containerFileSubtitle(container: any) {
+        const node = container?.node_name || container?.node_host || '서버 확인 필요';
+        const id = String(container?.id || '').slice(0, 12) || '-';
+        return `${node} · ${id}`;
+    }
+
     public closeFileBrowser() {
         if (this.fileBrowserBusy()) return;
         this.fileBrowserOpen.set(false);
@@ -2629,6 +2971,24 @@ export class Component implements OnInit, OnDestroy {
 
     public servicePrimaryDomain(service: any) {
         return service?.primary_domain || (Number(service?.domain_count || 0) > 0 ? '도메인 연결됨' : '도메인 미연결');
+    }
+
+    public serviceServerSummaryText(service: any) {
+        const summary = String(service?.runtime_server_summary || '').trim();
+        if (summary) return summary;
+        const names = Array.isArray(service?.runtime_server_names) ? service.runtime_server_names.filter((name: any) => Boolean(name)) : [];
+        if (names.length > 2) return `${names.slice(0, 2).join(', ')} 외 ${names.length - 2}대`;
+        if (names.length) return names.join(', ');
+        const runtime = service?.runtime_status || service?.metadata?.runtime_status || {};
+        return runtime?.checked_at ? '서버 확인 필요' : '상태 확인 전';
+    }
+
+    public serviceServerBadgeClass(service: any) {
+        const names = Array.isArray(service?.runtime_server_names) ? service.runtime_server_names.filter((name: any) => Boolean(name)) : [];
+        if (names.length || service?.runtime_servers?.length) {
+            return 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
     }
 
     public serviceListMeta(service: any) {
@@ -2716,7 +3076,7 @@ export class Component implements OnInit, OnDestroy {
             { key: 'overview', label: '구성', icon: 'fa-diagram-project' },
             { key: 'logs', label: '로그', icon: 'fa-terminal' },
             { key: 'source', label: 'Compose/Nginx', icon: 'fa-code' },
-            { key: 'files', label: '서비스 파일', icon: 'fa-folder-tree' },
+            { key: 'files', label: '컨테이너 파일', icon: 'fa-folder-tree' },
             { key: 'versions', label: '버전 이력', icon: 'fa-clock-rotate-left' },
         ];
     }
@@ -3363,16 +3723,37 @@ export class Component implements OnInit, OnDestroy {
         return '실행 중인 컨테이너만 터미널에 접속할 수 있습니다.';
     }
 
+    public canOpenRuntimeContainerLogs(container: any) {
+        return Boolean(container?.id && container?.node_id);
+    }
+
+    public runtimeContainerLogsTitle(container: any) {
+        if (this.canOpenRuntimeContainerLogs(container)) return `${this.containerDisplayName(container)} 로그 보기`;
+        if (!container?.node_id) return '서버 정보를 확인할 수 없어 로그를 볼 수 없습니다.';
+        return '컨테이너 ID를 확인할 수 없어 로그를 볼 수 없습니다.';
+    }
+
     public containerTerminalTitle() {
         const target = this.containerTerminalTarget();
-        return `${this.containerDisplayName(target)} 터미널`;
+        return `${this.containerDisplayName(target)} ${this.containerTerminalMode() === 'logs' ? '로그' : '터미널'}`;
     }
 
     public containerTerminalSubtitle() {
         const target = this.containerTerminalTarget();
         const node = target?.node_name || target?.node_host || '서버 확인 필요';
+        if (this.containerTerminalMode() === 'logs') return `${node} · docker logs -f`;
         const shell = this.containerTerminalConnected() ? this.containerTerminalStatus() : 'bash 우선 연결';
         return `${node} · ${shell}`;
+    }
+
+    public containerTerminalReconnectIcon() {
+        if (this.containerTerminalConnecting()) return 'fa-spinner fa-spin';
+        return this.containerTerminalMode() === 'logs' ? 'fa-rotate-right' : 'fa-plug';
+    }
+
+    public containerTerminalReconnectLabel() {
+        if (this.containerTerminalMode() === 'logs') return this.containerTerminalConnected() ? '다시 보기' : '보기';
+        return this.containerTerminalConnected() ? '다시 연결' : '연결';
     }
 
     public async openContainerTerminal(container: any) {
@@ -3380,7 +3761,11 @@ export class Component implements OnInit, OnDestroy {
             await this.alert(this.runtimeContainerTerminalTitle(container));
             return;
         }
+        this.disconnectContainerLogs(true);
+        this.containerLogsOpen.set(false);
+        this.containerLogsTarget.set(null);
         this.disconnectContainerTerminal(true);
+        this.containerTerminalMode.set('terminal');
         this.containerTerminalTarget.set(container);
         this.containerTerminalOpen.set(true);
         this.containerTerminalStatus.set('터미널 연결 중');
@@ -3389,10 +3774,35 @@ export class Component implements OnInit, OnDestroy {
         await this.connectContainerTerminal();
     }
 
+    public async openContainerLogs(container: any) {
+        if (!this.canOpenRuntimeContainerLogs(container)) {
+            await this.alert(this.runtimeContainerLogsTitle(container));
+            return;
+        }
+        this.disconnectContainerTerminal(true);
+        this.containerTerminalOpen.set(false);
+        this.containerTerminalTarget.set(null);
+        this.disconnectContainerLogs(true);
+        this.containerLogsTarget.set(container);
+        this.containerLogsText.set('');
+        this.containerLogsOpen.set(true);
+        this.containerLogsStatus.set('로그 연결 중');
+        this.containerLogsError.set('');
+        await this.service.render();
+        await this.connectContainerLogs();
+    }
+
     public closeContainerTerminal() {
         this.disconnectContainerTerminal(true);
         this.containerTerminalOpen.set(false);
         this.containerTerminalTarget.set(null);
+        this.containerTerminalMode.set('terminal');
+    }
+
+    public closeContainerLogs() {
+        this.disconnectContainerLogs(true);
+        this.containerLogsOpen.set(false);
+        this.containerLogsTarget.set(null);
     }
 
     public disconnectContainerTerminal(silent: boolean = false) {
@@ -3421,32 +3831,173 @@ export class Component implements OnInit, OnDestroy {
         }
     }
 
+    private clearContainerLogsTimers() {
+        if (this.containerLogsRenderTimer) {
+            clearTimeout(this.containerLogsRenderTimer);
+            this.containerLogsRenderTimer = null;
+        }
+        if (this.containerLogsConnectTimer) {
+            clearTimeout(this.containerLogsConnectTimer);
+            this.containerLogsConnectTimer = null;
+        }
+        if (this.containerLogsPollTimer) {
+            clearInterval(this.containerLogsPollTimer);
+            this.containerLogsPollTimer = null;
+        }
+    }
+
+    private scrollContainerLogsToBottom() {
+        const output = document.querySelector('[data-testid="services-container-logs-output"]') as HTMLElement | null;
+        if (!output) return;
+        output.scrollTop = output.scrollHeight;
+    }
+
+    private scheduleContainerLogsRender() {
+        if (this.containerLogsRenderTimer) return;
+        this.containerLogsRenderTimer = setTimeout(async () => {
+            this.containerLogsRenderTimer = null;
+            await this.service.render();
+            this.scrollContainerLogsToBottom();
+        }, 80);
+    }
+
+    private appendContainerLogs(output: any) {
+        const chunk = String(output || '');
+        if (!chunk) return;
+        const limit = 300000;
+        const next = `${this.containerLogsText()}${chunk}`;
+        this.containerLogsText.set(next.length > limit ? next.slice(next.length - limit) : next);
+        this.scheduleContainerLogsRender();
+    }
+
+    public clearContainerLogs() {
+        this.containerLogsText.set('');
+        void this.service.render();
+    }
+
+    public containerLogsTitle() {
+        return `${this.containerDisplayName(this.containerLogsTarget())} 로그`;
+    }
+
+    public containerLogsSubtitle() {
+        const target = this.containerLogsTarget();
+        const node = target?.node_name || target?.node_host || '서버 확인 필요';
+        return `${node} · docker logs --tail 300 · 자동 갱신`;
+    }
+
+    public containerLogsEmptyText() {
+        if (this.containerLogsConnecting()) return '로그 스트림을 연결하는 중입니다.';
+        if (this.containerLogsError()) return this.containerLogsError();
+        return '표시할 로그가 없습니다.';
+    }
+
+    public containerLogsReconnectLabel() {
+        return this.containerLogsConnected() ? '다시 보기' : '보기';
+    }
+
+    public disconnectContainerLogs(silent: boolean = false) {
+        this.clearContainerLogsTimers();
+        if (this.containerLogsSocket) {
+            try {
+                this.containerLogsSocket.emit('close', { namespace: this.containerLogsRoom });
+            } catch (error) {
+                // ignore socket close errors
+            }
+            try {
+                this.containerLogsSocket.close();
+            } catch (error) {
+                // ignore disconnect errors
+            }
+        }
+        this.containerLogsSocket = null;
+        this.containerLogsRoom = '';
+        this.containerLogsConnected.set(false);
+        this.containerLogsConnecting.set(false);
+        this.containerLogsError.set('');
+        this.containerLogsStatus.set(silent ? '연결되지 않음' : '연결 종료됨');
+    }
+
+    private async refreshContainerLogsSnapshot(silent: boolean = false) {
+        const target = this.containerLogsTarget();
+        const serviceId = this.selected()?.id;
+        if (!target?.id || !target?.node_id || !serviceId) return false;
+
+        try {
+            const { code, data } = await wiz.call('service_container_logs_snapshot', {
+                service_id: serviceId,
+                node_id: target.node_id,
+                container_id: target.id,
+                tail: 300,
+            });
+            if (code !== 200) throw new Error(data?.message || '로그를 불러올 수 없습니다.');
+            const result = data?.result || {};
+            this.containerLogsText.set(String(result.output || ''));
+            this.containerLogsConnecting.set(false);
+            this.containerLogsConnected.set(true);
+            this.containerLogsError.set('');
+            this.containerLogsStatus.set('로그 수신 중');
+            await this.service.render();
+            this.scrollContainerLogsToBottom();
+            return true;
+        } catch (error: any) {
+            this.containerLogsConnecting.set(false);
+            this.containerLogsConnected.set(false);
+            this.containerLogsError.set(error?.message || '로그를 불러올 수 없습니다.');
+            this.containerLogsStatus.set(silent ? '갱신 실패' : '연결 실패');
+            await this.service.render();
+            return false;
+        }
+    }
+
+    public async connectContainerLogs() {
+        const target = this.containerLogsTarget();
+        const serviceId = this.selected()?.id;
+        if (!target?.id || !target?.node_id || !serviceId) return;
+        this.disconnectContainerLogs(true);
+        this.containerLogsConnecting.set(true);
+        this.containerLogsConnected.set(false);
+        this.containerLogsError.set('');
+        this.containerLogsStatus.set('로그 연결 중');
+        this.containerLogsText.set('');
+        await this.service.render();
+
+        const connected = await this.refreshContainerLogsSnapshot(false);
+        if (!connected) return;
+        this.containerLogsPollTimer = setInterval(() => {
+            void this.refreshContainerLogsSnapshot(true);
+        }, 2000);
+    }
+
     public async connectContainerTerminal() {
         const target = this.containerTerminalTarget();
         const serviceId = this.selected()?.id;
         if (!target?.id || !target?.node_id || !serviceId) return;
+        const mode = this.containerTerminalMode();
         this.disconnectContainerTerminal(true);
+        this.containerTerminalMode.set(mode);
         this.containerTerminalConnecting.set(true);
         this.containerTerminalConnected.set(false);
         this.containerTerminalError.set('');
-        this.containerTerminalStatus.set('터미널 연결 중');
+        this.containerTerminalStatus.set(mode === 'logs' ? '로그 연결 중' : '터미널 연결 중');
         await this.ensureContainerTerminalMounted();
         if (!this.containerTerminalInstance) {
             this.containerTerminalConnecting.set(false);
-            this.containerTerminalError.set('터미널 영역을 초기화할 수 없습니다.');
+            this.containerTerminalError.set(mode === 'logs' ? '로그 영역을 초기화할 수 없습니다.' : '터미널 영역을 초기화할 수 없습니다.');
             await this.service.render();
             return;
         }
 
         const socket = wiz.socket();
-        const room = `services-container-terminal-${target.node_id}-${target.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const room = `services-container-${mode}-${target.node_id}-${target.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
         this.containerTerminalSocket = socket;
         this.containerTerminalRoom = room;
         this.containerTerminalInstance.clear();
         this.containerTerminalInstance.focus();
-        this.containerTerminalInstance.onData((input) => {
-            socket.emit('ptyinput', { namespace: room, input });
-        });
+        if (mode === 'terminal') {
+            this.containerTerminalInstance.onData((input) => {
+                socket.emit('ptyinput', { namespace: room, input });
+            });
+        }
         this.containerTerminalInstance.onResize(({ cols, rows }) => {
             socket.emit('resize', { namespace: room, cols, rows });
         });
@@ -3455,9 +4006,11 @@ export class Component implements OnInit, OnDestroy {
             socket.emit('join', { namespace: room });
             socket.emit('create', {
                 namespace: room,
+                mode,
                 service_id: serviceId,
                 node_id: target.node_id,
                 container_id: target.id,
+                tail: 200,
                 cols: this.containerTerminalInstance?.cols || 120,
                 rows: this.containerTerminalInstance?.rows || 32,
             });
@@ -3466,7 +4019,7 @@ export class Component implements OnInit, OnDestroy {
             if (room !== this.containerTerminalRoom) return;
             this.containerTerminalConnecting.set(false);
             this.containerTerminalConnected.set(true);
-            this.containerTerminalStatus.set(`${data?.shell || 'shell'} 연결됨`);
+            this.containerTerminalStatus.set(mode === 'logs' ? '로그 수신 중' : `${data?.shell || 'shell'} 연결됨`);
             this.fitContainerTerminal();
             await this.service.render();
         });
@@ -3478,7 +4031,7 @@ export class Component implements OnInit, OnDestroy {
             if (room !== this.containerTerminalRoom) return;
             this.containerTerminalConnecting.set(false);
             this.containerTerminalConnected.set(false);
-            this.containerTerminalError.set(data?.message || '터미널을 연결할 수 없습니다.');
+            this.containerTerminalError.set(data?.message || (mode === 'logs' ? '로그를 연결할 수 없습니다.' : '터미널을 연결할 수 없습니다.'));
             this.containerTerminalStatus.set('연결 실패');
             await this.service.render();
         });
@@ -3486,9 +4039,9 @@ export class Component implements OnInit, OnDestroy {
             if (room !== this.containerTerminalRoom) return;
             this.containerTerminalConnecting.set(false);
             this.containerTerminalConnected.set(false);
-            this.containerTerminalStatus.set(data?.closed ? '연결 종료됨' : `세션 종료 (${data?.exit_code ?? '-'})`);
+            this.containerTerminalStatus.set(data?.closed ? '연결 종료됨' : `${mode === 'logs' ? '로그' : '세션'} 종료 (${data?.exit_code ?? '-'})`);
             if (this.containerTerminalInstance) {
-                this.containerTerminalInstance.write('\r\n[세션 종료]\r\n');
+                this.containerTerminalInstance.write(`\r\n[${mode === 'logs' ? '로그' : '세션'} 종료]\r\n`);
             }
             await this.service.render();
         });
@@ -3518,6 +4071,7 @@ export class Component implements OnInit, OnDestroy {
             push(task?.registered_node_host);
             push(task?.registered_node?.label);
         }
+        if (!values.length) push(this.servicePlacementNodeLabel());
         return values;
     }
 
@@ -3539,6 +4093,8 @@ export class Component implements OnInit, OnDestroy {
             const node = task?.registered_node || {};
             push(task?.registered_node_id || node?.id, task?.registered_node_label || node?.label || task?.registered_node_name || task?.registered_node_host || node?.name || node?.host);
         }
+        const placementNodeId = this.servicePlacementNodeId();
+        if (placementNodeId) push(placementNodeId, this.servicePlacementNodeLabel());
         return values;
     }
 

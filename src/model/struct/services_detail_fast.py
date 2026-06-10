@@ -53,15 +53,30 @@ class ServiceDetailFast:
     def _runtime_status_payload(self, service):
         return dict((service.get("metadata") or {}).get("runtime_status") or {})
 
+    def _operations(self, cursor, service_id, limit=5):
+        cursor.execute(
+            """
+            SELECT id, type, status, message, created_at, started_at, finished_at, metadata, requested_payload, result_payload
+            FROM operation_logs
+            WHERE target_type = 'service'
+              AND target_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (str(service_id), max(1, min(int(limit or 5), 20))),
+        )
+        return [_row(row) for row in cursor.fetchall()]
+
     def overview(self, service_id, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 service = self._service_row(cursor, service_id)
                 domains = self._domains(cursor, service_id)
+                operations = self._operations(cursor, service_id)
         return {
             "service": service,
             "domains": domains,
-            "operations": [],
+            "operations": operations,
             "file_root": str(self._service_root(service)),
             "runtime_status": self._runtime_status_payload(service),
         }

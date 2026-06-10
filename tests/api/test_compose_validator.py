@@ -58,6 +58,54 @@ services:
         self.assertTrue(validation["valid"])
         self.assertEqual(validation["warnings"], [])
 
+    def test_internal_service_hosts_are_qualified_on_shared_overlay(self):
+        rules_spec = importlib.util.spec_from_file_location("compose_rules_contract", RULES_MODEL)
+        rules_module = importlib.util.module_from_spec(rules_spec)
+        rules_spec.loader.exec_module(rules_module)
+
+        class FakeWiz:
+            def model(self, name):
+                if name == "struct/compose_rules":
+                    return rules_module.Model
+                raise AssertionError(f"unexpected model: {name}")
+
+        validator_spec = importlib.util.spec_from_file_location("compose_validator_contract", VALIDATOR_MODEL)
+        validator_module = importlib.util.module_from_spec(validator_spec)
+        validator_module.wiz = FakeWiz()
+        validator_spec.loader.exec_module(validator_module)
+
+        validation = validator_module.Model.validate({
+            "namespace": "cards_ab12",
+            "filename": "docker-compose.yaml",
+            "content": """
+services:
+  app:
+    image: example/cards:latest
+    environment:
+      DB_HOST: db
+      DATABASE_URL: postgresql://cards:secret@db:5432/cards
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_DB: app
+  worker:
+    image: example/cards-worker:latest
+    environment:
+      - DB_HOST=db:5432
+      - APP_NAME=worker
+  db:
+    image: postgres:16
+  redis:
+    image: redis:7
+""",
+        })
+
+        environment = validation["normalized"]["services"]["app"]["environment"]
+        self.assertEqual(environment["DB_HOST"], "cards_ab12_db")
+        self.assertEqual(environment["DATABASE_URL"], "postgresql://cards:secret@cards_ab12_db:5432/cards")
+        self.assertEqual(environment["REDIS_URL"], "redis://cards_ab12_redis:6379/0")
+        self.assertEqual(environment["POSTGRES_DB"], "app")
+        worker_environment = validation["normalized"]["services"]["worker"]["environment"]
+        self.assertEqual(worker_environment, ["DB_HOST=cards_ab12_db:5432", "APP_NAME=worker"])
+
 
 class ComposeValidateLiveFlowTest(unittest.TestCase):
     def setUp(self):

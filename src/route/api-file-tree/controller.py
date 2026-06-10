@@ -14,6 +14,8 @@ else:
             payload = file_tree.list(body)
         elif action == "read":
             payload = file_tree.read(body)
+        elif action == "download":
+            payload = file_tree.download(body)
         else:
             payload = file_tree.mutate(body)
     except file_tree.FileTreeError as exc:

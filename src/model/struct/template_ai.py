@@ -76,6 +76,8 @@ class TemplateAIContract:
                     "values.schema.json is a JSON Schema object for the same placeholders",
                     "README.md is Korean user-facing usage notes shown in the service creation screen",
                     "the placeholder set must match across docker-compose.yaml, values.default.yaml, and values.schema.json",
+                    "services that provide browser/API/user-facing access must include services.<name>.ports with an explicit published-to-target port mapping",
+                    "do not use expose as a substitute for public access; expose is internal-only",
                     "do not include a deployment target, concrete domain, concrete registered server, host-specific path, container_name, or hostname",
                 ],
             },
@@ -132,6 +134,13 @@ class TemplateAIContract:
                     "every placeholder must have a default in values.default.yaml and a property in values.schema.json",
                     "secret-like properties must include secret=true and a safe change_me-style default",
                     "service_name/namespace should be the only mandatory identity input unless the image truly requires more",
+                ],
+                "port_rules": [
+                    "Any browser/API/user-facing service must declare services.<name>.ports; expose alone is internal-only and is not enough.",
+                    "Public ports must explicitly map a published port to the container target port, for example \"{{ service_port }}:3000\" or long syntax with target, published, protocol, and mode.",
+                    "The published port should be a reusable integer placeholder in values.default.yaml and values.schema.json.",
+                    "metadata.public_endpoint.service and metadata.public_endpoint.port must match a service and target port declared under services.<name>.ports.",
+                    "Internal dependency services such as databases, caches, and queues should omit ports unless the user explicitly asks to publish them.",
                 ],
                 "compose_rules": self.compose_validation_contract(),
                 "forbidden_fields": [

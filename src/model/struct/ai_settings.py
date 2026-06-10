@@ -239,9 +239,9 @@ class AISettings:
             },
         }
 
-    def public_payload(self, env=None):
+    def public_payload(self, env=None, include_status=True):
         config = self._normalize_config(self._saved_config(env=env))
-        statuses = {agent: self._agent_status(agent, config, env=env) for agent in AGENT_ORDER}
+        statuses = {agent: self._agent_status(agent, config, env=env) for agent in AGENT_ORDER} if include_status else {}
         return {
             "config": config,
             "tokens": {},
@@ -251,14 +251,14 @@ class AISettings:
             "agent_updates": self._saved_agent_updates(env=env),
         }
 
-    def save(self, payload=None, env=None):
+    def save(self, payload=None, env=None, include_status=True):
         body = dict(payload or {})
         current = self._normalize_config(self._saved_config(env=env))
         config = self._normalize_config(_deep_merge(current, body))
         self._persist_config(config, env=env)
-        return self.public_payload(env=env)
+        return self.public_payload(env=env, include_status=include_status)
 
-    def save_section(self, payload=None, env=None):
+    def save_section(self, payload=None, env=None, include_status=True):
         body = dict(payload or {})
         section = _str(body.get("section")).lower().replace("-", "_")
         if section in {"claude", "claudecode"}:
@@ -274,9 +274,9 @@ class AISettings:
         next_config[section] = _deep_merge(current.get(section) or {}, section_payload)
         config = self._normalize_config(next_config)
         self._persist_config(config, env=env)
-        return self.public_payload(env=env)
+        return self.public_payload(env=env, include_status=include_status)
 
-    def save_default_agent(self, payload=None, env=None):
+    def save_default_agent(self, payload=None, env=None, include_status=True):
         body = dict(payload or {})
         current = self._normalize_config(self._saved_config(env=env))
         agent = _agent_key(body.get("default_agent") or body.get("agent") or body.get("provider"))
@@ -290,7 +290,7 @@ class AISettings:
         next_config["default_agent"] = agent
         config = self._normalize_config(next_config)
         self._persist_config(config, env=env)
-        return self.public_payload(env=env)
+        return self.public_payload(env=env, include_status=include_status)
 
     def save_agent_update(self, agent, update, env=None):
         agent = _agent_key(agent)

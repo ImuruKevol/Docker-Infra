@@ -1,37 +1,35 @@
-def _ai_settings_payload(ai_settings):
-    payload = ai_settings.public_payload()
-    try:
-        codex_runtime = wiz.model("struct/codex_runtime")
-        payload["codex_status"] = codex_runtime.status((payload.get("config") or {}).get("codex") or {})
-        payload["agent_statuses"] = payload.get("agent_statuses") or {}
-        for agent in ["codex", "claude_code", "hermes"]:
-            payload["agent_statuses"][agent] = codex_runtime.agent_status(agent, (payload.get("config") or {}).get(agent) or {})
-    except Exception as exc:
-        payload["codex_status"] = {
-            "checked_at": None,
-            "login": {
-                "status": "error",
-                "logged_in": False,
-                "message": str(exc),
-            },
-        }
+def _as_bool(value):
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ai_settings_payload(ai_settings, include_status=False):
+    payload = ai_settings.public_payload(include_status=include_status)
+    if include_status:
+        payload["codex_status"] = (payload.get("agent_statuses") or {}).get("codex") or {}
     return payload
 
 
 def load():
     ai_settings = wiz.model("struct/ai_settings")
     appearance = wiz.model("struct/appearance")
-    backup_system = wiz.model("struct/backup_system")
-    backup_tick = wiz.model("struct/service_image_backup_tick")
+    body = wiz.request.query()
+    section = str(body.get("section") or "").strip().lower()
+    include_backup = section == "backup" or _as_bool(body.get("include_backup"))
+    include_ai_status = _as_bool(body.get("include_ai_status"))
     code = 200
     payload = {}
     try:
-        backup_tick.tick()
         payload = {
             "general": appearance.public_payload(),
-            "backup_system": backup_system.status(),
-            "ai_settings": _ai_settings_payload(ai_settings),
+            "ai_settings": _ai_settings_payload(ai_settings, include_status=include_ai_status),
         }
+        if include_backup:
+            backup_system = wiz.model("struct/backup_system")
+            payload["backup_system"] = backup_system.status()
     except ai_settings.AISettingsError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -296,7 +294,7 @@ def save_ai_settings():
     code = 200
     payload = {}
     try:
-        ai_settings.save(wiz.request.query())
+        ai_settings.save(wiz.request.query(), include_status=False)
         payload = {"ai_settings": _ai_settings_payload(ai_settings)}
     except ai_settings.AISettingsError as exc:
         code = exc.status_code
@@ -312,7 +310,7 @@ def save_ai_section():
     code = 200
     payload = {}
     try:
-        ai_settings.save_section(wiz.request.query())
+        ai_settings.save_section(wiz.request.query(), include_status=False)
         payload = {"ai_settings": _ai_settings_payload(ai_settings)}
     except ai_settings.AISettingsError as exc:
         code = exc.status_code
@@ -328,7 +326,7 @@ def save_ai_default_agent():
     code = 200
     payload = {}
     try:
-        ai_settings.save_default_agent(wiz.request.query())
+        ai_settings.save_default_agent(wiz.request.query(), include_status=False)
         payload = {"ai_settings": _ai_settings_payload(ai_settings)}
     except ai_settings.AISettingsError as exc:
         code = exc.status_code
@@ -506,7 +504,7 @@ def ai_hermes_apply_settings():
         apply_result = codex_runtime.apply_hermes_settings(config, secret_value=secret_value)
         safe_config = dict(config)
         safe_config.pop("api_key", None)
-        ai_settings.save_section({"section": "hermes", "hermes": safe_config})
+        ai_settings.save_section({"section": "hermes", "hermes": safe_config}, include_status=False)
         payload = {"result": apply_result, "ai_settings": _ai_settings_payload(ai_settings)}
     except ai_settings.AISettingsError as exc:
         code = exc.status_code

@@ -1,36 +1,21 @@
-div(class="relative z-50", *ngIf="model.isshow")
-    div(class="fixed inset-0 bg-gray-500 opacity-50 transition-opacity")
-    div(class="fixed inset-0 z-50 w-screen overflow-y-auto")
-        div(class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0")
-            div(class="relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:p-6")
-                div(class="sm:flex sm:items-start")
-                    div(
-                        class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full sm:mx-0 sm:h-10 sm:w-10",
-                        [class.bg-yellow-100]="model.opts.status == 'warning'",
-                        [class.bg-indigo-100]="model.opts.status == 'success'",
-                        [class.bg-red-100]="model.opts.status == 'error'")
-                        
-                        svg(*ngIf="model.opts.status == 'error'", class="h-6 w-6 text-red-600", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", aria-hidden="true")
-                            path(stroke-linecap="round", stroke-linejoin="round", d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z")
-                        
-                        svg(*ngIf="model.opts.status == 'warning'", class="h-6 w-6 text-yellow-600", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", aria-hidden="true")
-                            path(stroke-linecap="round", stroke-linejoin="round", d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z")
-                        
-                        svg(*ngIf="model.opts.status == 'success'", class="h-6 w-6 text-indigo-600", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", aria-hidden="true")
-                                path(stroke-linecap="round", stroke-linejoin="round", d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z")
-
-                    div(class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left")
-                        h3(class="text-base font-semibold leading-6 text-gray-900") {{model.opts.title}}
-                        div(class="mt-2")
-                            p(class="text-sm text-gray-500 whitespace-break-spaces") {{model.opts.message}}
-                
-                div(class="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse")
-                    button(
-                        [class]="btnColorClass()",
-                        *ngIf="model.opts.action",
-                        (click)="model.action()") {{model.opts.action}}
-                    button(
-                        (click)="model.cancel()",
-                        type="button", 
-                        *ngIf="model.opts.cancel",
-                        class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 sm:mt-0 sm:w-auto") {{cancelText()}}
+div(class="relative z-[100]", *ngIf="model.isshow")
+    div(class="fixed inset-0 bg-zinc-950/55 transition-opacity")
+    div(class="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto px-4 py-6")
+        section(role="dialog", aria-modal="true", class="w-full max-w-lg overflow-hidden rounded-md border border-zinc-200 bg-white text-left shadow-2xl dark:border-zinc-800 dark:bg-zinc-900")
+            div(class="flex items-start gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
+                span(class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md", [ngClass]="statusIconWrapClass()")
+                    i(class="fa-solid text-base", [ngClass]="statusIconClass()")
+                div(class="min-w-0")
+                    h3(class="text-base font-semibold leading-6 text-zinc-950 dark:text-zinc-50") {{model.opts.title}}
+                    p(class="mt-1 whitespace-pre-wrap text-sm leading-6 text-zinc-600 dark:text-zinc-300") {{model.opts.message}}
+            div(class="flex flex-col gap-2 border-t border-zinc-200 bg-zinc-50 px-5 py-4 dark:border-zinc-800 dark:bg-zinc-950/60 sm:flex-row sm:justify-end")
+                button(
+                    type="button",
+                    *ngIf="model.opts.cancel",
+                    (click)="model.cancel()",
+                    class="inline-flex h-9 min-w-[76px] items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800") {{cancelText()}}
+                button(
+                    type="button",
+                    [class]="btnColorClass()",
+                    *ngIf="model.opts.action",
+                    (click)="model.action()") {{model.opts.action}}

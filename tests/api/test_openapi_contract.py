@@ -137,7 +137,7 @@ class OpenApiContractTest(unittest.TestCase):
             "servers.resource_history",
             "domains.load",
             "domains.save_ddns_endpoint",
-            "domains.delete_certificate",
+            "domains.force_update_ddns_endpoint",
             "images.load",
             "images.harbor_tags",
             "images.delete_local",

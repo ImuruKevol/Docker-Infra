@@ -17,10 +17,13 @@ export class Component implements OnInit {
     public harbor = signal<any>({ enabled: false, configured: false, url: '', username: '' });
     public harborError = signal<string>('');
     public harborProjects = signal<any[]>([]);
+    public harborProjectPagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
     public harborSummary = signal<any>({ project_count: 0, tag_count: 0 });
     public selectedProject = signal<string>('');
     public harborDetail = signal<any>(null);
+    public harborRepositoryPagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
     public harborTags = signal<any[]>([]);
+    public harborTagPagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
     public selectedRepository = signal<string>('');
     public harborSearch = signal<string>('');
     public selectedHarborRepositories = signal<string[]>([]);
@@ -32,6 +35,7 @@ export class Component implements OnInit {
     public newProjectName = signal<string>('');
     public newProjectPublic = signal<boolean>(false);
     public nodes = signal<any[]>([]);
+    public localNodePagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
     public localSummaryByNode = signal<Record<string, any>>({});
     public selectedNodeId = signal<string>('');
     public localDetail = signal<any>(null);
@@ -59,6 +63,8 @@ export class Component implements OnInit {
     public imageOperationTitle = signal<string>('');
     public imageOperationMessage = signal<string>('');
     public imageOperationTone = signal<ImageOperationTone>('info');
+    public localImagePagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
+    public pageSize = 20;
     private localImageConfirmResolve: ((confirmed: boolean) => void) | null = null;
     private localLoadRequestId = 0;
     private localDetailCache: Record<string, any> = {};
@@ -158,6 +164,7 @@ export class Component implements OnInit {
         });
         if (this.selectedNodeId() === key) {
             this.localDetail.set(data);
+            this.localImagePagination.set(this.paginationFor(this.filteredLocalImages().length, 1));
             this.selectedLocalItems.set([]);
             this.localDeleteEstimate.set(null);
             this.localLoadError.set('');
@@ -185,8 +192,10 @@ export class Component implements OnInit {
         this.harbor.set(data.harbor || { enabled: false, configured: false, url: '', username: '' });
         this.harborError.set(data.harbor_error || '');
         this.harborProjects.set(data.harbor_projects || []);
+        this.harborProjectPagination.set(this.paginationFor(this.harborProjects().length, this.harborProjectPagination().current));
         this.harborSummary.set(data.harbor_summary || { project_count: 0, tag_count: 0 });
         this.nodes.set(data.nodes || []);
+        this.localNodePagination.set(this.paginationFor(this.nodes().length, this.localNodePagination().current));
         this.localSummaryByNode.set(data.local_summary_by_node || {});
         this.selectedProject.set(routeTarget.projectName || data.selected_project || '');
         this.harborTags.set([]);
@@ -236,6 +245,7 @@ export class Component implements OnInit {
         const { code, data } = await wiz.call('harbor_overview', {});
         if (code === 200) {
             this.harborProjects.set(data.projects || []);
+            this.harborProjectPagination.set(this.paginationFor(this.harborProjects().length, this.harborProjectPagination().current));
             this.harborSummary.set({
                 ...this.harborSummary(),
                 ...(data.summary || {}),
@@ -266,6 +276,7 @@ export class Component implements OnInit {
         if (code === 200) {
             this.harborDetail.set(data);
             const repositories = data.repositories || [];
+            this.harborRepositoryPagination.set(this.paginationFor(repositories.length, 1));
             const requestedRepository = String(repositoryName || '').trim();
             const nextRepository = repositories.find((item: any) => item.name === requestedRepository)?.name || data.selected_repository || repositories[0]?.name || '';
             this.selectedRepository.set(nextRepository);
@@ -299,6 +310,7 @@ export class Component implements OnInit {
         });
         if (code === 200) {
             this.harborTags.set(data.tags || []);
+            this.harborTagPagination.set(this.paginationFor(this.filteredHarborTags().length, 1));
         } else if (!silent) {
             await this.alert(data?.message || '백업 저장소 태그 목록을 불러올 수 없습니다.');
         } else {
@@ -542,6 +554,86 @@ export class Component implements OnInit {
         return this.harborDetail()?.repositories || [];
     }
 
+    private paginationStart(page: number) {
+        return Math.floor((Math.max(1, Number(page || 1)) - 1) / 10) * 10 + 1;
+    }
+
+    private paginationFor(total: number, page: number = 1) {
+        const limit = this.pageSize;
+        const end = Math.max(1, Math.ceil(Number(total || 0) / limit));
+        const current = Math.min(Math.max(1, Number(page || 1)), end);
+        return {
+            current,
+            start: this.paginationStart(current),
+            end,
+            total: Number(total || 0),
+            limit,
+        };
+    }
+
+    private pageRows(rows: any[], pagination: any) {
+        const limit = Number(pagination?.limit || this.pageSize);
+        const start = (Number(pagination?.current || 1) - 1) * limit;
+        return (rows || []).slice(start, start + limit);
+    }
+
+    public pagedHarborProjects() {
+        return this.pageRows(this.harborProjects(), this.harborProjectPagination());
+    }
+
+    public pagedHarborRepositories() {
+        return this.pageRows(this.harborRepositories(), this.harborRepositoryPagination());
+    }
+
+    public pagedHarborTags() {
+        return this.pageRows(this.filteredHarborTags(), this.harborTagPagination());
+    }
+
+    public pagedLocalNodes() {
+        return this.pageRows(this.nodes(), this.localNodePagination());
+    }
+
+    public pagedLocalImages() {
+        return this.pageRows(this.filteredLocalImages(), this.localImagePagination());
+    }
+
+    public async moveHarborProjectPage(page: number) {
+        this.harborProjectPagination.set(this.paginationFor(this.harborProjects().length, page));
+        await this.service.render();
+    }
+
+    public async moveHarborRepositoryPage(page: number) {
+        this.harborRepositoryPagination.set(this.paginationFor(this.harborRepositories().length, page));
+        await this.service.render();
+    }
+
+    public async moveHarborTagPage(page: number) {
+        this.harborTagPagination.set(this.paginationFor(this.filteredHarborTags().length, page));
+        await this.service.render();
+    }
+
+    public async moveLocalNodePage(page: number) {
+        this.localNodePagination.set(this.paginationFor(this.nodes().length, page));
+        await this.service.render();
+    }
+
+    public async moveLocalImagePage(page: number) {
+        this.localImagePagination.set(this.paginationFor(this.filteredLocalImages().length, page));
+        await this.service.render();
+    }
+
+    public async setHarborSearch(value: string) {
+        this.harborSearch.set(value);
+        this.harborTagPagination.set(this.paginationFor(this.filteredHarborTags().length, 1));
+        await this.service.render();
+    }
+
+    public async setLocalSearch(value: string) {
+        this.localSearch.set(value);
+        this.localImagePagination.set(this.paginationFor(this.filteredLocalImages().length, 1));
+        await this.service.render();
+    }
+
     public harborRepositoryKey(item: any) {
         return String(item?.name || '').trim();
     }
@@ -563,11 +655,11 @@ export class Component implements OnInit {
             this.selectedHarborRepositories.set([]);
             return;
         }
-        this.selectedHarborRepositories.set(this.harborRepositories().map((item: any) => this.harborRepositoryKey(item)).filter((item: string) => item));
+        this.selectedHarborRepositories.set(this.pagedHarborRepositories().map((item: any) => this.harborRepositoryKey(item)).filter((item: string) => item));
     }
 
     public allVisibleHarborRepositoriesSelected() {
-        const visible = this.harborRepositories();
+        const visible = this.pagedHarborRepositories();
         if (!visible.length) return false;
         const selected = new Set(this.selectedHarborRepositories());
         return visible.every((item: any) => selected.has(this.harborRepositoryKey(item)));
@@ -612,11 +704,11 @@ export class Component implements OnInit {
             this.selectedHarborItems.set([]);
             return;
         }
-        this.selectedHarborItems.set(this.filteredHarborTags().map((item: any) => this.harborTagKey(item)));
+        this.selectedHarborItems.set(this.pagedHarborTags().map((item: any) => this.harborTagKey(item)));
     }
 
     public allVisibleHarborTagsSelected() {
-        const visible = this.filteredHarborTags();
+        const visible = this.pagedHarborTags();
         if (!visible.length) return false;
         const selected = new Set(this.selectedHarborItems());
         return visible.every((item: any) => selected.has(this.harborTagKey(item)));
@@ -678,7 +770,7 @@ export class Component implements OnInit {
             return;
         }
         this.selectedLocalItems.set(
-            this.filteredLocalImages()
+            this.pagedLocalImages()
                 .filter((item: any) => this.localImageSelectable(item))
                 .map((item: any) => this.localImageKey(item))
                 .filter((item: string) => item)
@@ -687,7 +779,7 @@ export class Component implements OnInit {
     }
 
     public allVisibleLocalImagesSelected() {
-        const visible = this.filteredLocalImages().filter((item: any) => this.localImageSelectable(item));
+        const visible = this.pagedLocalImages().filter((item: any) => this.localImageSelectable(item));
         if (!visible.length) return false;
         const selected = new Set(this.selectedLocalItems());
         return visible.every((item: any) => selected.has(this.localImageKey(item)));
@@ -739,10 +831,12 @@ export class Component implements OnInit {
 
     public setLocalUsageFilter(value: LocalUsageFilter) {
         this.localUsageFilter.set(value);
+        this.localImagePagination.set(this.paginationFor(this.filteredLocalImages().length, 1));
     }
 
     public setLocalSort(value: LocalSortKey) {
         this.localSort.set(value);
+        this.localImagePagination.set(this.paginationFor(this.filteredLocalImages().length, 1));
     }
 
     public localSortOptions() {
@@ -792,6 +886,7 @@ export class Component implements OnInit {
         });
         if (code === 200) {
             this.harborTags.set(data.tags || []);
+            this.harborTagPagination.set(this.paginationFor(this.filteredHarborTags().length, this.harborTagPagination().current));
             this.selectedHarborItems.set([]);
             this.harborBusy.set(false);
             await this.finishImageOperation();
@@ -818,6 +913,7 @@ export class Component implements OnInit {
         });
         if (code === 200) {
             this.harborTags.set(data.tags || []);
+            this.harborTagPagination.set(this.paginationFor(this.filteredHarborTags().length, this.harborTagPagination().current));
             this.selectedHarborItems.set([]);
             this.harborBusy.set(false);
             await this.finishImageOperation();
@@ -841,10 +937,13 @@ export class Component implements OnInit {
         });
         if (code === 200) {
             this.harborProjects.set(data.projects || []);
+            this.harborProjectPagination.set(this.paginationFor(this.harborProjects().length, this.harborProjectPagination().current));
             this.harborSummary.set(data.summary || { project_count: 0, tag_count: 0 });
             this.selectedProject.set(data.selected_project || '');
             this.harborDetail.set(null);
             this.harborTags.set([]);
+            this.harborRepositoryPagination.set(this.paginationFor(0, 1));
+            this.harborTagPagination.set(this.paginationFor(0, 1));
             this.selectedRepository.set('');
             this.selectedHarborRepositories.set([]);
             this.selectedHarborItems.set([]);
@@ -872,9 +971,11 @@ export class Component implements OnInit {
         });
         if (code === 200) {
             this.harborDetail.set(data);
+            this.harborRepositoryPagination.set(this.paginationFor((data.repositories || []).length, this.harborRepositoryPagination().current));
             this.selectedHarborRepositories.set(this.selectedHarborRepositories().filter((itemKey: string) => itemKey !== repositoryName));
             if (this.selectedRepository() === repositoryName) {
                 this.harborTags.set([]);
+                this.harborTagPagination.set(this.paginationFor(0, 1));
                 const nextRepository = (data.repositories || [])[0]?.name || '';
                 this.selectedRepository.set(nextRepository);
                 if (nextRepository) {
@@ -906,9 +1007,11 @@ export class Component implements OnInit {
         });
         if (code === 200) {
             this.harborDetail.set(data);
+            this.harborRepositoryPagination.set(this.paginationFor((data.repositories || []).length, this.harborRepositoryPagination().current));
             this.selectedHarborRepositories.set([]);
             if (items.some((item: any) => item.repository_name === selectedRepository)) {
                 this.harborTags.set([]);
+                this.harborTagPagination.set(this.paginationFor(0, 1));
                 const nextRepository = (data.repositories || [])[0]?.name || '';
                 this.selectedRepository.set(nextRepository);
                 if (nextRepository) {
@@ -950,6 +1053,7 @@ export class Component implements OnInit {
         });
         if (code === 200) {
             this.harborProjects.set(data.projects || []);
+            this.harborProjectPagination.set(this.paginationFor(this.harborProjects().length, this.harborProjectPagination().current));
             this.harborSummary.set(data.summary || { project_count: 0, tag_count: 0 });
             this.showCreateProjectModal.set(false);
             await this.loadHarborDetail(projectName, true);
@@ -1205,7 +1309,7 @@ export class Component implements OnInit {
     }
 
     public selectedNodeHost() {
-        return this.selectedNode()?.host || '왼쪽에서 서버를 선택하세요.';
+        return this.selectedNode()?.host || '서버 보드에서 항목을 선택하세요.';
     }
 
     public isLocalDockerUnavailable() {

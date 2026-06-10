@@ -18,9 +18,3 @@
 .servers-detail-grid > section {
     min-width: 0;
 }
-
-@container (min-width: 1120px) {
-    .servers-detail-grid:not(.servers-detail-grid-expanded) {
-        grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-    }
-}

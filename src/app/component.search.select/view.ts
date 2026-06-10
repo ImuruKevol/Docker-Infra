@@ -23,6 +23,8 @@ export class Component implements OnDestroy {
 
     private readonly dropdownGap = 8;
     private readonly viewportPadding = 12;
+    private readonly minPanelWidth = 240;
+    private readonly maxPanelWidth = 560;
     private readonly preferredPanelHeight = 360;
     private readonly panelHeaderHeight = 66;
     private scrollListenerBound = false;
@@ -97,30 +99,42 @@ export class Component implements OnDestroy {
 
     public updateDropdownPosition() {
         if (typeof window === 'undefined') return;
-        const hostRect = this.elementRef.nativeElement.getBoundingClientRect();
-        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
-        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
-        const maxWidth = Math.max(160, viewportWidth - (this.viewportPadding * 2));
-        const width = Math.min(Math.max(hostRect.width, 160), maxWidth);
-        const left = Math.min(
-            Math.max(hostRect.left, this.viewportPadding),
-            viewportWidth - this.viewportPadding - width,
+        const trigger = this.elementRef.nativeElement.querySelector('[data-search-select-trigger]') || this.elementRef.nativeElement;
+        const hostRect = trigger.getBoundingClientRect();
+        const viewportHeightCandidates = [
+            window.innerHeight,
+            document.documentElement?.clientHeight,
+        ].filter((value: any) => Number(value) > 0);
+        const viewportWidthCandidates = [
+            window.innerWidth,
+            document.documentElement?.clientWidth,
+        ].filter((value: any) => Number(value) > 0);
+        const viewportHeight = viewportHeightCandidates.length ? Math.min(...viewportHeightCandidates) : 800;
+        const viewportWidth = viewportWidthCandidates.length ? Math.min(...viewportWidthCandidates) : 1024;
+        const maxViewportWidth = Math.max(this.minPanelWidth, viewportWidth - (this.viewportPadding * 2));
+        const width = Math.min(
+            Math.max(hostRect.width, this.minPanelWidth),
+            maxViewportWidth,
+            this.maxPanelWidth,
         );
         const spaceBelow = viewportHeight - hostRect.bottom - this.viewportPadding - this.dropdownGap;
         const spaceAbove = hostRect.top - this.viewportPadding - this.dropdownGap;
         const openUp = spaceBelow < 260 && spaceAbove > spaceBelow;
         const availableSpace = Math.max(0, openUp ? spaceAbove : spaceBelow);
         const panelMaxHeight = Math.max(180, Math.min(this.preferredPanelHeight, availableSpace || this.preferredPanelHeight));
-        const top = openUp
-            ? Math.max(this.viewportPadding, hostRect.top - this.dropdownGap - panelMaxHeight)
-            : Math.min(hostRect.bottom + this.dropdownGap, viewportHeight - this.viewportPadding - panelMaxHeight);
+        const alignRight = hostRect.left + width > viewportWidth - this.viewportPadding;
+        const verticalOffset = hostRect.height + this.dropdownGap;
 
         this.dropdownPanelStyle = {
-            position: 'fixed',
-            left: `${Math.max(this.viewportPadding, left)}px`,
-            top: `${Math.max(this.viewportPadding, top)}px`,
+            position: 'absolute',
+            left: alignRight ? 'auto' : '0px',
+            right: alignRight ? '0px' : 'auto',
+            top: openUp ? 'auto' : `${verticalOffset}px`,
+            bottom: openUp ? `${verticalOffset}px` : 'auto',
             width: `${width}px`,
+            maxWidth: `${maxViewportWidth}px`,
             maxHeight: `${panelMaxHeight}px`,
+            boxSizing: 'border-box',
             zIndex: '80',
         };
         this.dropdownListMaxHeight = Math.max(112, panelMaxHeight - this.panelHeaderHeight);

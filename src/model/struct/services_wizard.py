@@ -16,6 +16,7 @@ webserver = wiz.model("struct/webserver")
 ddns_model = wiz.model("struct/domains_ddns")
 validator = wiz.model("struct/compose_validator")
 preflight_model = wiz.model("struct/services_preflight")
+compose_rules = wiz.model("struct/compose_rules")
 
 DOCKER_SEARCH_TIMEOUT_SECONDS = 8
 DOCKER_HUB_TIMEOUT_SECONDS = 8
@@ -110,18 +111,9 @@ def _volumes(service):
     return result
 
 
-def _rewrite_internal_service_ref(value, namespace, service_names):
-    text = str(value if value is not None else "")
-    namespace = str(namespace or "").strip()
-    if not namespace:
-        return text
-    if "{{ namespace }}" in text:
-        text = text.replace("{{ namespace }}", namespace)
-    for service_name in sorted([str(item) for item in service_names if str(item)], key=len, reverse=True):
-        pattern = re.compile(rf"^[a-z0-9_]+_{re.escape(service_name)}(?=(:|$))")
-        if pattern.search(text):
-            return pattern.sub(f"{namespace}_{service_name}", text, count=1)
-    return text
+def _rewrite_internal_service_ref(value, namespace, service_names, key=None):
+    enabled = True if key is None else compose_rules.is_internal_ref_env_key(key)
+    return compose_rules.qualify_internal_service_ref(value, namespace, service_names, enabled=enabled)
 
 
 def _suggest_import_name(payload):
@@ -397,21 +389,20 @@ class ServicesWizard:
             )
             domain = normalized.get("domain") or domain
             ddns_endpoint = normalized.get("endpoint") or (ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env))
-            if ddns_endpoint:
-                metadata.pop("zone_id", None)
-                metadata.update({
-                    "dns_provider": "ddns",
-                    "routing_provider": "nginx",
-                    "ddns_endpoint_id": str(ddns_endpoint["id"]),
-                    "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
-                    "domain_prefix": normalized.get("prefix"),
-                    "ddns_mode": "ddns_management",
-                })
-            elif zone_id:
-                metadata["zone_id"] = zone_id
+            if not ddns_endpoint:
+                raise services.ServiceError(400, "서비스 도메인은 DDNS 관리 서버에 등록된 suffix 하위 주소만 사용할 수 있습니다.", "DDNS_ENDPOINT_REQUIRED", domain=domain)
+            metadata.pop("zone_id", None)
+            metadata.update({
+                "dns_provider": "ddns",
+                "routing_provider": "nginx",
+                "ddns_endpoint_id": str(ddns_endpoint["id"]),
+                "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                "domain_prefix": normalized.get("prefix"),
+                "ddns_mode": "ddns_management",
+            })
             ssl_mode = str(item.get("ssl_mode") or "").strip()
             if not ssl_mode:
-                ssl_info = webserver.certificates_for_domain(domain, zone_id=None if ddns_endpoint else zone_id, env=env)
+                ssl_info = webserver.certificates_for_domain(domain, zone_id=None, env=env)
                 ssl_mode = "existing" if int((ssl_info.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
             entries.append({"domain": domain, "port": target_port, "ssl_mode": ssl_mode, "metadata": metadata})
         if not entries and str(body.get("domain") or "").strip():
@@ -431,19 +422,18 @@ class ServicesWizard:
             )
             domain = normalized.get("domain") or domain
             ddns_endpoint = normalized.get("endpoint") or (ddns_model.match_domain(domain, endpoint_id=zone_id, env=env) if zone_id else ddns_model.match_domain(domain, env=env))
-            if ddns_endpoint:
-                metadata.pop("zone_id", None)
-                metadata.update({
-                    "dns_provider": "ddns",
-                    "routing_provider": "nginx",
-                    "ddns_endpoint_id": str(ddns_endpoint["id"]),
-                    "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
-                    "domain_prefix": normalized.get("prefix"),
-                    "ddns_mode": "ddns_management",
-                })
-            elif zone_id:
-                metadata["zone_id"] = zone_id
-            ssl_info = webserver.certificates_for_domain(domain, zone_id=None if ddns_endpoint else zone_id, env=env)
+            if not ddns_endpoint:
+                raise services.ServiceError(400, "서비스 도메인은 DDNS 관리 서버에 등록된 suffix 하위 주소만 사용할 수 있습니다.", "DDNS_ENDPOINT_REQUIRED", domain=domain)
+            metadata.pop("zone_id", None)
+            metadata.update({
+                "dns_provider": "ddns",
+                "routing_provider": "nginx",
+                "ddns_endpoint_id": str(ddns_endpoint["id"]),
+                "ddns_domain_suffix": ddns_endpoint.get("domain_suffix"),
+                "domain_prefix": normalized.get("prefix"),
+                "ddns_mode": "ddns_management",
+            })
+            ssl_info = webserver.certificates_for_domain(domain, zone_id=None, env=env)
             ssl_mode = "existing" if int((ssl_info.get("summary") or {}).get("valid") or 0) > 0 else "certbot"
             entries.append({"domain": domain, "port": port, "ssl_mode": ssl_mode, "metadata": metadata})
         deduped = []
@@ -485,7 +475,12 @@ class ServicesWizard:
             else:
                 service.pop("ports", None)
             env_vars = {
-                str(item.get("key")).strip(): _rewrite_internal_service_ref(item.get("value"), namespace, service_names)
+                str(item.get("key")).strip(): _rewrite_internal_service_ref(
+                    item.get("value"),
+                    namespace,
+                    service_names,
+                    key=item.get("key"),
+                )
                 for item in component.get("env_vars") or []
                 if str(item.get("key") or "").strip()
             }

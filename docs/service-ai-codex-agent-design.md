@@ -51,7 +51,7 @@ AI 요청 payload는 다음 그룹으로 구성한다.
 
 - API token, password, private key 원문
 - DB connection string 원문
-- Cloudflare token 원문
+- DDNS key 원문
 - SSH private key 내용
 - 서비스 환경변수 secret value 원문
 - 등록 서버의 secret성 내부 설정

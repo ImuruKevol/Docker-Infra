@@ -11,6 +11,7 @@ export class Component implements OnInit {
     public detailLoading = signal<boolean>(false);
     public detailLoadError = signal<string>('');
     public templates = signal<any[]>([]);
+    public templatesPagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
     public selectedId = signal<string>('');
     public detail = signal<any>(null);
     public activeTab = signal<TemplateTab>('readme');
@@ -33,6 +34,7 @@ export class Component implements OnInit {
     public previewValues: any = {};
     public tagInput = '';
     public aiResult: any = null;
+    public pageSize = 20;
     public form: any = {
         namespace: '',
         name: '',
@@ -63,7 +65,7 @@ export class Component implements OnInit {
         await this.service.init();
         this.syncEditorTheme();
         const templateId = this.routeTemplateId();
-        await this.load(true, templateId, true);
+        await this.load(Boolean(templateId), templateId, true);
         this.loadAuxiliaryData().catch(() => null);
     }
 
@@ -169,6 +171,7 @@ export class Component implements OnInit {
         const key = String(templateId || '').trim();
         if (!key) return;
         this.templates.set(this.templates().filter((item: any) => this.templateItemId(item) !== key));
+        this.templatesPagination.set(this.paginationFor(this.templates().length, this.templatesPagination().current));
         const nextCache = { ...this.detailCache };
         delete nextCache[key];
         this.detailCache = nextCache;
@@ -229,6 +232,7 @@ export class Component implements OnInit {
         }
         if (!inserted) rows.push(summary);
         this.templates.set(this.sortedTemplateList(rows));
+        this.templatesPagination.set(this.paginationFor(this.templates().length, this.templatesPagination().current));
 
         const nextCache = { ...this.detailCache };
         if (previousKey && previousKey !== key) delete nextCache[previousKey];
@@ -313,6 +317,7 @@ export class Component implements OnInit {
         const { code, data } = await wiz.call('load', {});
         if (code === 200) {
             this.templates.set(data.templates || []);
+            this.templatesPagination.set(this.paginationFor(this.templates().length, this.templatesPagination().current));
             const first = this.templates().find((item: any) => this.templateItemId(item) === preferredTemplateId) || this.templates()[0];
             this.loading.set(false);
             await this.service.render();
@@ -344,8 +349,71 @@ export class Component implements OnInit {
         return this.templateTags(item)[0] || 'compose';
     }
 
+    private paginationStart(page: number) {
+        return Math.floor((Math.max(1, Number(page || 1)) - 1) / 10) * 10 + 1;
+    }
+
+    private paginationFor(total: number, page: number = 1) {
+        const limit = this.pageSize;
+        const end = Math.max(1, Math.ceil(Number(total || 0) / limit));
+        const current = Math.min(Math.max(1, Number(page || 1)), end);
+        return {
+            current,
+            start: this.paginationStart(current),
+            end,
+            total: Number(total || 0),
+            limit,
+        };
+    }
+
+    public pagedTemplates() {
+        const pagination = this.templatesPagination();
+        const limit = Number(pagination?.limit || this.pageSize);
+        const start = (Number(pagination?.current || 1) - 1) * limit;
+        return this.templates().slice(start, start + limit);
+    }
+
+    public templatesBoardSummary() {
+        const pagination = this.templatesPagination();
+        const total = Number(pagination?.total || 0);
+        if (!total) return '총 0개';
+        const current = Number(pagination?.current || 1);
+        const limit = Number(pagination?.limit || this.pageSize);
+        const start = (current - 1) * limit + 1;
+        const end = Math.min(total, current * limit);
+        return `총 ${total}개 · ${start}-${end}`;
+    }
+
+    public async moveTemplatePage(page: number) {
+        this.templatesPagination.set(this.paginationFor(this.templates().length, page));
+        await this.service.render();
+    }
+
     public isSelected(item: any) {
         return this.templateItemId(item) === this.selectedId();
+    }
+
+    public isTemplateDetailScreen() {
+        return Boolean(
+            this.selectedId()
+            || this.newTemplateMode()
+            || this.newTemplateDraftReady()
+            || this.detailLoading()
+            || this.detailLoadError()
+        );
+    }
+
+    public async closeTemplateDetail() {
+        this.detailLoadRequestId += 1;
+        this.selectedId.set('');
+        this.newTemplateMode.set('');
+        this.newTemplateDraftReady.set(false);
+        this.cloneLoading.set(false);
+        this.cloneSourceId.set('');
+        this.detailLoading.set(false);
+        this.resetDetailState();
+        await this.syncTemplateRoute('');
+        await this.service.render();
     }
 
     public async selectTemplate(templateId: string, render: boolean = true, force: boolean = false, replaceRoute: boolean = false) {
@@ -464,11 +532,13 @@ export class Component implements OnInit {
     }
 
     public editorTitle() {
+        if (!this.showTemplateEditor() && !this.newTemplateMode()) return '템플릿을 선택하세요';
         if (this.isNewTemplateFlow()) return this.form.name || '새 Compose 템플릿';
         return this.form.name || '템플릿 편집';
     }
 
     public editorSubtitle() {
+        if (!this.showTemplateEditor() && !this.newTemplateMode()) return '템플릿 보드에서 항목을 선택하면 편집기가 열립니다.';
         if (this.isNewTemplateFlow()) {
             if (this.newTemplateMode() === 'ai') return 'AI 초안 작성';
             if (this.newTemplateMode() === 'manual') return '직접 작성';
@@ -636,6 +706,7 @@ export class Component implements OnInit {
                 description: '서비스 생성 시 렌더링될 docker-compose.yaml 템플릿입니다. 운영 환경에 고정된 값보다 재사용 가능한 변수와 안전한 기본 구성을 우선합니다.',
                 rows: [
                     { label: '변수', value: `사용자 입력값은 ${placeholder} 형식으로 작성하고 기본값/Schema에 같은 이름으로 등록` },
+                    { label: '공개 포트', value: '외부 공개 서비스는 expose가 아니라 ports에 공개 포트와 컨테이너 포트를 명시적으로 매핑' },
                     { label: '구성', value: 'container_name, hostname, 등록 서버 ID, 실제 도메인처럼 배포 환경에 묶이는 값은 제외' },
                     { label: '검증', value: '기본값으로 렌더링했을 때 Docker Compose 검증을 통과하고 필요한 경우 healthcheck를 포함' },
                 ],
@@ -729,7 +800,8 @@ export class Component implements OnInit {
                 push(event);
                 continue;
             }
-            if (!['status', 'thinking', 'heartbeat', 'error'].includes(event?.type)) continue;
+            if (event?.type === 'heartbeat') continue;
+            if (!['status', 'thinking', 'error'].includes(event?.type)) continue;
             for (const text of this.streamLines(event.message || event.text || '')) {
                 push({ ...event, message: text, text });
             }

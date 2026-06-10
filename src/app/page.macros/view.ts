@@ -9,6 +9,7 @@ export class Component implements OnInit, OnDestroy {
     public selectedMacroId = signal<string>('');
     public modalOpen = signal<boolean>(false);
     public macros = signal<any[]>([]);
+    public macroPagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
     public summary = signal<any>({ total: 0, enabled: 0, disabled: 0 });
     public macroForm: any = this.emptyMacroForm();
     public macroEditorOptions: any = {
@@ -23,6 +24,7 @@ export class Component implements OnInit, OnDestroy {
     };
     private themeObserver: MutationObserver | null = null;
     private agentCommandHandler: ((event: Event) => void) | null = null;
+    public pageSize = 20;
 
     constructor(public service: Service) { }
 
@@ -292,9 +294,10 @@ export class Component implements OnInit, OnDestroy {
             this.macros.set(macros);
             this.summary.set(data.summary || { total: macros.length, enabled: 0, disabled: 0 });
             const selectedId = this.selectedMacroId();
-            const next = macros.find((item: any) => item.id === selectedId) || macros[0] || null;
+            const next = selectedId ? (macros.find((item: any) => item.id === selectedId) || null) : null;
             this.selectedMacroId.set(next?.id || '');
             await this.syncMacroRoute(next?.id || '', replaceRoute);
+            this.macroPagination.set(this.paginationFor(this.filteredMacros().length, this.macroPagination().current));
         } else {
             this.error.set(data?.message || '전역 매크로를 불러올 수 없습니다.');
         }
@@ -311,9 +314,66 @@ export class Component implements OnInit, OnDestroy {
         });
     }
 
+    private paginationStart(page: number) {
+        return Math.floor((Math.max(1, Number(page || 1)) - 1) / 10) * 10 + 1;
+    }
+
+    private paginationFor(total: number, page: number = 1) {
+        const limit = this.pageSize;
+        const end = Math.max(1, Math.ceil(Number(total || 0) / limit));
+        const current = Math.min(Math.max(1, Number(page || 1)), end);
+        return {
+            current,
+            start: this.paginationStart(current),
+            end,
+            total: Number(total || 0),
+            limit,
+        };
+    }
+
+    public pagedMacros() {
+        const rows = this.filteredMacros();
+        const pagination = this.macroPagination();
+        const limit = Number(pagination?.limit || this.pageSize);
+        const start = (Number(pagination?.current || 1) - 1) * limit;
+        return rows.slice(start, start + limit);
+    }
+
+    public macroBoardSummary() {
+        const pagination = this.macroPagination();
+        const total = Number(pagination?.total || 0);
+        if (!total) return '총 0개';
+        const current = Number(pagination?.current || 1);
+        const limit = Number(pagination?.limit || this.pageSize);
+        const start = (current - 1) * limit + 1;
+        const end = Math.min(total, current * limit);
+        return `총 ${total}개 · ${start}-${end}`;
+    }
+
+    public async moveMacroPage(page: number) {
+        this.macroPagination.set(this.paginationFor(this.filteredMacros().length, page));
+        await this.service.render();
+    }
+
+    public async setMacroSearch(value: string) {
+        this.search.set(value);
+        this.macroPagination.set(this.paginationFor(this.filteredMacros().length, 1));
+        await this.service.render();
+    }
+
     public selectedMacro() {
         const selectedId = this.selectedMacroId();
         return this.macros().find((item: any) => item.id === selectedId) || null;
+    }
+
+    public isMacroDetailScreen() {
+        return Boolean(this.selectedMacro());
+    }
+
+    public async closeMacroDetail() {
+        this.selectedMacroId.set('');
+        await this.syncMacroRoute('');
+        await this.service.render();
     }
 
     public async selectMacro(macroId: string) {

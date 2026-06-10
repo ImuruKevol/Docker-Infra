@@ -14,8 +14,8 @@ export class Component implements OnInit, OnDestroy {
     public detailBusy = signal<boolean>(false);
     public query = signal<string>('');
     public statusFilter = signal<OperationStatus>('');
-    public limit = signal<number>(80);
-    public pagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 80 });
+    public limit = signal<number>(20);
+    public pagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 20 });
     private pollTimer: any = null;
     private routeSub: any = null;
 
@@ -78,7 +78,7 @@ export class Component implements OnInit, OnDestroy {
         if (showLoading) this.loading.set(true);
         this.error.set('');
         const requestedPage = Math.max(1, Number(page || 1));
-        const requestedLimit = Math.max(1, Number(this.limit() || 80));
+        const requestedLimit = 20;
         if (showLoading) await this.service.render();
         const { code, data } = await wiz.call('load', {
             query: this.query(),
@@ -119,6 +119,10 @@ export class Component implements OnInit, OnDestroy {
     public async selectStatus(status: OperationStatus) {
         this.statusFilter.set(status);
         await this.load(1, true);
+    }
+
+    public isOperationDetailScreen() {
+        return this.detailOpen();
     }
 
     public async openOperation(operation: any, replaceRoute: boolean = false) {
@@ -249,7 +253,7 @@ export class Component implements OnInit, OnDestroy {
         const total = Number(pagination?.total || 0);
         if (!total) return '총 0개';
         const current = Number(pagination?.current || 1);
-        const limit = Number(pagination?.limit || this.limit() || 80);
+        const limit = Number(pagination?.limit || this.limit() || 20);
         const start = (current - 1) * limit + 1;
         const end = Math.min(total, current * limit);
         return `총 ${total}개 · ${start}-${end}`;

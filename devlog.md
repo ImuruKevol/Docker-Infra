@@ -363,3 +363,53 @@
 | 2026-06-08 | 004 | AI Agent SSE read race로 최종 응답 누락되는 문제 수정 | [상세](devlog/2026-06-08/004-ai-agent-sse-read-race-fix.md) |
 | 2026-06-08 | 004 | AI Agent 응답 Markdown 테이블 디자인 적용 | [상세](devlog/2026-06-08/004-ai-agent-markdown-table-design.md) |
 | 2026-06-08 | 005 | AI Agent 패널 width 로컬 스토리지 보존 | [상세](devlog/2026-06-08/005-ai-agent-width-local-storage.md) |
+| 2026-06-08 | 006 | AI Agent 응답 텍스트 드래그 선택 유지 보강 | [상세](devlog/2026-06-08/006-ai-agent-selection-preserve.md) |
+| 2026-06-08 | 007 | AI Agent 히스토리 목록 텍스트 드래그 선택 보강 | [상세](devlog/2026-06-08/007-ai-agent-history-list-selection.md) |
+| 2026-06-08 | 008 | AI Agent 히스토리 turn 카드 드래그 선택 보강 | [상세](devlog/2026-06-08/008-ai-agent-history-turn-selection.md) |
+| 2026-06-08 | 009 | 서비스 생성 템플릿 단일 흐름 단순화 | [상세](devlog/2026-06-08/009-service-create-template-only-flow.md) |
+| 2026-06-08 | 010 | 도메인 관리를 DDNS 전용 흐름으로 단순화 | [상세](devlog/2026-06-08/010-ddns-only-domain-management.md) |
+| 2026-06-08 | 011 | AI Agent 실행 후 현재 화면 API 재호출 추가 | [상세](devlog/2026-06-08/011-ai-agent-current-screen-refresh.md) |
+| 2026-06-08 | 012 | AI 템플릿 생성 공개 포트 매핑 규칙 보강 | [상세](devlog/2026-06-08/012-ai-template-public-port-policy.md) |
+| 2026-06-08 | 013 | DDNS 도메인 관리 표 컬럼과 서비스 연결 정보 개선 | [상세](devlog/2026-06-08/013-ddns-domain-table-service-link.md) |
+| 2026-06-08 | 014 | 서비스 생성 화면 디자인 통일성 보강 | [상세](devlog/2026-06-08/014-service-create-design-unification.md) |
+| 2026-06-08 | 015 | DDNS 도메인 표 정렬과 링크 아이콘 UI 보강 | [상세](devlog/2026-06-08/015-ddns-domain-table-link-icons.md) |
+| 2026-06-08 | 016 | DDNS 레코드 Hostname 외부 링크 아이콘 추가 | [상세](devlog/2026-06-08/016-ddns-hostname-external-link-icon.md) |
+| 2026-06-08 | 017 | 서비스 생성 레이아웃 재정리와 DDNS 기본 활성화 | [상세](devlog/2026-06-08/017-service-create-layout-domain-default.md) |
+| 2026-06-08 | 018 | 서비스 생성 세로 흐름과 README 팝오버 적용 | [상세](devlog/2026-06-08/018-service-create-vertical-flow-readme-popover.md) |
+| 2026-06-09 | 001 | 서비스 생성 화면 폭과 템플릿 변수 UX 보정 | [상세](devlog/2026-06-09/001-service-create-width-template-field-ux.md) |
+| 2026-06-09 | 002 | 관리 화면 보드형 레이아웃과 공통 페이지네이션 적용 | [상세](devlog/2026-06-09/002-management-board-pagination.md) |
+| 2026-06-09 | 003 | 서비스 생성 비밀 값 표시 토글 추가 | [상세](devlog/2026-06-09/003-service-create-secret-visibility-toggle.md) |
+| 2026-06-09 | 004 | 관리 화면 목록/상세 렌더링 완전 분리 | [상세](devlog/2026-06-09/004-management-list-detail-separation.md) |
+| 2026-06-09 | 005 | 관리 목록 row 클릭 이동과 상세 헤더 정리 | [상세](devlog/2026-06-09/005-management-row-click-detail-header.md) |
+| 2026-06-09 | 006 | 로그인 이후 콘솔 디자인 리프레시 | [상세](devlog/2026-06-09/006-console-design-refresh.md) |
+| 2026-06-09 | 007 | 콘솔 UI 전수 점검과 select/작업 로그/도메인 레이아웃 보정 | [상세](devlog/2026-06-09/007-console-ui-audit-select-operation-domain.md) |
+| 2026-06-09 | 008 | 시스템 설정 load API 1초 미만 응답으로 경량화 | [상세](devlog/2026-06-09/008-system-load-fast-response.md) |
+| 2026-06-09 | 009 | 서비스 수정 모달 기본/고급 분리와 빠른 기본 저장 경로 추가 | [상세](devlog/2026-06-09/009-service-edit-modal-basic-advanced.md) |
+| 2026-06-10 | 001 | AI Agent 런타임 진행 스트리밍과 TODO 계획 생성 개선 | [상세](devlog/2026-06-10/001-ai-agent-runtime-streaming-todo-plan.md) |
+| 2026-06-10 | 002 | 서비스 상세 서버 바로가기 배치 서버 fallback 보강 | [상세](devlog/2026-06-10/002-service-detail-server-shortcut-fallback.md) |
+| 2026-06-10 | 003 | 서비스 상세 컨테이너 컨텍스트 메뉴 레이어 보정 | [상세](devlog/2026-06-10/003-service-container-context-menu-layer.md) |
+| 2026-06-10 | 004 | 서비스 상세 컨테이너 메뉴 상위 stacking context 보강 | [상세](devlog/2026-06-10/004-service-container-menu-stacking-context.md) |
+| 2026-06-10 | 004 | 서비스 파일 트리와 컨테이너 내부 파일 관리 통합 | [상세](devlog/2026-06-10/004-service-file-tree-container-files.md) |
+| 2026-06-10 | 005 | 서비스 상세 컨테이너 로그 스트리밍 메뉴 추가 | [상세](devlog/2026-06-10/005-service-container-log-stream-menu.md) |
+| 2026-06-10 | 006 | 서비스 생성 Compose 내부 DB host namespace 보정 | [상세](devlog/2026-06-10/006-service-compose-internal-host-qualification.md) |
+| 2026-06-10 | 007 | 서비스 목록에 실행 서버 정보 표시 | [상세](devlog/2026-06-10/007-service-list-runtime-server-summary.md) |
+| 2026-06-10 | 008 | 서비스 파일/컨테이너 파일 탭 브라우저 검증 기반 레이아웃 보정 | [상세](devlog/2026-06-10/008-service-file-layout-browser-polish.md) |
+| 2026-06-10 | 009 | 컨테이너 로그를 터미널이 아닌 전용 로그 뷰어로 분리 | [상세](devlog/2026-06-10/009-service-container-log-viewer-separation.md) |
+| 2026-06-10 | 010 | 서비스 수정 고급 모드 탭 레이아웃 정리 | [상세](devlog/2026-06-10/010-service-edit-advanced-layout-polish.md) |
+| 2026-06-10 | 011 | mini3 런타임 서비스 Compose DB host 보정 적용 | [상세](devlog/2026-06-10/011-mini3-runtime-compose-db-host-apply.md) |
+| 2026-06-10 | 012 | 서비스 디렉터리 전체 조작 UI와 컨테이너 루트 파일 목록 보정 | [상세](devlog/2026-06-10/012-service-directory-full-file-controls-container-root.md) |
+| 2026-06-10 | 013 | 서비스 컨테이너 로그 조회를 API 폴링 방식으로 분리 | [상세](devlog/2026-06-10/013-service-container-log-api-polling.md) |
+| 2026-06-10 | 014 | 서비스 수정 구성 탭 연결 포트 컬럼 여백 축소 | [상세](devlog/2026-06-10/014-service-edit-components-port-column-width.md) |
+| 2026-06-10 | 015 | 파일 트리 compact 아이콘 모드와 컨테이너 전환 race 보정 | [상세](devlog/2026-06-10/015-file-tree-compact-icons-container-switch-race.md) |
+| 2026-06-10 | 016 | 서비스 수정 구성 탭 포트 추가 버튼 아이콘화 | [상세](devlog/2026-06-10/016-service-edit-port-add-icon-button.md) |
+| 2026-06-10 | 017 | 명함관리 app 중지 컨테이너 기반 복구 이미지 적용 | [상세](devlog/2026-06-10/017-business-card-app-container-recovery.md) |
+| 2026-06-10 | 018 | 컨테이너 내부 파일 탭 실행 중 컨테이너만 표시 | [상세](devlog/2026-06-10/018-container-file-running-only.md) |
+| 2026-06-10 | 019 | AI Agent 단순 질문 fast path와 답변 가독성 보강 | [상세](devlog/2026-06-10/019-ai-agent-fast-question-readable-response.md) |
+| 2026-06-10 | 020 | AI Agent Codex todo_list 스트림 기반 TODO 적용 | [상세](devlog/2026-06-10/020-ai-agent-codex-todo-list-stream.md) |
+| 2026-06-10 | 021 | 서비스 생성 템플릿 변수와 배포 진행 표시 보강 | [상세](devlog/2026-06-10/021-service-create-template-deploy-flow.md) |
+| 2026-06-10 | 022 | 관리 화면 헤더/저장 버튼/모달 표시 방식 공통화 | [상세](devlog/2026-06-10/022-ui-consistency-global-modal-actions.md) |
+| 2026-06-10 | 023 | AI Agent Claude/Hermes 스트림 TODO/진행 이벤트 연동 | [상세](devlog/2026-06-10/023-ai-agent-claude-hermes-stream-events.md) |
+| 2026-06-10 | 024 | 원격 포트 점검 실패 시 로컬 대체 확인 제거 | [상세](devlog/2026-06-10/024-remote-port-check-no-local-substitute.md) |
+| 2026-06-10 | 025 | 실제 브라우저 메뉴 순회 기반 UI 액션 정렬 보정 | [상세](devlog/2026-06-10/025-browser-ui-full-menu-consistency.md) |
+| 2026-06-10 | 026 | DDNS 관리 서버 표 nowrap과 작업 컬럼 겹침 보정 | [상세](devlog/2026-06-10/026-ddns-table-nowrap-action-overlap.md) |
+| 2026-06-10 | 027 | 서비스 상세 콘솔 모달 헤더와 생성 화면 AI 버튼 겹침 보정 | [상세](devlog/2026-06-10/027-service-console-header-ai-toggle-overlap.md) |

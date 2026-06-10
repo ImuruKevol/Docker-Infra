@@ -94,23 +94,7 @@ def _zone_certificate_summary(certificate_cache, domain, zone_id=None):
 
 def _service_zone_options():
     domains_model = wiz.model("struct").domains
-    webserver = wiz.model("struct/webserver")
-    zones = []
-    certificate_cache = None
-    for zone in domains_model.service_options().get("zones", []):
-        if zone.get("provider") == "ddns":
-            zones.append(zone)
-            continue
-        if certificate_cache is None:
-            certificate_cache = webserver.load().get("certificates") or []
-        zones.append({
-            **zone,
-            "certificate_summary": _zone_certificate_summary(
-                certificate_cache,
-                zone.get("domain"),
-                zone_id=zone.get("id"),
-            ),
-        })
+    zones = [zone for zone in domains_model.service_options().get("zones", []) if zone.get("provider") == "ddns"]
     return {"zones": zones}
 
 
@@ -230,11 +214,12 @@ def _service_advanced_payload(service_id):
 
 def load():
     catalog = wiz.model("struct/infra_catalog_registry")
+    body = wiz.request.query()
     code = 200
     payload = {}
 
     try:
-        payload = catalog.services()
+        payload = catalog.services(limit=body.get("limit") or 20, page=body.get("page") or 1)
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
@@ -816,6 +801,75 @@ def service_container_action():
     wiz.response.status(code, **payload)
 
 
+def service_container_logs_snapshot():
+    services_model = wiz.model("struct").services
+    terminal_model = wiz.model("struct/nodes_terminal")
+    body = wiz.request.query()
+    service_id = body.get("service_id")
+    container_id = str(body.get("container_id") or "").strip()
+    requested_node_id = str(body.get("node_id") or "").strip()
+    try:
+        tail = int(body.get("tail") or 300)
+    except (TypeError, ValueError):
+        tail = 300
+    tail = max(20, min(tail, 1000))
+
+    if not service_id:
+        wiz.response.status(400, message="service_id는 필수입니다.", error_code="SERVICE_ID_REQUIRED")
+        return
+    if not container_id:
+        wiz.response.status(400, message="container_id는 필수입니다.", error_code="CONTAINER_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        runtime = services_model.refresh_deploy_status(service_id).get("runtime_status") or {}
+        containers = ((runtime.get("containers") or {}).get("containers") or [])
+        target = next(
+            (
+                item for item in containers
+                if _container_id_matches(item.get("id"), container_id)
+                and (not requested_node_id or str(item.get("node_id") or "") == requested_node_id)
+            ),
+            None,
+        )
+        if target is None:
+            raise services_model.ServiceError(404, "선택한 서비스의 컨테이너를 찾을 수 없습니다.", "SERVICE_CONTAINER_NOT_FOUND")
+        target_node_id = str(target.get("node_id") or "").strip()
+        target_container_id = str(target.get("id") or container_id).strip()
+        if not target_node_id:
+            raise services_model.ServiceError(409, "컨테이너가 실행 중인 서버를 확인할 수 없습니다.", "SERVICE_CONTAINER_NODE_MISSING")
+
+        node = terminal_model._node(target_node_id)
+        result = terminal_model._run_node_command(
+            node,
+            ["sh", "-lc", 'docker logs --tail "$1" "$2" 2>&1', "sh", str(tail), target_container_id],
+            timeout_seconds=12,
+        )
+        if result.get("status") != "ok" or result.get("exit_code") not in (None, 0):
+            reason = terminal_model._command_failure(result, "docker logs failed")
+            raise terminal_model.NodeError(500, reason, "DOCKER_LOGS_FAILED", node_id=target_node_id)
+        payload = {
+            "result": {
+                "container_id": target_container_id,
+                "node_id": target_node_id,
+                "output": result.get("stdout") or "",
+                "tail": tail,
+            },
+        }
+    except terminal_model.NodeError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except DATABASE_ERRORS as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
 def _container_signal(container):
     state = str((container or {}).get("state") or "").lower()
     status = str((container or {}).get("status") or "").lower()
@@ -906,6 +960,23 @@ def update_service():
     except services_model.ComposeValidationError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except DATABASE_ERRORS as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def update_service_basic():
+    services_model = wiz.model("struct").services
+    code = 200
+    payload = {}
+    try:
+        body = wiz.request.query()
+        result = services_model.update_basic(body)
+        payload = {"result": result, **_service_overview_payload(result["service"]["id"], lightweight=True)}
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

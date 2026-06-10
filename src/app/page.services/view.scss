@@ -1,0 +1,19 @@
+:host {
+    display: block;
+}
+
+.service-runtime-container-menu[open] {
+    z-index: 90;
+}
+
+.service-runtime-container-menu-panel {
+    z-index: 90;
+}
+
+.service-runtime-container-group:has(.service-runtime-container-menu[open]) {
+    z-index: 70;
+}
+
+.service-runtime-container-card:has(.service-runtime-container-menu[open]) {
+    z-index: 80;
+}

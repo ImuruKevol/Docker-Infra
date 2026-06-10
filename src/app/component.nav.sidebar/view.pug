@@ -1,33 +1,33 @@
-div(class="flex shrink-0 items-center px-3 pb-4 pt-5")
-    a(routerLink="/dashboard", class="flex min-w-0 items-center gap-3")
-        div(*ngIf="!hasLogo()", class="flex h-9 w-9 flex-none items-center justify-center rounded-md bg-zinc-950 text-sm font-black text-white dark:bg-zinc-100 dark:text-zinc-950") DI
-        div(*ngIf="hasLogo()", class="flex h-9 w-9 flex-none items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950")
+div(class="flex shrink-0 items-center px-2 pb-4 pt-5")
+    a(routerLink="/dashboard", class="group flex min-w-0 flex-1 items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-3 shadow-sm transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700")
+        div(*ngIf="!hasLogo()", class="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-zinc-950 text-sm font-black text-white dark:bg-zinc-100 dark:text-zinc-950") DI
+        div(*ngIf="hasLogo()", class="flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950")
             img([src]="appearance.logo_url", [alt]="logoTitle()", class="h-full w-full object-contain")
         div(class="min-w-0")
             p(class="truncate text-[15px] font-bold text-zinc-950 dark:text-zinc-50") {{logoTitle()}}
-            p(class="truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400") Operator console
+            p(class="truncate text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") Operations Workspace
 
-div(class="mx-2 mb-4 rounded-md border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950")
-    div(class="flex items-center justify-between gap-2")
+div(class="mx-2 mb-5 rounded-lg border border-zinc-200 bg-white/80 p-2.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80")
+    div(class="grid grid-cols-[1fr_auto] items-center gap-2")
         span(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") {{'nav.language' | translate}}
-        div(class="flex items-center gap-1 rounded-md bg-zinc-100 p-1 dark:bg-zinc-900")
+        div(class="flex items-center gap-1 rounded-md bg-zinc-100 p-1 dark:bg-zinc-950")
             button(type="button", (click)="setLanguage('ko'); $event.stopPropagation()", class="h-7 rounded px-2.5 text-xs font-semibold transition-colors", [ngClass]="languageButtonClass('ko')") KO
             button(type="button", (click)="setLanguage('en'); $event.stopPropagation()", class="h-7 rounded px-2.5 text-xs font-semibold transition-colors", [ngClass]="languageButtonClass('en')") EN
-    div(class="mt-2 flex items-center justify-between gap-2")
+    div(class="mt-2 grid grid-cols-[1fr_auto] items-center gap-2")
         span(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") {{'nav.darkMode' | translate}}
         button(type="button", role="switch", [attr.aria-checked]="isDarkMode()", [attr.aria-label]="'nav.darkMode' | translate", (click)="toggleTheme(); $event.stopPropagation()", class="relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full bg-zinc-200 transition-colors focus:outline-none focus:ring-2 focus:ring-zinc-500 focus:ring-offset-2 dark:bg-zinc-700 dark:focus:ring-offset-zinc-950")
             span(class="inline-block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform dark:translate-x-5")
 
 nav(class="flex flex-1 flex-col overflow-y-auto")
-    ul(role="list", class="mx-2 flex flex-1 flex-col gap-y-4")
+    ul(role="list", class="mx-2 flex flex-1 flex-col gap-y-5")
         li(*ngFor="let group of menuGroups")
-            div(class="px-2 text-[11px] font-semibold uppercase text-zinc-400 dark:text-zinc-500") {{group.label | translate}}
-            ul(role="list", class="mt-1 space-y-0.5")
+            div(class="px-2 text-[11px] font-bold text-zinc-400 dark:text-zinc-500") {{group.label | translate}}
+            ul(role="list", class="mt-2 space-y-1")
                 li(*ngFor="let item of group.items")
                     a([routerLink]="item.link", [class]="activeClass(item.link)")
-                        i(class="fa-solid w-4 text-center text-[13px] text-zinc-400 dark:text-zinc-500", [ngClass]="item.icon")
+                        i(class="fa-solid w-4 text-center text-[13px]", [ngClass]="item.icon")
                         span(class="truncate") {{item.label | translate}}
         li(class="mt-auto")
-            button(type="button", data-testid="logout-submit", (click)="logout(); $event.stopPropagation()", class="group flex w-full items-center gap-x-2 rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-50")
-                i(class="fa-solid fa-arrow-right-from-bracket w-4 text-center text-[13px] text-zinc-400 dark:text-zinc-500")
+            button(type="button", data-testid="logout-submit", (click)="logout(); $event.stopPropagation()", class="group flex w-full items-center gap-x-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-zinc-500 transition hover:bg-rose-50 hover:text-rose-700 dark:text-zinc-400 dark:hover:bg-rose-950/30 dark:hover:text-rose-300")
+                i(class="fa-solid fa-arrow-right-from-bracket w-4 text-center text-[13px]")
                 span(class="truncate") 로그아웃

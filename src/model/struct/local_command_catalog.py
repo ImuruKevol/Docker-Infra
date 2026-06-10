@@ -1,3 +1,4 @@
+import base64
 import json
 import re
 import shlex
@@ -79,6 +80,154 @@ def _docker_container_start_command(params): return ["docker", "start", *_contai
 def _docker_container_stop_command(params): return ["docker", "stop", *_container_ids(params)]
 def _docker_container_restart_command(params): return ["docker", "restart", *_container_ids(params)]
 def _docker_container_delete_command(params): return ["docker", "rm", "-f", *_container_ids(params)]
+
+
+CONTAINER_FILE_LIST_SCRIPT = r"""
+set -eu
+base="${1:-/}"
+show_hidden="${2:-0}"
+limit="${3:-5000}"
+[ -d "$base" ] || exit 44
+scan_base="${base%/}"
+[ -n "$scan_base" ] || scan_base=""
+count=0
+emit_entry() {
+  entry="$1"
+  [ -e "$entry" ] || [ -L "$entry" ] || return 0
+  name="${entry##*/}"
+  if [ "$show_hidden" != "1" ]; then
+    case "$name" in .*) return 0 ;; esac
+  fi
+  count=$((count + 1))
+  if [ "$count" -gt "$limit" ]; then
+    return 0
+  fi
+  if [ -d "$entry" ]; then
+    kind="folder"
+    size="0"
+  else
+    kind="file"
+    size="$(wc -c < "$entry" 2>/dev/null | tr -d ' ' || printf '0')"
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$name" "$entry" "$kind" "$size"
+}
+for entry in "$scan_base"/* "$scan_base"/.[!.]* "$scan_base"/..?*; do
+  emit_entry "$entry"
+done
+printf '__DOCKER_INFRA_TOTAL__\t%s\n' "$count"
+""".strip()
+
+
+def _container_id_param(params):
+    value = str((params or {}).get("container_id") or "").strip()
+    if not value or re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$", value) is None:
+        raise LocalCommandError(400, "container_id 형식이 올바르지 않습니다.", "INVALID_CONTAINER_ID")
+    return value
+
+
+def _container_path_param(params, key="path", default="/"):
+    value = str((params or {}).get(key) or default).strip() or default
+    if "\x00" in value:
+        raise LocalCommandError(400, "path 형식이 올바르지 않습니다.", "INVALID_CONTAINER_FILE_PATH")
+    return value if value.startswith("/") else f"/{value}"
+
+
+def _docker_container_file_list_command(params):
+    show_hidden = "1" if str((params or {}).get("show_hidden") or "").strip().lower() in {"1", "true", "yes", "on"} else "0"
+    try:
+        limit = max(100, min(int((params or {}).get("limit") or 5000), 20000))
+    except Exception:
+        limit = 5000
+    return [
+        "docker",
+        "exec",
+        _container_id_param(params),
+        "sh",
+        "-lc",
+        CONTAINER_FILE_LIST_SCRIPT,
+        "sh",
+        _container_path_param(params),
+        show_hidden,
+        str(limit),
+    ]
+
+
+def _docker_container_file_read_command(params):
+    return [
+        "docker",
+        "exec",
+        _container_id_param(params),
+        "sh",
+        "-lc",
+        'test -f "$1" || exit 44; cat -- "$1"',
+        "sh",
+        _container_path_param(params),
+    ]
+
+
+def _docker_container_file_download_command(params):
+    return [
+        "docker",
+        "exec",
+        _container_id_param(params),
+        "sh",
+        "-lc",
+        'test -f "$1" || exit 44; base64 "$1" | tr -d "\\n"',
+        "sh",
+        _container_path_param(params),
+    ]
+
+
+def _docker_container_file_write_command(params):
+    raw_content = (params or {}).get("content", b"") or b""
+    if isinstance(raw_content, str):
+        raw_content = raw_content.encode("utf-8")
+    payload = base64.b64encode(raw_content).decode("ascii")
+    script = (
+        'target="$1"\n'
+        'parent="${target%/*}"\n'
+        '[ "$parent" = "$target" ] && parent="/"\n'
+        'mkdir -p "$parent"\n'
+        f"cat <<'__DOCKER_INFRA_FILE__' | base64 -d > \"$target\"\n"
+        f"{payload}\n"
+        "__DOCKER_INFRA_FILE__\n"
+    )
+    return ["docker", "exec", _container_id_param(params), "sh", "-lc", script, "sh", _container_path_param(params)]
+
+
+def _docker_container_file_mkdir_command(params):
+    return ["docker", "exec", _container_id_param(params), "mkdir", "-p", _container_path_param(params)]
+
+
+def _docker_container_file_rename_command(params):
+    return [
+        "docker",
+        "exec",
+        _container_id_param(params),
+        "mv",
+        _container_path_param(params),
+        _container_path_param(params, "target_path"),
+    ]
+
+
+def _docker_container_file_delete_command(params):
+    return ["docker", "exec", _container_id_param(params), "rm", "-rf", _container_path_param(params)]
+
+
+def _docker_container_file_move_command(params):
+    script = 'mkdir -p "$2"; mv "$1" "$3"'
+    return [
+        "docker",
+        "exec",
+        _container_id_param(params),
+        "sh",
+        "-lc",
+        script,
+        "sh",
+        _container_path_param(params),
+        _container_path_param(params, "destination"),
+        _container_path_param(params, "target_path"),
+    ]
 
 
 def _node_exporter_ensure_command(params):
@@ -939,6 +1088,14 @@ COMMAND_SPECS = {
     "docker.container.stop": {"category": "docker", "factory": _docker_container_stop_command, "destructive": True},
     "docker.container.restart": {"category": "docker", "factory": _docker_container_restart_command, "destructive": True},
     "docker.container.delete": {"category": "docker", "factory": _docker_container_delete_command, "destructive": True},
+    "docker.container.file.list": {"category": "docker", "factory": _docker_container_file_list_command, "default_timeout_seconds": 20},
+    "docker.container.file.read": {"category": "docker", "factory": _docker_container_file_read_command, "default_timeout_seconds": 20},
+    "docker.container.file.download": {"category": "docker", "factory": _docker_container_file_download_command, "default_timeout_seconds": 30},
+    "docker.container.file.write": {"category": "docker", "factory": _docker_container_file_write_command, "destructive": True, "default_timeout_seconds": 60},
+    "docker.container.file.mkdir": {"category": "docker", "factory": _docker_container_file_mkdir_command, "destructive": True, "default_timeout_seconds": 20},
+    "docker.container.file.rename": {"category": "docker", "factory": _docker_container_file_rename_command, "destructive": True, "default_timeout_seconds": 20},
+    "docker.container.file.delete": {"category": "docker", "factory": _docker_container_file_delete_command, "destructive": True, "default_timeout_seconds": 30},
+    "docker.container.file.move": {"category": "docker", "factory": _docker_container_file_move_command, "destructive": True, "default_timeout_seconds": 30},
     "docker.image.remove": {"category": "docker", "factory": _docker_image_remove_command, "destructive": True},
     "service.stack.deploy": {"category": "service", "factory": _service_stack_deploy_command, "destructive": True, "default_timeout_seconds": 300},
     "service.stack.remove": {"category": "service", "factory": _service_stack_remove_command, "destructive": True, "default_timeout_seconds": 120},

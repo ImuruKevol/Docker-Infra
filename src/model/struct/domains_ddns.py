@@ -476,6 +476,30 @@ class DomainDdns:
                 )
                 return {str(row["endpoint_id"]): int(row["count"]) for row in cursor.fetchall()}
 
+    def _load_registrations(self, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                if not _schema_ready(cursor):
+                    return []
+                cursor.execute(
+                    """
+                    SELECT
+                        dr.*,
+                        e.name AS endpoint_name,
+                        e.domain_suffix,
+                        s.name AS service_name,
+                        s.namespace AS service_namespace,
+                        sd.metadata AS service_domain_metadata,
+                        sd.port AS service_domain_port
+                    FROM ddns_registrations dr
+                    JOIN ddns_endpoints e ON e.id = dr.endpoint_id
+                    LEFT JOIN services s ON s.id = dr.service_id
+                    LEFT JOIN service_domains sd ON sd.id = dr.service_domain_id
+                    ORDER BY dr.domain ASC
+                    """
+                )
+                return [serialize(dict(row)) for row in cursor.fetchall()]
+
     def load(self, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -485,15 +509,17 @@ class DomainDdns:
                 rows = [dict(row) for row in cursor.fetchall()]
         counts = self._registration_counts([row["id"] for row in rows], env=env)
         endpoints = [normalize_endpoint(row, counts.get(str(row["id"]), 0)) for row in rows]
+        registrations = self._load_registrations(env=env)
         dispatcher_summaries = self._dispatcher_summaries(env=env)
         for endpoint in endpoints:
             endpoint["dispatcher"] = dispatcher_summaries.get(str(endpoint.get("id")), self._empty_dispatcher_summary())
         return {
             "endpoints": endpoints,
+            "registrations": registrations,
             "summary": {
                 "endpoint_count": len(endpoints),
                 "enabled_endpoint_count": len([item for item in endpoints if item.get("enabled")]),
-                "registration_count": sum(int(item.get("registration_count") or 0) for item in endpoints),
+                "registration_count": len(registrations),
             },
             "dispatcher": self.dispatcher_status(env=env),
             "available": True,

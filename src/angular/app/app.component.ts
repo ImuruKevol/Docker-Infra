@@ -114,6 +114,7 @@ export class AppComponent implements OnInit, OnDestroy {
     public agentApiOperations: AgentApiOperation[] = [];
 
     private agentEvents: any[] = [];
+    private agentMarkdownHtmlCache = new Map<string, SafeHtml>();
     private agentRefCounter = 0;
     private routeSub: any = null;
     private mutationObserver: MutationObserver | null = null;
@@ -127,9 +128,16 @@ export class AppComponent implements OnInit, OnDestroy {
     private resizeEndHandler: any = null;
     private agentHistoryCopyTimer: any = null;
     private agentSelectionRenderTimer: any = null;
+    private agentSelectionMouseDownHandler: any = null;
+    private agentSelectionMouseUpHandler: any = null;
+    private agentSelectionChangeHandler: any = null;
+    private agentSelectionPointerActive = false;
+    private agentSelectionHoldUntil = 0;
     private agentContextSignature = '';
     private agentSessionMap: Record<string, string> = {};
     private readonly agentDockWidthStorageKey = 'docker-infra.ai-agent.dock-width';
+    private readonly agentMarkdownHtmlCacheLimit = 160;
+    private readonly agentSelectableTextSelector = '.ai-agent-markdown, .ai-agent-message, .ai-agent-history-detail, .ai-agent-history-main, .ai-agent-history-turn, .ai-agent-history-copy-text, [data-ai-agent-selectable-text="true"]';
 
     constructor(
         public service: Service,
@@ -167,6 +175,9 @@ export class AppComponent implements OnInit, OnDestroy {
         if (this.submitHandler) document.removeEventListener('submit', this.submitHandler, true);
         if (this.focusHandler) document.removeEventListener('focusin', this.focusHandler, true);
         if (this.codeCopyHandler) document.removeEventListener('click', this.codeCopyHandler, true);
+        if (this.agentSelectionMouseDownHandler) document.removeEventListener('mousedown', this.agentSelectionMouseDownHandler, true);
+        if (this.agentSelectionMouseUpHandler) document.removeEventListener('mouseup', this.agentSelectionMouseUpHandler, true);
+        if (this.agentSelectionChangeHandler) document.removeEventListener('selectionchange', this.agentSelectionChangeHandler, true);
         if (this.contextRefreshTimer) window.clearTimeout(this.contextRefreshTimer);
         if (this.agentSelectionRenderTimer) window.clearTimeout(this.agentSelectionRenderTimer);
         this.resetAgentHistoryCopyState();
@@ -183,6 +194,10 @@ export class AppComponent implements OnInit, OnDestroy {
 
     public agentHistoryDetailDockVisible() {
         return this.agentVisible() && this.agentWidgetOpen && this.agentPanelMode === 'history' && this.agentReady() && Boolean(this.agentHistorySelected);
+    }
+
+    public isServicesCreateRoute() {
+        return this.currentRoutePath().startsWith('/services/create');
     }
 
     public agentStatusLoading() {
@@ -409,7 +424,9 @@ export class AppComponent implements OnInit, OnDestroy {
         await this.loadAgentHistory();
     }
 
-    public async selectAgentHistory(item: AgentHistoryItem) {
+    public async selectAgentHistory(item: AgentHistoryItem, event?: Event) {
+        if (event && this.shouldIgnoreAgentHistorySelect(event)) return;
+        this.clearAgentSelectionRenderHold();
         this.agentHistorySelected = item;
         this.resetAgentHistoryCopyState();
         try {
@@ -418,6 +435,11 @@ export class AppComponent implements OnInit, OnDestroy {
             this.agentHistoryNotice = error?.message || '세션 히스토리 상세를 불러오지 못했습니다.';
         }
         await this.renderAgentView();
+    }
+
+    public async selectAgentHistoryByKey(item: AgentHistoryItem, event: KeyboardEvent) {
+        event.preventDefault();
+        await this.selectAgentHistory(item);
     }
 
     public async continueAgentHistory(item: AgentHistoryItem, event?: Event) {
@@ -604,6 +626,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
     public async copyAgentHistoryAction(action: AgentSuggestedAction, index: number, event?: Event) {
         if (event) event.stopPropagation();
+        this.clearAgentSelectionRenderHold();
         const prompt = this.suggestedActionPrompt(action);
         if (!prompt) return;
         try {
@@ -650,16 +673,7 @@ export class AppComponent implements OnInit, OnDestroy {
         this.scrollAgentMessages();
 
         try {
-            const planPayload = this.buildAgentPayload(message, sessionId);
-            const plan = await this.planAgentTodos(planPayload, message);
-            this.agentTodoSummary = this.normalizeText(plan?.summary || '');
-            this.agentTodos = this.normalizeAgentTodos(plan?.todos, message);
-            await this.renderAgentView();
-
-            for (const todo of this.agentTodos) {
-                const ok = await this.runAgentTodo(todo, message, sessionId);
-                if (!ok) break;
-            }
+            await this.runAgentRequest(message, sessionId);
         } catch (error: any) {
             this.addAgentMessage('error', error?.message || 'AI Agent 요청을 처리하지 못했습니다.');
         } finally {
@@ -693,10 +707,48 @@ export class AppComponent implements OnInit, OnDestroy {
             return await this.agentApi('plan', payload);
         } catch (_error) {
             return {
-                summary: '요청을 하나의 실행 TODO로 정리했습니다.',
-                todos: [{ title: fallbackMessage, prompt: fallbackMessage, reason: '' }],
+                summary: '요청을 실행 가능한 TODO로 정리했습니다.',
+                todos: this.fallbackAgentTodos(fallbackMessage),
             };
         }
+    }
+
+    private fallbackAgentTodos(message: string) {
+        const changes = this.fallbackAgentTodoChanges(message);
+        if (changes.length === 0) return [{ title: message, prompt: message, reason: '' }];
+        const target = /템플릿|template/i.test(message || '') ? '템플릿' : '요청 대상';
+        const title = `${target} 요구사항 반영: ${changes.slice(0, 4).join(', ')}`;
+        const prompt = target === '템플릿'
+            ? `현재 또는 방금 만든 템플릿을 수정해 ${changes.join(', ')} 요구사항을 docker-compose.yaml, values.default.yaml, values.schema.json, README.md에 일관되게 반영해줘.`
+            : `${target}을 수정해 ${changes.join(', ')} 요구사항을 현재 상태에 맞게 반영해줘.`;
+        return [{ title, prompt, reason: '원문을 그대로 실행하지 않고 변경 의도를 작업 항목으로 정리했습니다.' }];
+    }
+
+    private fallbackAgentTodoChanges(message: string) {
+        const clauses = String(message || '').split(/(?:[.!?\n]+|그리고|또한|추가로|;)/).map((item) => item.trim()).filter(Boolean);
+        const changes: string[] = [];
+        for (const clause of clauses) {
+            const subject = this.fallbackAgentTodoSubject(clause);
+            if (!subject) continue;
+            let action = '';
+            if (/(필요\s*없|제거|삭제|빼|없애|말고|하지\s*마|하지\s*않)/i.test(clause)) action = `${subject} 제거`;
+            else if (/(추가|사용할 수 있도록|지원|포함|넣어|붙여)/i.test(clause)) action = `${subject} 지원 추가`;
+            else if (/(수정|변경|바꿔|고쳐)/i.test(clause)) action = `${subject} 수정`;
+            if (action && !changes.includes(action)) changes.push(action);
+        }
+        return changes.slice(0, 5);
+    }
+
+    private fallbackAgentTodoSubject(clause: string) {
+        const text = String(clause || '').trim();
+        const lower = text.toLowerCase();
+        if (lower.includes('mariadb') || lower.includes('maria db')) return 'MariaDB';
+        if (lower.includes('nginx')) return text.includes('설치') ? 'nginx 설치 과정' : 'nginx';
+        if (lower.includes('healthcheck') || lower.includes('health check') || text.includes('헬스체크') || text.includes('헬스 체크')) return '헬스체크';
+        const quoted = text.match(/["'`“”‘’]([^"'`“”‘’]{2,80})["'`“”‘’]/);
+        if (quoted?.[1]) return quoted[1].trim();
+        const ascii = text.match(/\b([a-zA-Z][a-zA-Z0-9_.-]{1,60})\b/);
+        return ascii?.[1] || '';
     }
 
     private normalizeAgentTodos(value: any, fallbackMessage: string): AgentTodoItem[] {
@@ -726,6 +778,57 @@ export class AppComponent implements OnInit, OnDestroy {
             status: 'queued',
             detail: '',
         }];
+    }
+
+    private async runAgentRequest(originalMessage: string, sessionId: string) {
+        this.agentStreamStatus = 'Codex 작업 계획을 기다리는 중입니다.';
+        const assistantMessage = this.addAgentMessage('assistant', '', this.agentLabel);
+        const requestStartedAt = this.agentNow();
+        const requestId = this.createAgentRequestId();
+        const payload = this.buildAgentPayload(originalMessage, sessionId, assistantMessage, {
+            request_id: requestId,
+            parent_message: originalMessage,
+        });
+        await this.renderAgentView();
+        this.scrollAgentMessages();
+
+        try {
+            let done = await this.streamAgentChat(payload, async (event: any) => {
+                await this.applyAgentStreamEvent(event, assistantMessage);
+            });
+            let fallbackApplied = false;
+            if (!this.agentMessageHasAnswerContent(assistantMessage) && !done?.answer && !done?.stream_incomplete) {
+                done = await this.completeAgentChatFallback(payload, assistantMessage, requestStartedAt);
+                fallbackApplied = true;
+            }
+            if (!this.agentMessageHasAnswerContent(assistantMessage) && done?.answer) {
+                this.appendAgentAnswerText(assistantMessage, String(done.answer || '').trim());
+            }
+            this.applyAgentDuration(done, assistantMessage, requestStartedAt);
+            if (!fallbackApplied) this.applyAgentSuggestedActions(done, assistantMessage);
+            if (!this.agentMessageHasAnswerContent(assistantMessage)) {
+                throw new Error(done?.stream_incomplete ? 'AI Agent 응답 스트림이 완료되지 않았고 표시할 본문이 없습니다.' : 'AI Agent 응답 본문이 비어 있습니다.');
+            }
+            if (done?.stream_incomplete) {
+                this.finishAgentTodos('blocked', '응답 스트림 종료 신호가 지연되어 표시된 내용까지만 반영했습니다.');
+            }
+            if (done?.needs_confirmation) {
+                this.finishAgentTodos('blocked', '실행 전 구체적인 확인이 필요합니다.');
+                return false;
+            }
+            const actionsOk = await this.executeAgentActions(done?.client_actions || [], originalMessage, this.currentAgentTodoId());
+            if (!actionsOk) return false;
+            this.finishAgentTodos('succeeded', '완료');
+            return true;
+        } catch (error: any) {
+            if (!this.agentMessageHasAnswerContent(assistantMessage)) {
+                assistantMessage.role = 'error';
+                this.setAgentErrorContent(assistantMessage, error?.message || 'AI Agent 호출에 실패했습니다.');
+            }
+            this.applyAgentDuration({}, assistantMessage, requestStartedAt);
+            this.finishAgentTodos('failed', error?.message || '실패');
+            return false;
+        }
     }
 
     private async runAgentTodo(todo: AgentTodoItem, originalMessage: string, sessionId: string) {
@@ -902,6 +1005,8 @@ export class AppComponent implements OnInit, OnDestroy {
         let sawProgress = false;
         const startedAt = Date.now();
         let lastEventAt = Date.now();
+        let lastSyntheticProgress = '';
+        let lastSyntheticProgressAt = 0;
         const timeoutLimitMs = 10 * 60 * 1000;
         const idleLimitMs = timeoutLimitMs;
         const maxDurationMs = timeoutLimitMs;
@@ -922,7 +1027,7 @@ export class AppComponent implements OnInit, OnDestroy {
             const event = JSON.parse(line.slice(6));
             lastEventAt = Date.now();
             if (event.type === 'delta') sawDelta = true;
-            if (['provider', 'status', 'heartbeat', 'thinking', 'progress', 'phase'].includes(String(event.type || ''))) sawProgress = true;
+            if (['provider', 'status', 'heartbeat', 'thinking', 'progress', 'phase', 'todo_update'].includes(String(event.type || ''))) sawProgress = true;
             await onEvent(event);
             if (event.type === 'error') {
                 throw new Error(event.message || 'AI Agent 스트림 처리 중 오류가 발생했습니다.');
@@ -930,6 +1035,17 @@ export class AppComponent implements OnInit, OnDestroy {
             if (event.type === 'complete' || event.type === 'done') {
                 donePayload = event.data || donePayload || {};
             }
+        };
+
+        const emitSyntheticProgress = async (elapsedSeconds: number) => {
+            const message = this.agentSyntheticProgressMessage(elapsedSeconds);
+            if (!message) return;
+            const now = Date.now();
+            if (message === lastSyntheticProgress && now - lastSyntheticProgressAt < 12000) return;
+            lastSyntheticProgress = message;
+            lastSyntheticProgressAt = now;
+            sawProgress = true;
+            await onEvent({ type: 'progress', message, phase: 'client_wait' });
         };
 
         while (true) {
@@ -945,7 +1061,9 @@ export class AppComponent implements OnInit, OnDestroy {
                     if (sawDelta) return { ...(donePayload || {}), stream_incomplete: true };
                     throw new Error('AI Agent 응답이 10분 이상 갱신되지 않았습니다.');
                 }
-                this.agentStreamStatus = `응답을 기다리는 중입니다. (${elapsedSeconds}초 경과)`;
+                if (idleMs >= 3500) {
+                    await emitSyntheticProgress(elapsedSeconds);
+                }
                 await this.renderAgentView();
                 continue;
             }
@@ -969,10 +1087,27 @@ export class AppComponent implements OnInit, OnDestroy {
         return donePayload || {};
     }
 
+    private agentSyntheticProgressMessage(elapsedSeconds: number) {
+        const phases = [
+            'Agent가 현재 화면과 대화 맥락을 압축하고 있습니다.',
+            'MCP/API 후보와 질문 의도를 대조하고 있습니다.',
+            '필요한 런타임 조회 결과를 기다리고 있습니다.',
+            '응답에 포함할 근거와 권장 조치를 정리하고 있습니다.',
+            '최종 답변을 읽기 쉬운 구조로 정리하고 있습니다.',
+        ];
+        const index = Math.min(phases.length - 1, Math.floor(Math.max(0, elapsedSeconds - 4) / 12));
+        return phases[index];
+    }
+
+
     private async applyAgentStreamEvent(event: any, assistantMessage: AgentMessage) {
         if (!event) return;
         if (event.type === 'provider') {
             assistantMessage.provider = 'AI Agent';
+            return;
+        }
+        if (event.type === 'todo_update') {
+            this.applyAgentTodoUpdate(event.todos || event.items, event.summary || event.message);
             return;
         }
         if (event.type === 'status') {
@@ -1025,8 +1160,9 @@ export class AppComponent implements OnInit, OnDestroy {
     private prepareAgentAnswerAfterProgress(assistantMessage: AgentMessage) {
         const state = assistantMessage as any;
         if (!state.__agentProgressMode || state.__agentAnswerStarted) return;
-        assistantMessage.content = `${assistantMessage.content.trim()}\n\n`;
+        assistantMessage.content = '';
         state.__agentAnswerStarted = true;
+        state.__agentProgressMode = false;
     }
 
     private appendAgentAnswerText(assistantMessage: AgentMessage, value: string) {
@@ -1059,7 +1195,16 @@ export class AppComponent implements OnInit, OnDestroy {
     }
 
     private trustAgentMarkdown(value: string): SafeHtml {
-        return this.sanitizer.bypassSecurityTrustHtml(this.renderAgentMarkdown(value));
+        const source = String(value || '');
+        const cached = this.agentMarkdownHtmlCache.get(source);
+        if (cached) return cached;
+        const trusted = this.sanitizer.bypassSecurityTrustHtml(this.renderAgentMarkdown(source));
+        this.agentMarkdownHtmlCache.set(source, trusted);
+        if (this.agentMarkdownHtmlCache.size > this.agentMarkdownHtmlCacheLimit) {
+            const firstKey = this.agentMarkdownHtmlCache.keys().next().value;
+            if (firstKey !== undefined) this.agentMarkdownHtmlCache.delete(firstKey);
+        }
+        return trusted;
     }
 
     private renderAgentMarkdown(value: string) {
@@ -1392,7 +1537,7 @@ export class AppComponent implements OnInit, OnDestroy {
     }
 
     private async renderAgentView() {
-        if (this.agentTextSelectionActive()) {
+        if (this.shouldDeferAgentRenderForSelection()) {
             this.scheduleAgentRenderAfterSelection();
             return;
         }
@@ -1403,7 +1548,40 @@ export class AppComponent implements OnInit, OnDestroy {
         if (typeof window === 'undefined' || !window.getSelection) return false;
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
-        return [selection.anchorNode, selection.focusNode].some((node) => Boolean(node && this.isAgentMutationNode(node)));
+        const range = selection.getRangeAt(0);
+        return [selection.anchorNode, selection.focusNode, range.commonAncestorContainer]
+            .some((node) => Boolean(node && this.isAgentSelectableNode(node)));
+    }
+
+    private shouldDeferAgentRenderForSelection() {
+        return this.agentSelectionPointerActive || this.agentSelectionHoldActive() || this.agentTextSelectionActive();
+    }
+
+    private agentSelectionHoldActive() {
+        return Date.now() < this.agentSelectionHoldUntil;
+    }
+
+    private holdAgentSelectionRender(ms: number) {
+        if (typeof Date === 'undefined') return;
+        this.agentSelectionHoldUntil = Math.max(this.agentSelectionHoldUntil, Date.now() + Math.max(0, ms || 0));
+    }
+
+    private clearAgentSelectionRenderHold() {
+        this.agentSelectionPointerActive = false;
+        this.agentSelectionHoldUntil = 0;
+        if (this.agentSelectionRenderTimer) {
+            window.clearTimeout(this.agentSelectionRenderTimer);
+            this.agentSelectionRenderTimer = null;
+        }
+        if (typeof window !== 'undefined' && window.getSelection) {
+            window.getSelection()?.removeAllRanges();
+        }
+    }
+
+    private agentSelectionRenderDelay() {
+        const remaining = Math.max(0, this.agentSelectionHoldUntil - Date.now());
+        if (remaining > 0) return Math.max(450, Math.min(1200, remaining + 80));
+        return this.agentSelectionPointerActive || this.agentTextSelectionActive() ? 650 : 350;
     }
 
     private scheduleAgentRenderAfterSelection() {
@@ -1411,7 +1589,7 @@ export class AppComponent implements OnInit, OnDestroy {
         this.agentSelectionRenderTimer = window.setTimeout(async () => {
             this.agentSelectionRenderTimer = null;
             await this.renderAgentView();
-        }, 350);
+        }, this.agentSelectionRenderDelay());
     }
 
     private activeAgentKey() {
@@ -1548,11 +1726,17 @@ export class AppComponent implements OnInit, OnDestroy {
         this.submitHandler = (event: Event) => this.captureInteractionEvent('submit', event);
         this.focusHandler = (event: Event) => this.captureInteractionEvent('focus', event);
         this.codeCopyHandler = (event: Event) => this.handleAgentCodeCopy(event);
+        this.agentSelectionMouseDownHandler = (event: Event) => this.handleAgentSelectionMouseDown(event);
+        this.agentSelectionMouseUpHandler = () => this.handleAgentSelectionMouseUp();
+        this.agentSelectionChangeHandler = () => this.handleAgentSelectionChange();
         document.addEventListener('click', this.clickHandler, true);
         document.addEventListener('input', this.inputHandler, true);
         document.addEventListener('submit', this.submitHandler, true);
         document.addEventListener('focusin', this.focusHandler, true);
         document.addEventListener('click', this.codeCopyHandler, true);
+        document.addEventListener('mousedown', this.agentSelectionMouseDownHandler, true);
+        document.addEventListener('mouseup', this.agentSelectionMouseUpHandler, true);
+        document.addEventListener('selectionchange', this.agentSelectionChangeHandler, true);
         this.mutationObserver = new MutationObserver((mutations) => {
             if (this.shouldIgnoreAgentContextMutations(mutations)) return;
             this.scheduleAgentContextRefresh();
@@ -1574,6 +1758,53 @@ export class AppComponent implements OnInit, OnDestroy {
         if (node instanceof HTMLElement) return Boolean(node.closest('.ai-agent-surface'));
         const parent = node.parentElement;
         return Boolean(parent?.closest('.ai-agent-surface'));
+    }
+
+    private isAgentSelectableNode(node: Node) {
+        const element = node instanceof HTMLElement ? node : node.parentElement;
+        return Boolean(element?.closest(this.agentSelectableTextSelector));
+    }
+
+    private isAgentSelectableElement(element: Element) {
+        return Boolean(element.closest(this.agentSelectableTextSelector));
+    }
+
+    private isAgentSelectionControl(element: Element) {
+        return Boolean(element.closest('button, input, textarea, select, a, [role="button"], [contenteditable="true"], .ai-agent-resize-handle'));
+    }
+
+    private shouldIgnoreAgentHistorySelect(event: Event) {
+        if (!this.agentTextSelectionActive()) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        this.holdAgentSelectionRender(5000);
+        this.scheduleAgentRenderAfterSelection();
+        return true;
+    }
+
+    private handleAgentSelectionMouseDown(event: Event) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (!this.isAgentSelectableElement(target) || this.isAgentSelectionControl(target)) return;
+        this.agentSelectionPointerActive = true;
+        this.holdAgentSelectionRender(1200);
+    }
+
+    private handleAgentSelectionMouseUp() {
+        if (!this.agentSelectionPointerActive && !this.agentTextSelectionActive()) return;
+        this.agentSelectionPointerActive = false;
+        if (this.agentTextSelectionActive()) {
+            this.holdAgentSelectionRender(5000);
+            this.scheduleAgentRenderAfterSelection();
+            return;
+        }
+        this.holdAgentSelectionRender(250);
+    }
+
+    private handleAgentSelectionChange() {
+        if (!this.agentTextSelectionActive()) return;
+        this.holdAgentSelectionRender(5000);
+        this.scheduleAgentRenderAfterSelection();
     }
 
     private async handleAgentCodeCopy(event: Event) {
@@ -1634,9 +1865,14 @@ export class AppComponent implements OnInit, OnDestroy {
         if (this.contextRefreshTimer) window.clearTimeout(this.contextRefreshTimer);
         this.contextRefreshTimer = window.setTimeout(async () => {
             this.contextRefreshTimer = null;
+            if (this.shouldDeferAgentRenderForSelection()) {
+                this.scheduleAgentRenderAfterSelection();
+                this.scheduleAgentContextRefresh();
+                return;
+            }
             const changed = this.refreshAgentContextView();
             if (changed) await this.renderAgentView();
-        }, 250);
+        }, this.shouldDeferAgentRenderForSelection() ? this.agentSelectionRenderDelay() : 250);
     }
 
     private refreshAgentContextView() {
@@ -1809,6 +2045,7 @@ export class AppComponent implements OnInit, OnDestroy {
         if (executableItems.length === 0) return true;
         let stepIndex = 0;
         const actionContext: any = {};
+        let shouldRefreshCurrentScreen = false;
         for (const item of todoItems) {
             if (!item.executable) continue;
             if (item.blocked) {
@@ -1826,10 +2063,16 @@ export class AppComponent implements OnInit, OnDestroy {
                     return false;
                 }
                 this.storeAgentActionResult(action, result, actionContext);
+                if (this.agentActionNeedsScreenRefresh(action)) shouldRefreshCurrentScreen = true;
             } catch (error: any) {
                 this.updateAgentTodo(todoId, { status: 'failed', detail: error?.message || `${item.label} 실패` });
                 return false;
             }
+        }
+        if (shouldRefreshCurrentScreen) {
+            this.updateAgentTodo(todoId, { status: 'running', detail: '현재 화면 데이터 갱신' });
+            await this.renderAgentView();
+            await this.refreshAgentCurrentScreen('agent_action_completed');
         }
         return true;
     }
@@ -1848,6 +2091,56 @@ export class AppComponent implements OnInit, OnDestroy {
                 blocked,
                 label: this.normalizeText(action?.reason || this.agentActionLabel(action)) || '화면 조작',
             };
+        });
+    }
+
+    private applyAgentTodoUpdate(value: any, summary?: string) {
+        const source = Array.isArray(value) ? value : [];
+        const todos = source.slice(0, 8).map((item: any, index: number) => {
+            const data = typeof item === 'string' ? { text: item } : (item || {});
+            const title = this.normalizeText(data.title || data.text || data.label || data.name || data.summary);
+            if (!title) return null;
+            const completed = data.completed === true || String(data.status || '').toLowerCase() === 'completed';
+            const status = this.normalizeAgentTodoStatus(data.status, completed);
+            return {
+                id: this.normalizeText(data.id) || `codex-todo-${index}`,
+                title,
+                prompt: this.normalizeText(data.prompt || data.message || title),
+                reason: this.normalizeText(data.reason || data.description || ''),
+                status,
+                detail: this.normalizeText(data.detail || ''),
+            };
+        }).filter((item: AgentTodoItem | null) => !!item) as AgentTodoItem[];
+        if (todos.length === 0) return;
+        if (!todos.some((todo) => todo.status === 'running')) {
+            const activeIndex = todos.findIndex((todo) => !['succeeded', 'failed', 'blocked'].includes(todo.status));
+            if (activeIndex >= 0) todos[activeIndex] = { ...todos[activeIndex], status: 'running' };
+        }
+        this.agentTodos = todos;
+        this.agentTodoSummary = this.normalizeText(summary) || 'Codex가 생성한 작업 계획입니다.';
+    }
+
+    private normalizeAgentTodoStatus(value: any, completed = false): AgentTodoItem['status'] {
+        const status = String(value || '').toLowerCase();
+        if (completed || ['completed', 'succeeded', 'success', 'done'].includes(status)) return 'succeeded';
+        if (['running', 'in_progress', 'active'].includes(status)) return 'running';
+        if (['failed', 'error'].includes(status)) return 'failed';
+        if (['blocked', 'cancelled', 'canceled'].includes(status)) return 'blocked';
+        return 'queued';
+    }
+
+    private currentAgentTodoId() {
+        const active = this.agentTodos.find((todo) => todo.status === 'running')
+            || this.agentTodos.find((todo) => todo.status === 'queued')
+            || this.agentTodos[0];
+        return active?.id || '';
+    }
+
+    private finishAgentTodos(status: AgentTodoItem['status'], detail: string) {
+        if (this.agentTodos.length === 0) return;
+        this.agentTodos = this.agentTodos.map((todo) => {
+            if (['succeeded', 'failed', 'blocked'].includes(todo.status)) return todo;
+            return { ...todo, status, detail };
         });
     }
 
@@ -1940,8 +2233,7 @@ export class AppComponent implements OnInit, OnDestroy {
             return true;
         }
         if (type === 'refresh') {
-            location.reload();
-            return true;
+            return await this.refreshAgentCurrentScreen('agent_refresh_action');
         }
         if (type === 'close_modal') {
             const closed = this.closeVisibleModal();
@@ -1980,6 +2272,16 @@ export class AppComponent implements OnInit, OnDestroy {
             return true;
         }
         return false;
+    }
+
+    private agentActionNeedsScreenRefresh(action: any) {
+        const type = String(action?.type || '').toLowerCase();
+        if (type === 'app_event') return true;
+        if (type !== 'api_request') return false;
+        const operation = this.findAgentApiOperation(action);
+        if (!operation) return false;
+        if (operation.safety !== 'read') return true;
+        return /(refresh|reload|update|save|delete|create|deploy|migrate|rollback|renew|ensure|run|start|stop|restart|reset|apply|prune|register|unregister|action)/i.test(operation.operation_id);
     }
 
     private resolveAgentActionReferences(value: any, context: any, depth: number = 0): any {
@@ -2099,6 +2401,41 @@ export class AppComponent implements OnInit, OnDestroy {
                 }
             }));
         });
+    }
+
+    private async refreshAgentCurrentScreen(reason: string = '') {
+        if (typeof window === 'undefined') return false;
+        const requestId = `agent-refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const route = this.currentRoutePath();
+        const result = await new Promise<any>((resolve, reject) => {
+            let timer: any = null;
+            const finish = (event: Event) => {
+                const detail = (event as CustomEvent)?.detail || {};
+                if (detail.request_id !== requestId) return;
+                if (timer) window.clearTimeout(timer);
+                window.removeEventListener('docker-infra-agent-refresh-result', finish as EventListener);
+                if (detail.ok === false) {
+                    reject(new Error(detail.message || '현재 화면 데이터를 갱신하지 못했습니다.'));
+                    return;
+                }
+                resolve(detail);
+            };
+            window.addEventListener('docker-infra-agent-refresh-result', finish as EventListener);
+            timer = window.setTimeout(() => {
+                window.removeEventListener('docker-infra-agent-refresh-result', finish as EventListener);
+                reject(new Error('현재 화면 데이터 갱신 응답 시간이 초과되었습니다.'));
+            }, 20000);
+            window.dispatchEvent(new CustomEvent('docker-infra-agent-refresh-current-view', {
+                detail: {
+                    request_id: requestId,
+                    route,
+                    reason,
+                },
+            }));
+        });
+        this.recordAgentEvent('refresh', { route, reason, result });
+        this.refreshAgentContextView();
+        return result || { ok: true };
     }
 
     private async executeAgentApiRequest(action: any) {

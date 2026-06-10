@@ -7,7 +7,7 @@ connect = wiz.model("db/postgres").connect
 setup = wiz.model("struct/setup")
 system = wiz.model("struct/system")
 local_command_catalog = wiz.model("struct/local_command_catalog")
-domains_model = wiz.model("struct/domains")
+ddns_model = wiz.model("struct/domains_ddns")
 backup_system = wiz.model("struct/backup_system")
 webserver = wiz.model("struct/webserver")
 
@@ -36,6 +36,13 @@ def _count(cursor, table):
     return int(cursor.fetchone()["count"])
 
 
+def _optional_count(cursor, table):
+    cursor.execute("SELECT to_regclass(%s) AS table_name", (table,))
+    if not cursor.fetchone().get("table_name"):
+        return 0
+    return _count(cursor, table)
+
+
 class InfraCatalog:
     def counts(self):
         with connect() as connection:
@@ -46,7 +53,7 @@ class InfraCatalog:
                     "service_domains": _count(cursor, "service_domains"),
                     "images": _count(cursor, "images"),
                     "operations": _count(cursor, "operation_logs"),
-                    "cloudflare_zones": _count(cursor, "cloudflare_zones"),
+                    "ddns_endpoints": _optional_count(cursor, "ddns_endpoints"),
                 }
 
     def integrations(self):
@@ -59,17 +66,17 @@ class InfraCatalog:
             "secondary": backup.get("status") or "",
             "secret_configured": bool(backup.get("secret_configured")),
         }]
-        domain_overview = domains_model.load()
-        zones = domain_overview.get("zones", [])
-        first_zone = zones[0] if zones else {}
+        domain_overview = ddns_model.load()
+        endpoints = domain_overview.get("endpoints", [])
+        first_endpoint = endpoints[0] if endpoints else {}
         items.append(
             {
-                "key": "cloudflare",
-                "label": "Cloudflare",
-                "enabled": len([zone for zone in zones if zone.get("enabled")]) > 0,
-                "primary": first_zone.get("domain", ""),
-                "secondary": first_zone.get("zone_id", ""),
-                "secret_configured": len([zone for zone in zones if zone.get("secret_configured")]) > 0,
+                "key": "ddns",
+                "label": "DDNS",
+                "enabled": len([endpoint for endpoint in endpoints if endpoint.get("enabled")]) > 0,
+                "primary": first_endpoint.get("domain_suffix", ""),
+                "secondary": first_endpoint.get("api_url", ""),
+                "secret_configured": len([endpoint for endpoint in endpoints if endpoint.get("secret_configured")]) > 0,
             }
         )
         return items
@@ -171,23 +178,11 @@ class InfraCatalog:
         return {"images": images, "integrations": self.integrations(), "counts": self.counts()}
 
     def domains(self):
-        with connect() as connection:
-            with connection.cursor() as cursor:
-                zones = _rows(cursor, "SELECT * FROM cloudflare_zones ORDER BY created_at DESC LIMIT 80")
-                domains = _rows(
-                    cursor,
-                    """
-                    SELECT sd.*, s.name AS service_name, s.namespace AS service_namespace
-                    FROM service_domains sd
-                    LEFT JOIN services s ON s.id = sd.service_id
-                    ORDER BY sd.created_at DESC
-                    LIMIT 80
-                    """,
-                )
-                certificates = webserver.load().get("certificates", [])
+        ddns = ddns_model.load()
+        certificates = webserver.load().get("certificates", [])
         return {
-            "zones": zones,
-            "domains": domains,
+            "zones": ddns.get("endpoints", []),
+            "domains": ddns.get("registrations", []),
             "certificates": certificates,
             "integrations": self.integrations(),
             "counts": self.counts(),

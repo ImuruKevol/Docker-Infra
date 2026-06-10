@@ -51,8 +51,8 @@ main(class="space-y-5 px-5 py-5")
                                 span 프로젝트 생성
                     div(*ngIf="!harbor().enabled", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400") 서비스 백업 시스템이 꺼져 있습니다. 시스템 설정에서 백업 시스템을 시작해주세요.
                     div(*ngIf="harbor().enabled && harborError()", class="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{harborError()}}
-                    div(*ngIf="harbor().enabled", class="grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)]")
-                        aside(class="border-b border-zinc-200 dark:border-zinc-800 xl:border-b-0 xl:border-r")
+                    div(*ngIf="harbor().enabled", class="space-y-3")
+                        aside(class="overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800")
                             div(class="grid grid-cols-2 gap-2 border-b border-zinc-100 px-3 py-3 dark:border-zinc-800")
                                 div(class="rounded-md bg-zinc-50 px-3 py-2 dark:bg-zinc-950")
                                     p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 프로젝트
@@ -65,15 +65,18 @@ main(class="space-y-5 px-5 py-5")
                                 | 프로젝트 목록을 불러오는 중입니다.
                             div(*ngIf="!harborOverviewBusy() && harborProjects().length === 0 && !harborError()", class="px-3 py-8 text-sm text-zinc-500 dark:text-zinc-400") 백업 저장소 프로젝트가 없습니다.
                             div(class="max-h-[620px] overflow-auto")
-                                button(*ngFor="let project of harborProjects()", type="button", (click)="loadHarborDetail(project.name)", class="block w-full border-b border-zinc-100 px-3 py-2.5 text-left transition hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800", [ngClass]="selectedProject() === project.name ? 'bg-sky-50 dark:bg-sky-950/30' : ''")
+                                button(*ngFor="let project of pagedHarborProjects()", type="button", (click)="loadHarborDetail(project.name)", class="block w-full border-b border-zinc-100 px-3 py-2.5 text-left transition hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800", [ngClass]="selectedProject() === project.name ? 'bg-sky-50 dark:bg-sky-950/30' : ''")
                                     div(class="flex items-center justify-between gap-2")
                                         div(class="min-w-0")
                                             p(class="truncate text-[13px] font-semibold text-zinc-950 dark:text-zinc-50", [title]="project.name") {{project.name}}
                                             p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400") 저장소 {{project.repo_count || 0}} · Pull {{project.pull_count || 0}}
                                         span(class="shrink-0 whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="statusClass(project.public ? 'enabled' : 'warning')") {{project.public ? 'public' : 'private'}}
+                            div(*ngIf="harborProjectPagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-200 px-3 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                                p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
+                                wiz-portal-season-pagination([current]="harborProjectPagination().current", [start]="harborProjectPagination().start", [end]="harborProjectPagination().end", [maxlength]="10", (pageMove)="moveHarborProjectPage($event)")
 
                         section(class="min-w-0")
-                            div(*ngIf="!selectedProject()", class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400") 왼쪽에서 백업 저장소 프로젝트를 선택하세요.
+                            div(*ngIf="!selectedProject()", class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400") 백업 저장소 프로젝트 보드에서 항목을 선택하세요.
                             div(*ngIf="selectedProject()", class="space-y-3 p-3")
                                 div(class="grid grid-cols-1 gap-3 2xl:grid-cols-[minmax(0,1fr)_520px]")
                                     div(class="min-w-0")
@@ -117,7 +120,7 @@ main(class="space-y-5 px-5 py-5")
                                                         th(class="w-40 px-3 py-2 text-left font-semibold") 갱신
                                                         th(class="w-14 px-3 py-2 text-right font-semibold") 작업
                                                 tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                                                    tr(*ngFor="let item of harborRepositories()", (click)="loadHarborTags(item.name)", class="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/60", [ngClass]="selectedRepository() === item.name ? 'bg-sky-50 dark:bg-sky-950/20' : ''")
+                                                    tr(*ngFor="let item of pagedHarborRepositories()", (click)="loadHarborTags(item.name)", class="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/60", [ngClass]="selectedRepository() === item.name ? 'bg-sky-50 dark:bg-sky-950/20' : ''")
                                                         td(class="px-3 py-2.5")
                                                             input(type="checkbox", [checked]="isHarborRepositorySelected(item)", (click)="$event.stopPropagation()", (change)="toggleHarborRepositorySelection(item, $any($event.target).checked)")
                                                         td(class="min-w-0 px-3 py-2.5")
@@ -131,6 +134,9 @@ main(class="space-y-5 px-5 py-5")
                                                                 i(class="fa-solid fa-trash")
                                                     tr(*ngIf="harborRepositories().length === 0")
                                                         td(colspan="6", class="px-3 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 포함된 이미지 저장소가 없습니다.
+                                        div(*ngIf="harborRepositoryPagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-100 px-3 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                                            p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
+                                            wiz-portal-season-pagination([current]="harborRepositoryPagination().current", [start]="harborRepositoryPagination().start", [end]="harborRepositoryPagination().end", [maxlength]="10", (pageMove)="moveHarborRepositoryPage($event)")
                                     section(class="min-w-0 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800")
                                         div(class="flex flex-col gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800 xl:flex-row xl:items-center xl:justify-between")
                                             div(class="min-w-0")
@@ -142,7 +148,7 @@ main(class="space-y-5 px-5 py-5")
                                                 label(class="relative block w-full sm:w-64")
                                                     span(class="sr-only") 태그 검색
                                                     i(class="fa-solid fa-magnifying-glass pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400")
-                                                    input(type="text", [ngModel]="harborSearch()", (ngModelChange)="harborSearch.set($event)", placeholder="tag, digest 검색", class="h-8 w-full rounded-md border border-zinc-300 bg-white pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                                    input(type="text", [ngModel]="harborSearch()", (ngModelChange)="setHarborSearch($event)", placeholder="tag, digest 검색", class="h-8 w-full rounded-md border border-zinc-300 bg-white pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
                                                 button(type="button", (click)="deleteSelectedHarborTags()", [disabled]="harborBusy() || selectedHarborTagCount() === 0", class="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                                                     i(class="fa-solid fa-trash")
                                                     span 태그 삭제 ({{selectedHarborTagCount()}})
@@ -161,7 +167,7 @@ main(class="space-y-5 px-5 py-5")
                                                         th(class="w-40 px-3 py-2 text-left font-semibold") Push
                                                         th(class="w-14 px-3 py-2 text-right font-semibold") 작업
                                                 tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                                                    tr(*ngFor="let item of filteredHarborTags()", class="hover:bg-zinc-50 dark:hover:bg-zinc-800/60")
+                                                    tr(*ngFor="let item of pagedHarborTags()", class="hover:bg-zinc-50 dark:hover:bg-zinc-800/60")
                                                         td(class="px-3 py-2.5")
                                                             input(type="checkbox", [checked]="isHarborTagSelected(item)", (change)="toggleHarborTagSelection(item, $any($event.target).checked)")
                                                         td(class="min-w-0 px-3 py-2.5")
@@ -175,6 +181,9 @@ main(class="space-y-5 px-5 py-5")
                                                                 i(class="fa-solid fa-trash")
                                                     tr(*ngIf="filteredHarborTags().length === 0")
                                                         td(colspan="6", class="px-3 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 표시할 백업 저장소 태그가 없습니다.
+                                        div(*ngIf="harborTagPagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-100 px-3 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                                            p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
+                                            wiz-portal-season-pagination([current]="harborTagPagination().current", [start]="harborTagPagination().start", [end]="harborTagPagination().end", [maxlength]="10", (pageMove)="moveHarborTagPage($event)")
 
             div(*ngIf="activeTab() === 'local'", class="p-3")
                 section(class="overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
@@ -199,8 +208,8 @@ main(class="space-y-5 px-5 py-5")
                             button(type="button", (click)="runImagePrune()", [disabled]="!selectedNodeId() || localBusy() || localPruneBusy() || localPruneEstimateBusy()", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-amber-300 px-3 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-900/70 dark:text-amber-300 dark:hover:bg-amber-950/30")
                                 i(class="fa-solid fa-broom")
                                 span 미사용 정리
-                    div(class="grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)]")
-                        aside(class="border-b border-zinc-200 dark:border-zinc-800 xl:border-b-0 xl:border-r")
+                    div(class="space-y-3")
+                        aside(class="overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800")
                             div(class="grid grid-cols-2 gap-2 border-b border-zinc-100 px-3 py-3 dark:border-zinc-800")
                                 div(class="rounded-md bg-zinc-50 px-3 py-2 dark:bg-zinc-950")
                                     p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 서버
@@ -210,13 +219,16 @@ main(class="space-y-5 px-5 py-5")
                                     p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{localTotalImageCount()}}
                             div(*ngIf="nodes().length === 0", class="px-3 py-8 text-sm text-zinc-500 dark:text-zinc-400") 등록된 서버가 없습니다.
                             div(class="max-h-[620px] overflow-auto")
-                                button(*ngFor="let node of nodes()", type="button", (click)="loadLocalDetail(node.id)", class="block w-full border-b border-zinc-100 px-3 py-2.5 text-left transition hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800", [ngClass]="selectedNodeId() === node.id ? 'bg-sky-50 dark:bg-sky-950/30' : ''")
+                                button(*ngFor="let node of pagedLocalNodes()", type="button", (click)="loadLocalDetail(node.id)", class="block w-full border-b border-zinc-100 px-3 py-2.5 text-left transition hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800", [ngClass]="selectedNodeId() === node.id ? 'bg-sky-50 dark:bg-sky-950/30' : ''")
                                     div(class="flex items-center justify-between gap-2")
                                         div(class="min-w-0")
                                             p(class="truncate text-[13px] font-semibold text-zinc-950 dark:text-zinc-50", [title]="node.name") {{node.name}}
                                             p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400", [title]="node.host") {{node.host}}
                                         span(class="shrink-0 whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="statusClass(node.is_local_master ? 'enabled' : 'configured')") {{node.is_local_master ? 'master' : 'node'}}
                                     p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 이미지 {{nodeImageCount(node)}}개
+                            div(*ngIf="localNodePagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-200 px-3 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                                p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
+                                wiz-portal-season-pagination([current]="localNodePagination().current", [start]="localNodePagination().start", [end]="localNodePagination().end", [maxlength]="10", (pageMove)="moveLocalNodePage($event)")
 
                         section(class="min-w-0")
                             div(*ngIf="!selectedNodeId()", class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400") 서버 선택 없음
@@ -281,7 +293,7 @@ main(class="space-y-5 px-5 py-5")
                                                     label(class="relative block w-full xl:w-64")
                                                         span(class="sr-only") 이미지 검색
                                                         i(class="fa-solid fa-magnifying-glass pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400")
-                                                        input(type="text", [ngModel]="localSearch()", (ngModelChange)="localSearch.set($event)", placeholder="이미지, tag 검색", class="h-8 w-full rounded-md border border-zinc-300 bg-white pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                                        input(type="text", [ngModel]="localSearch()", (ngModelChange)="setLocalSearch($event)", placeholder="이미지, tag 검색", class="h-8 w-full rounded-md border border-zinc-300 bg-white pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
                                                     div(class="flex h-8 items-center rounded-md border border-zinc-300 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-950")
                                                         button(type="button", (click)="setLocalUsageFilter('all')", class="inline-flex h-6 items-center rounded-md px-2.5 text-xs font-semibold", [ngClass]="localUsageFilter() === 'all' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 전체
                                                         button(type="button", (click)="setLocalUsageFilter('used')", class="inline-flex h-6 items-center rounded-md px-2.5 text-xs font-semibold", [ngClass]="localUsageFilter() === 'used' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 dark:text-zinc-300'") 사용 중
@@ -305,7 +317,7 @@ main(class="space-y-5 px-5 py-5")
                                                             th(class="w-24 px-3 py-2 text-right font-semibold") 용량
                                                             th(class="w-14 px-3 py-2 text-right font-semibold") 작업
                                                     tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                                                        tr(*ngFor="let item of filteredLocalImages()", class="hover:bg-zinc-50 dark:hover:bg-zinc-800/60")
+                                                        tr(*ngFor="let item of pagedLocalImages()", class="hover:bg-zinc-50 dark:hover:bg-zinc-800/60")
                                                             td(class="px-3 py-2.5")
                                                                 input(type="checkbox", [checked]="isLocalImageSelected(item)", [disabled]="!localImageSelectable(item)", (change)="toggleLocalImageSelection(item, $any($event.target).checked)", class="disabled:opacity-40")
                                                             td(class="min-w-0 px-3 py-2.5")
@@ -323,6 +335,9 @@ main(class="space-y-5 px-5 py-5")
                                                                     i(class="fa-solid fa-trash")
                                                         tr(*ngIf="filteredLocalImages().length === 0")
                                                             td(colspan="6", class="px-3 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 표시할 로컬 이미지가 없습니다.
+                                            div(*ngIf="localImagePagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-100 px-3 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                                                p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
+                                                wiz-portal-season-pagination([current]="localImagePagination().current", [start]="localImagePagination().start", [end]="localImagePagination().end", [maxlength]="10", (pageMove)="moveLocalImagePage($event)")
 
 div(*ngIf="showCreateProjectModal()", class="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/60 px-4")
     div(class="w-full max-w-md rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")

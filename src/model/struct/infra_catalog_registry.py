@@ -1,5 +1,6 @@
 import datetime
 import decimal
+import math
 import uuid
 
 
@@ -7,7 +8,7 @@ connect = wiz.model("db/postgres").connect
 setup = wiz.model("struct/setup")
 system = wiz.model("struct/system")
 local_command_catalog = wiz.model("struct/local_command_catalog")
-domains_model = wiz.model("struct/domains")
+ddns_model = wiz.model("struct/domains_ddns")
 backup_system = wiz.model("struct/backup_system")
 metric_history = wiz.model("struct/nodes_metric_history")
 webserver = wiz.model("struct/webserver")
@@ -67,6 +68,13 @@ def _count(cursor, table):
     return int(cursor.fetchone()["count"])
 
 
+def _optional_count(cursor, table):
+    cursor.execute("SELECT to_regclass(%s) AS table_name", (table,))
+    if not cursor.fetchone().get("table_name"):
+        return 0
+    return _count(cursor, table)
+
+
 def _dict(value):
     return dict(value) if isinstance(value, dict) else {}
 
@@ -76,6 +84,146 @@ def _int(value, fallback=0):
         return int(value)
     except Exception:
         return fallback
+
+
+def _text(value):
+    return str(value or "").strip()
+
+
+def _node_label(node):
+    node = _dict(node)
+    label = _text(node.get("label"))
+    name = _text(node.get("name"))
+    host = _text(node.get("host") or node.get("private_host"))
+    if label:
+        return label
+    if name and host and name != host:
+        return f"{name} ({host})"
+    return name or host or _text(node.get("id"))
+
+
+def _node_lookup_maps(cursor):
+    rows = _rows(
+        cursor,
+        """
+        SELECT id::text AS id, name, host, swarm_node_id
+        FROM nodes
+        """,
+    )
+    maps = {}
+    for row in rows:
+        row["label"] = _node_label(row)
+        swarm_node_id = _text(row.get("swarm_node_id"))
+        keys = [
+            row.get("id"),
+            swarm_node_id,
+            swarm_node_id[:12] if swarm_node_id else "",
+            row.get("name"),
+            row.get("host"),
+        ]
+        for key in keys:
+            text = _text(key)
+            if text and text not in maps:
+                maps[text] = row
+    return maps
+
+
+def _resolve_node(node_maps, *candidates):
+    for candidate in candidates:
+        text = _text(candidate)
+        if text and text in node_maps:
+            return node_maps[text]
+    return {}
+
+
+def _attach_service_server_summary(service, node_maps):
+    metadata = _dict(service.get("metadata"))
+    runtime = _dict(service.get("runtime_status") or metadata.get("runtime_status"))
+    policy = _dict(service.get("target_node_policy"))
+    placement = _dict(metadata.get("placement") or service.get("placement_metadata"))
+    last_migration = _dict(metadata.get("last_migration") or service.get("last_migration_metadata"))
+    servers = []
+    seen = set()
+
+    def push(node_id=None, label=None, host=None, node=None, *keys):
+        node = _dict(node)
+        resolved = _resolve_node(
+            node_maps,
+            node_id,
+            node.get("id"),
+            node.get("swarm_node_id"),
+            label,
+            host,
+            *keys,
+        )
+        node = {**node, **resolved}
+        next_id = _text(node_id or node.get("id"))
+        next_host = _text(host or node.get("host") or node.get("private_host"))
+        next_label = _text(label)
+        if resolved:
+            next_label = _node_label(node)
+        if not next_label:
+            next_label = _node_label(node)
+        if not next_label:
+            next_label = next_id
+        if not next_label:
+            return
+        key = next_id or next_label.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        servers.append({"id": next_id, "label": next_label, "host": next_host})
+
+    containers = _dict(runtime.get("containers")).get("containers")
+    if isinstance(containers, list):
+        for container in containers:
+            push(
+                container.get("node_id"),
+                container.get("node_name") or container.get("node_host"),
+                container.get("node_host"),
+            )
+
+    tasks = _dict(runtime.get("stack")).get("tasks")
+    if isinstance(tasks, list):
+        for task in tasks:
+            registered = _dict(task.get("registered_node"))
+            push(
+                task.get("registered_node_id") or registered.get("id"),
+                task.get("registered_node_label") or registered.get("label") or task.get("registered_node_name") or registered.get("name") or task.get("registered_node_host") or registered.get("host"),
+                task.get("registered_node_host") or registered.get("host"),
+                registered,
+                task.get("registered_swarm_node_id"),
+                task.get("swarm_node_id"),
+            )
+
+    fallback_nodes = [
+        _dict(_dict(policy.get("recommendation")).get("selected")).get("node"),
+        _dict(_dict(placement.get("recommendation")).get("selected")).get("node"),
+        placement.get("migration", {}).get("target_node") if isinstance(placement.get("migration"), dict) else None,
+        last_migration.get("target_node"),
+    ]
+    fallback_node_id = policy.get("node_id") or placement.get("node_id")
+    for fallback in fallback_nodes:
+        if fallback:
+            push(fallback_node_id or _dict(fallback).get("id"), node=fallback)
+    if fallback_node_id:
+        push(fallback_node_id)
+
+    names = [item["label"] for item in servers]
+    if len(names) > 2:
+        summary = f"{', '.join(names[:2])} 외 {len(names) - 2}대"
+    elif names:
+        summary = ", ".join(names)
+    elif not runtime.get("checked_at"):
+        summary = "상태 확인 전"
+    else:
+        summary = "서버 확인 필요"
+
+    service["runtime_status"] = runtime
+    service["runtime_servers"] = servers
+    service["runtime_server_names"] = names
+    service["runtime_server_summary"] = summary
+    return service
 
 
 class InfraCatalog:
@@ -88,7 +236,7 @@ class InfraCatalog:
                     "service_domains": _count(cursor, "service_domains"),
                     "images": _count(cursor, "images"),
                     "operations": _count(cursor, "operation_logs"),
-                    "cloudflare_zones": _count(cursor, "cloudflare_zones"),
+                    "ddns_endpoints": _optional_count(cursor, "ddns_endpoints"),
                 }
 
     def integrations(self):
@@ -101,17 +249,17 @@ class InfraCatalog:
             "secondary": backup.get("status") or "",
             "secret_configured": bool(backup.get("secret_configured")),
         }]
-        domain_overview = domains_model.load()
-        zones = domain_overview.get("zones", [])
-        first_zone = zones[0] if zones else {}
+        domain_overview = ddns_model.load()
+        endpoints = domain_overview.get("endpoints", [])
+        first_endpoint = endpoints[0] if endpoints else {}
         items.append(
             {
-                "key": "cloudflare",
-                "label": "Cloudflare",
-                "enabled": len([zone for zone in zones if zone.get("enabled")]) > 0,
-                "primary": first_zone.get("domain", ""),
-                "secondary": first_zone.get("zone_id", ""),
-                "secret_configured": len([zone for zone in zones if zone.get("secret_configured")]) > 0,
+                "key": "ddns",
+                "label": "DDNS",
+                "enabled": len([endpoint for endpoint in endpoints if endpoint.get("enabled")]) > 0,
+                "primary": first_endpoint.get("domain_suffix", ""),
+                "secondary": first_endpoint.get("api_url", ""),
+                "secret_configured": len([endpoint for endpoint in endpoints if endpoint.get("secret_configured")]) > 0,
             }
         )
         return items
@@ -129,79 +277,58 @@ class InfraCatalog:
     def domain_usage(self):
         with connect() as connection:
             with connection.cursor() as cursor:
-                registered_domain_count = _count(cursor, "cloudflare_zones")
-                registered_domains = _rows(
-                    cursor,
+                cursor.execute(
                     """
                     SELECT
-                        z.id::text AS id,
-                        z.domain,
-                        z.enabled,
-                        z.usable_for_service,
-                        z.last_sync_status,
-                        z.last_sync_at,
-                        z.record_count,
-                        COALESCE(links.service_count, 0) AS service_count,
-                        COALESCE(links.binding_count, 0) AS binding_count,
-                        COALESCE(links.host_count, 0) AS host_count,
-                        links.latest_linked_at,
-                        COALESCE(links.service_names, ARRAY[]::text[]) AS service_names
-                    FROM cloudflare_zones z
-                    LEFT JOIN LATERAL (
-                        SELECT
-                            count(DISTINCT sd.service_id) AS service_count,
-                            count(sd.id) AS binding_count,
-                            count(DISTINCT sd.domain) AS host_count,
-                            max(sd.updated_at) AS latest_linked_at,
-                            array_remove(array_agg(DISTINCT COALESCE(s.name, s.namespace)), NULL) AS service_names
-                        FROM service_domains sd
-                        LEFT JOIN services s ON s.id = sd.service_id
-                        WHERE lower(sd.domain) = lower(z.domain)
-                           OR lower(sd.domain) LIKE lower('%%.' || z.domain)
-                    ) links ON true
-                    ORDER BY z.domain ASC
-                    LIMIT 80
-                    """,
+                        to_regclass('ddns_endpoints') AS endpoints_table,
+                        to_regclass('ddns_registrations') AS registrations_table
+                    """
                 )
-                if registered_domain_count > 0 and not registered_domains:
+                schema = cursor.fetchone()
+                ddns_ready = bool(schema.get("endpoints_table") and schema.get("registrations_table"))
+                registered_domains = []
+                linked_domain_count = 0
+                if ddns_ready:
                     registered_domains = _rows(
                         cursor,
                         """
                         SELECT
-                            z.id::text AS id,
-                            z.domain,
-                            z.enabled,
-                            z.usable_for_service,
-                            z.last_sync_status,
-                            z.last_sync_at,
-                            z.record_count,
-                            0 AS service_count,
-                            0 AS binding_count,
-                            0 AS host_count,
-                            NULL AS latest_linked_at,
-                            ARRAY[]::text[] AS service_names
-                        FROM cloudflare_zones z
-                        ORDER BY z.domain ASC
+                            e.id::text AS id,
+                            e.domain_suffix AS domain,
+                            e.enabled,
+                            true AS usable_for_service,
+                            COALESCE(e.last_check_status, 'never') AS last_sync_status,
+                            e.last_check_at AS last_sync_at,
+                            COALESCE(links.record_count, 0) AS record_count,
+                            COALESCE(links.service_count, 0) AS service_count,
+                            COALESCE(links.binding_count, 0) AS binding_count,
+                            COALESCE(links.host_count, 0) AS host_count,
+                            links.latest_linked_at,
+                            COALESCE(links.service_names, ARRAY[]::text[]) AS service_names
+                        FROM ddns_endpoints e
+                        LEFT JOIN LATERAL (
+                            SELECT
+                                count(dr.id) AS record_count,
+                                count(DISTINCT dr.service_id) AS service_count,
+                                count(dr.service_domain_id) AS binding_count,
+                                count(DISTINCT dr.domain) AS host_count,
+                                max(dr.updated_at) AS latest_linked_at,
+                                array_remove(array_agg(DISTINCT COALESCE(s.name, s.namespace)), NULL) AS service_names
+                            FROM ddns_registrations dr
+                            LEFT JOIN services s ON s.id = dr.service_id
+                            WHERE dr.endpoint_id = e.id
+                        ) links ON true
+                        ORDER BY e.domain_suffix ASC
                         LIMIT 80
                         """,
                     )
-                cursor.execute(
-                    """
-                    SELECT count(*) AS count
-                    FROM cloudflare_zones z
-                    WHERE EXISTS (
-                        SELECT 1
-                        FROM service_domains sd
-                        WHERE lower(sd.domain) = lower(z.domain)
-                           OR lower(sd.domain) LIKE lower('%%.' || z.domain)
-                    )
-                    """
-                )
-                linked_domain_count = int(cursor.fetchone()["count"])
+                    linked_domain_count = len([row for row in registered_domains if int(row.get("service_count") or 0) > 0])
                 cursor.execute(
                     """
                     SELECT count(DISTINCT sd.service_id) AS count
                     FROM service_domains sd
+                    WHERE COALESCE(sd.metadata->>'dns_provider', '') = 'ddns'
+                       OR COALESCE(sd.metadata->>'ddns_endpoint_id', '') <> ''
                     """
                 )
                 linked_service_count = int(cursor.fetchone()["count"])
@@ -209,38 +336,43 @@ class InfraCatalog:
                     """
                     SELECT count(DISTINCT sd.domain) AS count
                     FROM service_domains sd
+                    WHERE COALESCE(sd.metadata->>'dns_provider', '') = 'ddns'
+                       OR COALESCE(sd.metadata->>'ddns_endpoint_id', '') <> ''
                     """
                 )
                 service_domain_count = int(cursor.fetchone()["count"])
-                unmatched_service_domains = _rows(
-                    cursor,
-                    """
-                    SELECT
-                        min(sd.id::text) AS id,
-                        sd.domain,
-                        true AS enabled,
-                        true AS usable_for_service,
-                        'registered' AS last_sync_status,
-                        max(sd.updated_at) AS last_sync_at,
-                        0 AS record_count,
-                        count(DISTINCT sd.service_id) AS service_count,
-                        count(sd.id) AS binding_count,
-                        count(DISTINCT sd.domain) AS host_count,
-                        max(sd.updated_at) AS latest_linked_at,
-                        array_remove(array_agg(DISTINCT COALESCE(s.name, s.namespace)), NULL) AS service_names
-                    FROM service_domains sd
-                    LEFT JOIN services s ON s.id = sd.service_id
-                    WHERE NOT EXISTS (
-                        SELECT 1
-                        FROM cloudflare_zones z
-                        WHERE lower(sd.domain) = lower(z.domain)
-                           OR lower(sd.domain) LIKE lower('%%.' || z.domain)
+                unmatched_service_domains = []
+                if ddns_ready:
+                    unmatched_service_domains = _rows(
+                        cursor,
+                        """
+                        SELECT
+                            min(sd.id::text) AS id,
+                            sd.domain,
+                            true AS enabled,
+                            true AS usable_for_service,
+                            'registered' AS last_sync_status,
+                            max(sd.updated_at) AS last_sync_at,
+                            0 AS record_count,
+                            count(DISTINCT sd.service_id) AS service_count,
+                            count(sd.id) AS binding_count,
+                            count(DISTINCT sd.domain) AS host_count,
+                            max(sd.updated_at) AS latest_linked_at,
+                            array_remove(array_agg(DISTINCT COALESCE(s.name, s.namespace)), NULL) AS service_names
+                        FROM service_domains sd
+                        LEFT JOIN services s ON s.id = sd.service_id
+                        WHERE (COALESCE(sd.metadata->>'dns_provider', '') = 'ddns'
+                               OR COALESCE(sd.metadata->>'ddns_endpoint_id', '') <> '')
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM ddns_registrations dr
+                              WHERE lower(dr.domain) = lower(sd.domain)
+                          )
+                        GROUP BY sd.domain
+                        ORDER BY sd.domain ASC
+                        LIMIT 80
+                        """,
                     )
-                    GROUP BY sd.domain
-                    ORDER BY sd.domain ASC
-                    LIMIT 80
-                    """,
-                )
 
         domains = [*registered_domains, *unmatched_service_domains]
         for row in domains:
@@ -615,6 +747,9 @@ class InfraCatalog:
                         s.name,
                         s.status,
                         s.stack_name,
+                        s.target_node_policy,
+                        s.metadata->'placement' AS placement_metadata,
+                        s.metadata->'last_migration' AS last_migration_metadata,
                         s.metadata->'runtime_status' AS runtime_status,
                         s.created_at,
                         s.updated_at,
@@ -643,6 +778,7 @@ class InfraCatalog:
                     LIMIT 6
                     """,
                 )
+                node_maps = _node_lookup_maps(cursor)
                 cursor.execute(
                     """
                     SELECT status, count(*) AS count
@@ -663,7 +799,7 @@ class InfraCatalog:
                 )
 
         for service in services:
-            service["runtime_status"] = service.get("runtime_status") or {}
+            _attach_service_server_summary(service, node_maps)
             service["domain_count"] = _int(service.get("domain_count"))
             service["compose_version_count"] = _int(service.get("compose_version_count"))
             service["domains"] = [domain for domain in (service.get("domains") or []) if domain]
@@ -874,9 +1010,20 @@ class InfraCatalog:
             "domain_usage": self.domain_usage(),
         }
 
-    def services(self):
+    def services(self, limit=20, page=1):
+        try:
+            limit = max(1, min(int(limit or 20), 100))
+        except Exception:
+            limit = 20
+        try:
+            page = max(1, int(page or 1))
+        except Exception:
+            page = 1
+        offset = (page - 1) * limit
         with connect() as connection:
             with connection.cursor() as cursor:
+                cursor.execute("SELECT count(*) AS total FROM services")
+                total = int((cursor.fetchone() or {}).get("total") or 0)
                 services = _rows(
                     cursor,
                     """
@@ -890,7 +1037,7 @@ class InfraCatalog:
                         SELECT *
                         FROM services
                         ORDER BY created_at DESC
-                        LIMIT 80
+                        LIMIT %s OFFSET %s
                     ) s
                     LEFT JOIN LATERAL (
                         SELECT
@@ -907,8 +1054,23 @@ class InfraCatalog:
                     ) v ON true
                     ORDER BY s.created_at DESC
                     """,
+                    (limit, offset),
                 )
-        return {"services": services}
+                node_maps = _node_lookup_maps(cursor)
+                for service in services:
+                    _attach_service_server_summary(service, node_maps)
+        end = max(1, int(math.ceil(total / limit))) if total else 1
+        current = min(page, end)
+        return {
+            "services": services,
+            "pagination": {
+                "current": current,
+                "start": ((current - 1) // 10) * 10 + 1,
+                "end": end,
+                "total": total,
+                "limit": limit,
+            },
+        }
 
     def images(self):
         with connect() as connection:
@@ -917,23 +1079,11 @@ class InfraCatalog:
         return {"images": images, "integrations": self.integrations(), "counts": self.counts()}
 
     def domains(self):
-        with connect() as connection:
-            with connection.cursor() as cursor:
-                zones = _rows(cursor, "SELECT * FROM cloudflare_zones ORDER BY created_at DESC LIMIT 80")
-                domains = _rows(
-                    cursor,
-                    """
-                    SELECT sd.*, s.name AS service_name, s.namespace AS service_namespace
-                    FROM service_domains sd
-                    LEFT JOIN services s ON s.id = sd.service_id
-                    ORDER BY sd.created_at DESC
-                    LIMIT 80
-                    """,
-                )
-                certificates = webserver.load().get("certificates", [])
+        ddns = ddns_model.load()
+        certificates = webserver.load().get("certificates", [])
         return {
-            "zones": zones,
-            "domains": domains,
+            "zones": ddns.get("endpoints", []),
+            "domains": ddns.get("registrations", []),
             "certificates": certificates,
             "integrations": self.integrations(),
             "counts": self.counts(),

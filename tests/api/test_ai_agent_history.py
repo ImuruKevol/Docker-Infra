@@ -143,13 +143,27 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
             "agentHistoryHasNext",
             "moveAgentHistoryPage",
             "agentContextSignature",
+            "agentMarkdownHtmlCache",
+            "agentMarkdownHtmlCacheLimit",
             "shouldIgnoreAgentContextMutations",
             "handleAgentCodeCopy",
             "data-ai-agent-copy-code",
             "renderAgentView",
             "agentTextSelectionActive",
+            "shouldDeferAgentRenderForSelection",
             "scheduleAgentRenderAfterSelection",
             "agentSelectionRenderTimer",
+            "agentSelectionMouseDownHandler",
+            "agentSelectionMouseUpHandler",
+            "agentSelectionChangeHandler",
+            "handleAgentSelectionMouseDown",
+            "handleAgentSelectionMouseUp",
+            "handleAgentSelectionChange",
+            "isAgentSelectableNode",
+            "agentSelectableTextSelector",
+            "clearAgentSelectionRenderHold",
+            "shouldIgnoreAgentHistorySelect",
+            "selectAgentHistoryByKey",
             "agentDockWidthStorageKey",
             "restoreAgentDockWidth()",
             "saveAgentDockWidth()",
@@ -183,6 +197,9 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
             "continueAgentHistory(item, $event)",
             "ai-agent-history-continue",
             "ai-agent-history-continue-icon",
+            "data-ai-agent-selectable-text",
+            "selectAgentHistory(item, $event)",
+            "selectAgentHistoryByKey(item, $event)",
             "이어서 대화",
             "ai-agent-history-copy-actions",
             "ai-agent-history-detail-dock",
@@ -221,6 +238,8 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
             ".ai-agent-history-continue",
             ".ai-agent-history-continue-icon",
             "grid-template-columns: minmax(0, 1fr) 32px 32px",
+            "user-select: text",
+            "-webkit-user-select: text",
         ]:
             self.assertIn(token, style)
         self.assertNotIn(".ai-agent-history-copy-text small", style)
@@ -264,6 +283,8 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
         app = self.read("src/angular/app/app.component.ts")
         template = self.read("src/angular/app/app.component.pug")
         style = self.read("src/angular/app/app.component.scss")
+        sidebar_layout = self.read("src/app/layout.sidebar/view.ts")
+        sidebar_template = self.read("src/app/layout.sidebar/view.pug")
         macros = self.read("src/app/page.macros/view.ts")
         servers = self.read("src/app/page.servers/view.ts")
 
@@ -280,6 +301,7 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
             "plan_chat",
             "_ui_todo_plan_system_prompt",
             "_normalize_chat_todos",
+            "refresh_action",
         ]:
             self.assertIn(token, assistant)
 
@@ -297,8 +319,13 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
             "waitForAgentRoute",
             "findAgentElementByLabel",
             "buildAgentActionTodoList",
+            "agentActionNeedsScreenRefresh",
+            "refreshAgentCurrentScreen",
+            "docker-infra-agent-refresh-current-view",
+            "docker-infra-agent-refresh-result",
         ]:
             self.assertIn(token, app)
+        self.assertNotIn("location.reload()", app)
         for token in [
             "const timeoutLimitMs = 10 * 60 * 1000",
             "const idleLimitMs = timeoutLimitMs",
@@ -323,6 +350,23 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
         ]:
             self.assertIn(token, style)
         self.assertNotIn(".ai-agent-todo-item p", style)
+
+        for token in [
+            "setActiveRouteComponent($event)",
+            "clearActiveRouteComponent($event)",
+        ]:
+            self.assertIn(token, sidebar_template)
+
+        for token in [
+            "handleAgentRefreshCurrentView",
+            "refreshActiveRouteComponent",
+            "docker-infra-agent-refresh-current-view",
+            "docker-infra-agent-refresh-result",
+            "page.load(false)",
+            "page.load(this.selectedEntityId(page), true)",
+            "page.load(true, this.selectedEntityId(page), true)",
+        ]:
+            self.assertIn(token, sidebar_layout)
 
         for token in [
             "startAgentCommandListener",

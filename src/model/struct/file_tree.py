@@ -1,3 +1,4 @@
+import base64
 import os
 import shutil
 import time
@@ -61,6 +62,12 @@ class FileTree:
             raise FileTreeError(400, "node_id가 필요합니다.", "NODE_ID_REQUIRED")
         return node_id
 
+    def _container_id(self, context):
+        container_id = _text((context or {}).get("container_id"))
+        if not container_id:
+            raise FileTreeError(400, "container_id가 필요합니다.", "CONTAINER_ID_REQUIRED")
+        return container_id
+
     def _local_root(self, scope, context, env=None):
         context = context or {}
         if scope == "service":
@@ -96,6 +103,12 @@ class FileTree:
             return value
         return value if value.startswith("/") else f"/{value}"
 
+    def _container_path(self, path, default="/"):
+        value = _text(path)
+        if not value or value == ".":
+            return default
+        return value if value.startswith("/") else f"/{value}"
+
     def list(self, payload, env=None):
         body = payload or {}
         scope = _text(body.get("scope"))
@@ -106,6 +119,13 @@ class FileTree:
             return nodes.browse_files(
                 self._node_id(context),
                 {"path": self._node_path(path), "show_hidden": context.get("show_hidden"), "limit": list_context.get("limit")},
+                env=env,
+            )
+        if scope == "container":
+            return nodes.browse_container_files(
+                self._node_id(context),
+                self._container_id(context),
+                {"path": self._container_path(path), "show_hidden": context.get("show_hidden"), "limit": list_context.get("limit")},
                 env=env,
             )
         root, target = self._resolve_local(scope, context, path, env=env)
@@ -162,10 +182,42 @@ class FileTree:
         if scope == "node":
             content = nodes.read_file_text(self._node_id(context), self._node_path(path), env=env)
             return {"path": self._node_path(path), "content": content}
+        if scope == "container":
+            content = nodes.read_container_file_text(self._node_id(context), self._container_id(context), self._container_path(path), env=env)
+            return {"path": self._container_path(path), "content": content}
         _, target = self._resolve_local(scope, context, path, env=env)
         if not target.is_file():
             raise FileTreeError(404, "선택한 파일을 찾을 수 없습니다.", "FILE_TREE_FILE_NOT_FOUND")
         return {"path": _text(path), "content": target.read_text(encoding="utf-8")}
+
+    def download(self, payload, env=None):
+        body = payload or {}
+        scope = _text(body.get("scope"))
+        context = body.get("context") or {}
+        path = body.get("path")
+        if scope == "node":
+            normalized = self._node_path(path)
+            content = nodes.read_file_text(self._node_id(context), normalized, env=env).encode("utf-8")
+            return {
+                "path": normalized,
+                "name": PurePosixPath(normalized).name or "download",
+                "content_base64": base64.b64encode(content).decode("ascii"),
+            }
+        if scope == "container":
+            normalized = self._container_path(path)
+            return {
+                "path": normalized,
+                "name": PurePosixPath(normalized).name or "download",
+                "content_base64": nodes.read_container_file_base64(self._node_id(context), self._container_id(context), normalized, env=env),
+            }
+        _, target = self._resolve_local(scope, context, path, env=env)
+        if not target.is_file():
+            raise FileTreeError(404, "선택한 파일을 찾을 수 없습니다.", "FILE_TREE_FILE_NOT_FOUND")
+        return {
+            "path": _text(path),
+            "name": target.name,
+            "content_base64": base64.b64encode(target.read_bytes()).decode("ascii"),
+        }
 
     def mutate(self, payload, env=None):
         body = payload or {}
@@ -177,6 +229,8 @@ class FileTree:
             node_id = self._node_id(context)
             if action == "mkdir":
                 return nodes.make_directory(node_id, self._node_path(path), env=env)
+            if action == "write":
+                return nodes.write_file_bytes(node_id, self._node_path(path), str(body.get("content") or "").encode("utf-8"), env=env)
             if action == "rename":
                 return nodes.rename_path(node_id, self._node_path(path), body.get("new_name"), env=env)
             if action == "delete":
@@ -185,10 +239,32 @@ class FileTree:
                 return nodes.move_path(node_id, self._node_path(path), self._node_path(body.get("destination")), env=env)
             raise FileTreeError(400, "지원하지 않는 파일 작업입니다.", "FILE_TREE_ACTION_INVALID")
 
+        if scope == "container":
+            node_id = self._node_id(context)
+            container_id = self._container_id(context)
+            if action == "mkdir":
+                return nodes.make_container_directory(node_id, container_id, self._container_path(path), env=env)
+            if action == "write":
+                return nodes.write_container_file_bytes(node_id, container_id, self._container_path(path), str(body.get("content") or "").encode("utf-8"), env=env)
+            if action == "rename":
+                return nodes.rename_container_path(node_id, container_id, self._container_path(path), body.get("new_name"), env=env)
+            if action == "delete":
+                return nodes.delete_container_path(node_id, container_id, self._container_path(path), env=env)
+            if action == "move":
+                return nodes.move_container_path(node_id, container_id, self._container_path(path), self._container_path(body.get("destination")), env=env)
+            raise FileTreeError(400, "지원하지 않는 파일 작업입니다.", "FILE_TREE_ACTION_INVALID")
+
         root, target = self._resolve_local(scope, context, path, env=env)
         if action == "mkdir":
             target.mkdir(parents=True, exist_ok=True)
             return {"path": "." if target == root else target.relative_to(root).as_posix()}
+        if action == "write":
+            if target.exists() and target.is_dir():
+                raise FileTreeError(400, "폴더에는 내용을 저장할 수 없습니다.", "FILE_TREE_PATH_IS_DIRECTORY")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            content = str(body.get("content") or "")
+            target.write_text(content, encoding="utf-8")
+            return {"path": "." if target == root else target.relative_to(root).as_posix(), "size": target.stat().st_size}
         if action == "rename":
             name = _safe_name(body.get("new_name"))
             renamed = target.with_name(name)
@@ -228,6 +304,18 @@ class FileTree:
                 target = str(base / rel)
                 content = storage.read()
                 nodes.write_file_bytes(node_id, target, content, env=env)
+                saved.append({"path": target, "size": len(content)})
+            return {"uploaded": saved, "count": len(saved)}
+
+        if scope == "container":
+            node_id = self._node_id(context)
+            container_id = self._container_id(context)
+            base = PurePosixPath(self._container_path(destination))
+            for storage in file_storages:
+                rel = _safe_relative(storage.filename)
+                target = str(base / rel)
+                content = storage.read()
+                nodes.write_container_file_bytes(node_id, container_id, target, content, env=env)
                 saved.append({"path": target, "size": len(content)})
             return {"uploaded": saved, "count": len(saved)}
 

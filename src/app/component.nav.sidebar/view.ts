@@ -60,8 +60,8 @@ export class Component implements OnInit {
 
     public languageButtonClass(lang: string) {
         const active = this.currentLanguage() === lang;
-        if (active) return 'bg-white text-gray-900 shadow-sm dark:bg-zinc-700 dark:text-white';
-        return 'text-gray-500 hover:text-gray-900 dark:text-zinc-400 dark:hover:text-white';
+        if (active) return 'bg-zinc-950 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-950';
+        return 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white';
     }
 
     public async setLanguage(lang: string) {
@@ -79,9 +79,9 @@ export class Component implements OnInit {
 
     public activeClass(link: string) {
         if (this.isActive(link)) {
-            return "group flex gap-x-2 items-center rounded-md bg-zinc-100 px-2.5 py-2 text-[13px] font-semibold text-zinc-950 dark:bg-zinc-800 dark:text-zinc-50";
+            return "group flex gap-x-3 items-center rounded-lg bg-zinc-950 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition dark:bg-zinc-100 dark:text-zinc-950";
         }
-        return "group flex gap-x-2 items-center rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-50";
+        return "group flex gap-x-3 items-center rounded-lg px-3 py-2.5 text-sm font-semibold text-zinc-600 transition hover:bg-white hover:text-zinc-950 hover:shadow-sm dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-50";
     }
 
     public logoTitle() {

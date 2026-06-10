@@ -1,22 +1,21 @@
-div(*ngIf="authReady()", class="h-screen overflow-hidden bg-zinc-100 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100")
+div(*ngIf="authReady()", class="infra-shell h-screen overflow-hidden bg-[#f6f7fb] text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100")
     div(class="relative z-50 lg:hidden", *ngIf="!service.status.navbar")
-        div(class="fixed inset-0 bg-gray-900/80")
+        div(class="fixed inset-0 bg-zinc-950/55 backdrop-blur-sm")
         div(class="fixed inset-0 flex")
-            div(class="relative mr-16 flex w-full max-w-[14rem] flex-1")
+            div(class="relative mr-16 flex w-full max-w-[17rem] flex-1")
                 div(class="absolute left-full top-0 flex w-16 justify-center pt-5")
-                    button(type="button", class="-m-2.5 p-2.5", (click)="service.status.toggle('navbar'); $event.stopPropagation();")
+                    button(type="button", class="inline-flex h-9 w-9 items-center justify-center rounded-md bg-white/10 text-white backdrop-blur hover:bg-white/20", (click)="service.status.toggle('navbar'); $event.stopPropagation();")
                         span(class="sr-only") Close sidebar
-                        svg(class="h-5 w-5 text-white", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", aria-hidden="true")
-                            path(stroke-linecap="round", stroke-linejoin="round", d="M6 18L18 6M6 6l12 12")
-                div(class="flex grow flex-col overflow-y-auto bg-white px-3 pb-3 dark:bg-zinc-950")
+                        i(class="fa-solid fa-xmark")
+                div(class="infra-sidebar-panel flex grow flex-col overflow-y-auto border-r border-zinc-200 bg-white/95 px-3 pb-3 shadow-2xl backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95")
                     wiz-component-nav-sidebar
 
-    div(class="hidden lg:fixed lg:inset-y-0 lg:z-30 lg:flex lg:w-60 lg:flex-col")
-        div(class="flex grow flex-col overflow-y-auto border-r border-zinc-200 bg-white px-3 pb-3 dark:border-zinc-800 dark:bg-zinc-950")
+    div(class="hidden lg:fixed lg:inset-y-0 lg:z-30 lg:flex lg:w-72 lg:flex-col")
+        div(class="infra-sidebar-panel flex grow flex-col overflow-y-auto border-r border-zinc-200 bg-white/90 px-3 pb-3 backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/95")
             wiz-component-nav-sidebar
 
-    div(class="h-full overflow-auto bg-zinc-100 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100 lg:pl-60")
-        router-outlet
+    div(class="infra-content h-full overflow-auto text-zinc-950 dark:text-zinc-100 lg:pl-72")
+        router-outlet((activate)="setActiveRouteComponent($event)", (deactivate)="clearActiveRouteComponent($event)")
 
 wiz-portal-season-modal
 div(*ngIf="service.status.loading", class="fixed w-full h-full top-0 left-0 z-50 flex justify-center items-center bg-black/20 backdrop-blur-md")
