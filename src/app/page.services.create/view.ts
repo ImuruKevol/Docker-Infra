@@ -1,4 +1,5 @@
 import { OnInit, signal } from '@angular/core';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { Service } from '@wiz/libs/portal/season/service';
 
 type StepId = 1 | 2 | 3 | 4;
@@ -84,8 +85,10 @@ export class Component implements OnInit {
     private domainModeTouched = false;
     private aiModelOptionsLoaded = false;
     private aiModelOptionsRequest: Promise<boolean> | null = null;
+    private readmeMarkdownHtmlCache = new Map<string, SafeHtml>();
+    private readonly readmeMarkdownHtmlCacheLimit = 40;
 
-    constructor(public service: Service) { }
+    constructor(public service: Service, private sanitizer: DomSanitizer) { }
 
     private serviceDetailRoute(serviceId: string) {
         const encodedId = this.service.encodeRouteSegment(serviceId);
@@ -254,12 +257,210 @@ export class Component implements OnInit {
         return String(this.templateDetail()?.files?.readme || this.templateDetail()?.readme || '').trim();
     }
 
+    public selectedTemplateReadmeHtml(): SafeHtml {
+        const source = this.selectedTemplateReadme() || 'README가 등록되어 있지 않습니다.';
+        const cached = this.readmeMarkdownHtmlCache.get(source);
+        if (cached) return cached;
+        const trusted = this.sanitizer.bypassSecurityTrustHtml(this.renderReadmeMarkdown(source));
+        this.readmeMarkdownHtmlCache.set(source, trusted);
+        if (this.readmeMarkdownHtmlCache.size > this.readmeMarkdownHtmlCacheLimit) {
+            const firstKey = this.readmeMarkdownHtmlCache.keys().next().value;
+            if (firstKey !== undefined) this.readmeMarkdownHtmlCache.delete(firstKey);
+        }
+        return trusted;
+    }
+
     public toggleTemplateReadme() {
         this.readmeOpen.set(!this.readmeOpen());
     }
 
     public closeTemplateReadme() {
         this.readmeOpen.set(false);
+    }
+
+    private renderReadmeMarkdown(value: string) {
+        const lines = String(value || '').replace(/\r\n/g, '\n').split('\n');
+        const html: string[] = [];
+        let paragraph: string[] = [];
+        let listType = '';
+        let listItems: string[] = [];
+        let inCode = false;
+        let codeLines: string[] = [];
+
+        const flushParagraph = () => {
+            if (paragraph.length === 0) return;
+            html.push(`<p>${this.renderReadmeInlineMarkdown(paragraph.join('\n')).replace(/\n/g, '<br>')}</p>`);
+            paragraph = [];
+        };
+        const flushList = () => {
+            if (!listType || listItems.length === 0) return;
+            const items = listItems.map((item) => `<li>${this.renderReadmeInlineMarkdown(item)}</li>`).join('');
+            html.push(`<${listType}>${items}</${listType}>`);
+            listType = '';
+            listItems = [];
+        };
+        const flushCode = () => {
+            html.push(this.renderReadmeCodeBlock(codeLines));
+            codeLines = [];
+        };
+
+        for (let index = 0; index < lines.length; index++) {
+            const line = lines[index];
+            if (line.trim().startsWith('```')) {
+                if (inCode) {
+                    flushCode();
+                    inCode = false;
+                } else {
+                    flushParagraph();
+                    flushList();
+                    inCode = true;
+                    codeLines = [];
+                }
+                continue;
+            }
+            if (inCode) {
+                codeLines.push(line);
+                continue;
+            }
+            if (!line.trim()) {
+                flushParagraph();
+                flushList();
+                continue;
+            }
+            if (this.isReadmeMarkdownTableStart(lines, index)) {
+                flushParagraph();
+                flushList();
+                const tableLines: string[] = [];
+                while (index < lines.length && this.isReadmeMarkdownTableRow(lines[index])) {
+                    tableLines.push(lines[index]);
+                    index += 1;
+                }
+                index -= 1;
+                html.push(this.renderReadmeMarkdownTable(tableLines));
+                continue;
+            }
+            if (this.isReadmeCodeLine(line)) {
+                flushParagraph();
+                flushList();
+                const detectedCodeLines: string[] = [];
+                while (index < lines.length && this.isReadmeCodeLine(lines[index])) {
+                    detectedCodeLines.push(lines[index]);
+                    index += 1;
+                }
+                index -= 1;
+                html.push(this.renderReadmeCodeBlock(detectedCodeLines));
+                continue;
+            }
+
+            const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+            const unordered = line.match(/^\s*[-*]\s+(.+)$/);
+            const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
+            if (heading) {
+                flushParagraph();
+                flushList();
+                const level = Math.min(6, heading[1].length + 3);
+                html.push(`<h${level}>${this.renderReadmeInlineMarkdown(heading[2])}</h${level}>`);
+                continue;
+            }
+            if (ordered || unordered) {
+                flushParagraph();
+                const nextType = ordered ? 'ol' : 'ul';
+                if (listType && listType !== nextType) flushList();
+                listType = nextType;
+                listItems.push((ordered || unordered || [])[1]);
+                continue;
+            }
+
+            flushList();
+            paragraph.push(line.replace(/\s+$/, ''));
+        }
+
+        flushParagraph();
+        flushList();
+        if (inCode) flushCode();
+        return html.join('');
+    }
+
+    private renderReadmeInlineMarkdown(value: string) {
+        const codeSpans: string[] = [];
+        let html = this.escapeReadmeHtml(value).replace(/`([^`]+)`/g, (_match: string, code: string) => {
+            const token = `@@README_CODE_${codeSpans.length}@@`;
+            codeSpans.push(`<code>${code}</code>`);
+            return token;
+        });
+        html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+        html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+        codeSpans.forEach((code, index) => {
+            html = html.replace(new RegExp(`@@README_CODE_${index}@@`, 'g'), code);
+        });
+        return html;
+    }
+
+    private isReadmeMarkdownTableStart(lines: string[], index: number) {
+        return this.isReadmeMarkdownTableRow(lines[index]) && this.isReadmeMarkdownTableSeparator(lines[index + 1] || '');
+    }
+
+    private isReadmeMarkdownTableRow(line: string) {
+        const trimmed = String(line || '').trim();
+        return trimmed.startsWith('|') && trimmed.endsWith('|') && this.readmeMarkdownTableCells(trimmed).length >= 2;
+    }
+
+    private isReadmeMarkdownTableSeparator(line: string) {
+        if (!this.isReadmeMarkdownTableRow(line)) return false;
+        return this.readmeMarkdownTableCells(line).every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
+    }
+
+    private readmeMarkdownTableCells(line: string) {
+        let text = String(line || '').trim();
+        if (text.startsWith('|')) text = text.slice(1);
+        if (text.endsWith('|')) text = text.slice(0, -1);
+        return text.split('|').map((cell) => cell.trim());
+    }
+
+    private renderReadmeMarkdownTable(lines: string[]) {
+        const header = this.readmeMarkdownTableCells(lines[0] || '').slice(0, 8);
+        const body = lines.slice(2, 18).map((line) => this.readmeMarkdownTableCells(line).slice(0, header.length));
+        const headHtml = header.map((cell) => `<th>${this.renderReadmeInlineMarkdown(cell)}</th>`).join('');
+        const bodyHtml = body.map((row) => {
+            const cells = header.map((_cell, index) => `<td>${this.renderReadmeInlineMarkdown(row[index] || '')}</td>`).join('');
+            return `<tr>${cells}</tr>`;
+        }).join('');
+        return `<div class="ai-agent-markdown-table-wrap"><table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
+    }
+
+    private renderReadmeCodeBlock(lines: string[]) {
+        const code = this.escapeReadmeHtml((lines || []).join('\n'));
+        return [
+            '<div class="ai-agent-code-block">',
+            '<div class="ai-agent-code-toolbar">',
+            '<span>코드</span>',
+            '<button type="button" class="ai-agent-code-copy" data-ai-agent-copy-code="true" aria-label="코드 복사" title="코드 복사">',
+            '<i class="fa-solid fa-copy"></i><span>복사</span>',
+            '</button>',
+            '</div>',
+            `<pre><code>${code}</code></pre>`,
+            '</div>',
+        ].join('');
+    }
+
+    private isReadmeCodeLine(line: string) {
+        const trimmed = String(line || '').trim();
+        if (!trimmed) return false;
+        if (trimmed.startsWith('#!/')) return true;
+        if (/^[A-Z_][A-Z0-9_]*=.*/.test(trimmed)) return true;
+        if (/^(if|then|else|fi|for|while|do|done)\b/.test(trimmed)) return true;
+        return /^(sudo\s+)?(docker|kubectl|helm|curl|wget|ssh|scp|rsync|find|grep|awk|sed|cat|tail|head|journalctl|systemctl|apt|apt-get|yum|dnf|apk|npm|node|python|python3|pip|pip3|git|openssl|nginx|certbot|truncate|chmod|chown|mkdir|rmdir|rm|cp|mv|echo|export|source)\b/.test(trimmed);
+    }
+
+    private escapeReadmeHtml(value: string) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     private initialTemplateValues(detail: any) {
@@ -352,6 +553,26 @@ export class Component implements OnInit {
         return '';
     }
 
+    private isRequiredValueEmpty(value: any) {
+        if (value === undefined || value === null) return true;
+        if (Array.isArray(value)) return value.length === 0;
+        if (typeof value === 'string') return !value.trim();
+        return false;
+    }
+
+    private async validateRequiredTemplateFields() {
+        for (const field of this.editableTemplateFields()) {
+            if (!field?.required) continue;
+            const key = String(field?.name || '').trim();
+            if (!key) continue;
+            if (this.isRequiredValueEmpty(this.templateValues[key])) {
+                await this.alert(`${field.title || field.name} 값을 입력해주세요.`);
+                return false;
+            }
+        }
+        return true;
+    }
+
     public secretFieldVisible(field: any) {
         const key = String(field?.name || '');
         return !!this.secretVisibility()[key];
@@ -386,6 +607,7 @@ export class Component implements OnInit {
             await this.alert('서비스 이름을 입력해주세요.');
             return false;
         }
+        if (!(await this.validateRequiredTemplateFields())) return false;
         this.templateBusy.set(true);
         const { code, data } = await wiz.call('prepare_template_draft', {
             template_id: templateId,
@@ -1081,8 +1303,17 @@ export class Component implements OnInit {
                 await this.alert('선택한 템플릿에 도메인으로 연결할 포트가 없습니다.');
                 return false;
             }
-            if (!this.form.zone_id || !this.form.domain) {
+            const zone = this.selectedZone();
+            if (!this.form.zone_id || !zone?.domain) {
                 await this.alert('사용할 DDNS suffix를 선택해주세요.');
+                return false;
+            }
+            if (this.isDdnsZone(zone) && !String(this.form.domain_prefix || '').trim()) {
+                await this.alert('DDNS 앞 주소를 입력해주세요.');
+                return false;
+            }
+            if (!this.form.domain) {
+                await this.alert('사용할 도메인 주소를 확인해주세요.');
                 return false;
             }
         }
@@ -1209,11 +1440,9 @@ export class Component implements OnInit {
         return zone?.provider === 'ddns' || zone?.ddns === true;
     }
 
-    private domainPrefixForZone(zone: any, prefix: any, fallback: any) {
+    private domainPrefixForZone(_zone: any, prefix: any, _fallback: any) {
         const cleaned = String(prefix || '').trim().replace(/^\.+|\.+$/g, '');
-        if (cleaned || !this.isDdnsZone(zone)) return cleaned;
-        const value = String(fallback || 'service').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
-        return (value.replace(/-(service|app)$/g, '') || value || 'service').slice(0, 50);
+        return cleaned;
     }
 
     public syncDomain() {
@@ -1224,9 +1453,6 @@ export class Component implements OnInit {
         const zone = this.selectedZone();
         if (!zone?.domain) return;
         const prefix = this.domainPrefixForZone(zone, this.form.domain_prefix, this.form.name);
-        if (this.isDdnsZone(zone) && !String(this.form.domain_prefix || '').trim()) {
-            this.form.domain_prefix = prefix;
-        }
         this.form.domain = prefix ? `${prefix}.${zone.domain}` : zone.domain;
     }
 
@@ -1234,7 +1460,17 @@ export class Component implements OnInit {
         if (this.form.domain_mode !== 'registered') return '도메인 사용 안 함';
         const zone = this.selectedZone();
         const prefix = this.domainPrefixForZone(zone, this.form.domain_prefix, this.form.name);
+        if (this.isDdnsZone(zone) && !prefix) return zone?.domain ? `앞 주소 입력 필요 · ${zone.domain}` : '도메인 선택 필요';
         return zone?.domain ? (prefix ? `${prefix}.${zone.domain}` : zone.domain) : '도메인 선택 필요';
+    }
+
+    public createSummaryRows() {
+        return [
+            { label: '템플릿', value: this.selectedTemplate()?.name || this.selectedTemplate()?.namespace || '-' },
+            { label: '이름', value: this.form.name || '-' },
+            { label: '도메인', value: this.domainPreview() },
+            { label: '연결', value: this.selectedDomainTargetLabel() },
+        ];
     }
 
     public async checkImage(item: any) {

@@ -26,7 +26,6 @@ export class Component implements OnInit {
     public aiStreamEvents = signal<any[]>([]);
     public aiOutputTokenCount = signal<number>(0);
     public aiContract = signal<any>(null);
-    public templateAiModalOpen = signal<boolean>(false);
     public newTemplateMode = signal<NewTemplateMode>('');
     public newTemplateDraftReady = signal<boolean>(false);
     public cloneSourceId = signal<string>('');
@@ -329,6 +328,15 @@ export class Component implements OnInit {
         }
         this.loading.set(false);
         await this.service.render();
+    }
+
+    public async refresh() {
+        const selectedTemplateId = this.selectedId();
+        if (selectedTemplateId) {
+            await this.load(true, selectedTemplateId, true);
+            return;
+        }
+        await this.load(false, '', true);
     }
 
     private async selectInitialTemplate(templateId: string, replaceRoute: boolean = false) {
@@ -678,31 +686,23 @@ export class Component implements OnInit {
         return Boolean(this.selectedId() || this.detail()?.id || this.detail()?.namespace);
     }
 
-    public async openTemplateAiModal() {
-        if (!this.isEditingTemplate()) return;
-        if (this.detailLoading()) return;
-        if (!this.hasAiModels()) {
-            await this.alert(this.aiUnavailableMessage() || '시스템 설정에서 사용할 AI 모델을 먼저 켜주세요.');
-            return;
-        }
-        this.templateAiModalOpen.set(true);
-        this.aiResult = null;
-        this.resetAiStream();
-        await this.service.render();
-    }
-
-    public closeTemplateAiModal() {
-        if (this.aiBusy()) return;
-        this.templateAiModalOpen.set(false);
-    }
-
     public templateStandardGuide() {
         const standard = this.aiPolicy().standard || {};
         const placeholder = standard.placeholder_format || '{{ variable_name }}';
         const guides: any = {
+            readme: {
+                icon: 'fa-book-open',
+                title: 'README',
+                description: '서비스 생성 화면에서 사용자가 템플릿 목적과 입력값 의미를 확인하는 안내 문서입니다.',
+                rows: [
+                    { label: '목적', value: '템플릿으로 만들 서비스의 역할과 사용 상황을 첫 문단에 명확히 작성' },
+                    { label: '입력값', value: 'Schema에 정의한 주요 필드의 의미, 예시, 주의할 값을 한국어로 설명' },
+                    { label: '운영 메모', value: '포트, 볼륨, 초기 계정, 외부 연동처럼 배포 전에 확인할 항목을 짧게 정리' },
+                ],
+            },
             compose: {
                 icon: 'fa-file-code',
-                title: 'Compose 탭 표준',
+                title: 'Compose',
                 description: '서비스 생성 시 렌더링될 docker-compose.yaml 템플릿입니다. 운영 환경에 고정된 값보다 재사용 가능한 변수와 안전한 기본 구성을 우선합니다.',
                 rows: [
                     { label: '변수', value: `사용자 입력값은 ${placeholder} 형식으로 작성하고 기본값/Schema에 같은 이름으로 등록` },
@@ -713,7 +713,7 @@ export class Component implements OnInit {
             },
             values: {
                 icon: 'fa-sliders',
-                title: '기본값 탭 표준',
+                title: '기본값',
                 description: 'values.default.yaml은 Compose placeholder를 즉시 렌더링할 수 있게 만드는 기본 입력값입니다.',
                 rows: [
                     { label: '일치', value: 'Compose에 등장하는 모든 placeholder 키를 빠짐없이 포함' },
@@ -723,7 +723,7 @@ export class Component implements OnInit {
             },
             schema: {
                 icon: 'fa-list-check',
-                title: 'Schema 탭 표준',
+                title: 'Schema',
                 description: 'values.schema.json은 서비스 생성 화면의 입력 폼과 검증 규칙을 결정합니다.',
                 rows: [
                     { label: 'properties', value: '기본값의 모든 키를 title, type, default와 함께 정의' },
@@ -737,15 +737,6 @@ export class Component implements OnInit {
 
     public templateStandardRows() {
         return this.templateStandardGuide()?.rows || [];
-    }
-
-    public templateAiTargetRows() {
-        return [
-            { label: 'README', value: '템플릿 목적과 값 설명을 한국어로 보완' },
-            { label: 'Compose', value: 'placeholder 기반 재사용 구조와 Docker Infra 표준 검증' },
-            { label: '기본값/Schema', value: '누락된 변수, 타입, 필수 입력, secret 표시 동기화' },
-            { label: '저장', value: 'AI 결과는 화면에만 반영되며 저장 버튼을 눌러야 확정' },
-        ];
     }
 
     private currentTemplateForAi() {
@@ -901,7 +892,6 @@ export class Component implements OnInit {
             }, async (data: any) => {
                 this.applyAiTemplateDraft(data);
             });
-            if (this.templateAiModalOpen()) this.templateAiModalOpen.set(false);
             await this.alert(this.aiResult?.summary || 'AI 템플릿 초안을 적용했습니다. 저장 전 내용을 검토하세요.', 'success');
         } catch (error: any) {
             await this.alert(error?.message || 'AI 템플릿 초안을 생성할 수 없습니다.');
@@ -1020,6 +1010,13 @@ export class Component implements OnInit {
         this.form = {
             ...this.form,
             tags: this.normalizeTags(this.form.tags).filter((item: string) => item !== target),
+        };
+    }
+
+    public toggleTemplateEnabled() {
+        this.form = {
+            ...this.form,
+            enabled: !this.form.enabled,
         };
     }
 

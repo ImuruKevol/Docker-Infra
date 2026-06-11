@@ -1,4 +1,4 @@
-<div class="relative" (click)="stopEvent($event)" (mousedown)="stopEvent($event)">
+<div class="relative z-[220]" (click)="stopEvent($event)" (mousedown)="stopEvent($event)">
     <button
         data-search-select-trigger
         type="button"
@@ -24,8 +24,8 @@
         </div>
     </button>
 
-    <div *ngIf="open" class="absolute z-[80] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl ring-1 ring-black/5 dark:border-zinc-800 dark:bg-zinc-950 dark:ring-white/10" [ngStyle]="dropdownPanelStyle">
-        <div class="border-b border-zinc-200 p-3 dark:border-zinc-800">
+    <div *ngIf="open" class="absolute z-[220] overflow-hidden rounded-md border border-zinc-300 bg-white shadow-2xl ring-2 ring-zinc-900/10 dark:border-zinc-700 dark:bg-zinc-950 dark:ring-white/10" [ngStyle]="dropdownPanelStyle">
+        <div class="border-b border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/70">
             <input
                 data-search-select-input
                 type="text"

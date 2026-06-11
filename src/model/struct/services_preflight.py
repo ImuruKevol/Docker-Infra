@@ -340,7 +340,7 @@ class ServicesPreflight:
         items = []
         changed = [item for item in plan.get("allocations") or [] if item.get("previous") != item.get("published")]
         if changed:
-            items.append(_item("ports", "포트 자동 조정", "adjusted", "이미 사용 중인 포트가 있어 저장/배포 시 다음 사용 가능한 포트로 조정합니다.", changed))
+            items.append(_item("ports", "포트 자동 조정", "adjusted", "사용 중이거나 자동 사용을 피해야 하는 공개 포트가 있어 저장/배포 시 사용 가능한 포트로 조정합니다.", changed))
         else:
             items.append(_item("ports", "포트 자동 조정", "ok", "현재 공개 포트는 바로 사용할 수 있습니다.", plan.get("allocations") or []))
         published_ports = sorted({int(item.get("published") or 0) for item in plan.get("allocations") or [] if int(item.get("published") or 0) > 0})

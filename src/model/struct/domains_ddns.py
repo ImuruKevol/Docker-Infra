@@ -483,22 +483,86 @@ class DomainDdns:
                     return []
                 cursor.execute(
                     """
+                    WITH registration_rows AS (
+                        SELECT
+                            dr.*,
+                            e.name AS endpoint_name,
+                            e.domain_suffix,
+                            s.name AS service_name,
+                            s.namespace AS service_namespace,
+                            sd.metadata AS service_domain_metadata,
+                            sd.port AS service_domain_port,
+                            COALESCE(
+                                NULLIF(sd.metadata->>'proxy_node_id', ''),
+                                NULLIF(sd.metadata->>'proxy_registered_node_id', ''),
+                                NULLIF(sd.metadata->>'proxy_swarm_node_id', ''),
+                                NULLIF(s.metadata#>>'{runtime_status,stack,tasks,0,registered_node_id}', ''),
+                                NULLIF(s.metadata#>>'{runtime_status,stack,tasks,0,registered_swarm_node_id}', ''),
+                                NULLIF(s.metadata#>>'{runtime_status,stack,tasks,0,Node}', ''),
+                                NULLIF(s.target_node_policy->>'node_id', ''),
+                                NULLIF(s.metadata#>>'{placement,node_id}', ''),
+                                NULLIF(sd.metadata->>'proxy_registered_node_name', ''),
+                                NULLIF(sd.metadata->>'proxy_node_name', ''),
+                                NULLIF(sd.metadata->>'proxy_host', '')
+                            ) AS target_node_key,
+                            COALESCE(
+                                NULLIF(sd.metadata->>'proxy_node_display_name', ''),
+                                NULLIF(sd.metadata->>'proxy_registered_node_name', ''),
+                                NULLIF(sd.metadata->>'proxy_node_name', ''),
+                                NULLIF(s.metadata#>>'{runtime_status,stack,tasks,0,registered_node_label}', ''),
+                                NULLIF(s.metadata#>>'{runtime_status,stack,tasks,0,registered_node_name}', ''),
+                                NULLIF(s.metadata#>>'{runtime_status,stack,tasks,0,Node}', ''),
+                                NULLIF(s.target_node_policy#>>'{recommendation,selected,node,name}', '')
+                            ) AS target_node_label_hint,
+                            COALESCE(
+                                NULLIF(sd.metadata->>'proxy_registered_node_name', ''),
+                                NULLIF(sd.metadata->>'proxy_node_name', ''),
+                                NULLIF(s.metadata#>>'{runtime_status,stack,tasks,0,registered_node_name}', ''),
+                                NULLIF(s.target_node_policy#>>'{recommendation,selected,node,name}', '')
+                            ) AS target_node_name_hint,
+                            COALESCE(
+                                NULLIF(sd.metadata->>'proxy_registered_node_host', ''),
+                                NULLIF(sd.metadata->>'proxy_registered_node_private_host', ''),
+                                NULLIF(sd.metadata->>'proxy_host', ''),
+                                NULLIF(s.metadata#>>'{runtime_status,stack,tasks,0,registered_node_host}', ''),
+                                NULLIF(s.target_node_policy#>>'{recommendation,selected,node,host}', '')
+                            ) AS target_node_host_hint,
+                            COALESCE(
+                                NULLIF(sd.metadata->>'proxy_swarm_node_id', ''),
+                                NULLIF(s.metadata#>>'{runtime_status,stack,tasks,0,registered_swarm_node_id}', ''),
+                                NULLIF(s.target_node_policy#>>'{recommendation,selected,node,swarm_node_id}', '')
+                            ) AS target_swarm_node_id_hint
+                        FROM ddns_registrations dr
+                        JOIN ddns_endpoints e ON e.id = dr.endpoint_id
+                        LEFT JOIN services s ON s.id = dr.service_id
+                        LEFT JOIN service_domains sd ON sd.id = dr.service_domain_id
+                    )
                     SELECT
-                        dr.*,
-                        e.name AS endpoint_name,
-                        e.domain_suffix,
-                        s.name AS service_name,
-                        s.namespace AS service_namespace,
-                        sd.metadata AS service_domain_metadata,
-                        sd.port AS service_domain_port
-                    FROM ddns_registrations dr
-                    JOIN ddns_endpoints e ON e.id = dr.endpoint_id
-                    LEFT JOIN services s ON s.id = dr.service_id
-                    LEFT JOIN service_domains sd ON sd.id = dr.service_domain_id
-                    ORDER BY dr.domain ASC
+                        rr.*,
+                        n.id AS target_node_id,
+                        COALESCE(NULLIF(n.name, ''), NULLIF(rr.target_node_label_hint, ''), NULLIF(rr.target_node_key, '')) AS target_node_label,
+                        COALESCE(NULLIF(n.name, ''), NULLIF(rr.target_node_name_hint, '')) AS target_node_name,
+                        COALESCE(NULLIF(n.host, ''), NULLIF(rr.target_node_host_hint, '')) AS target_node_host,
+                        COALESCE(NULLIF(n.swarm_node_id, ''), NULLIF(rr.target_swarm_node_id_hint, '')) AS target_swarm_node_id
+                    FROM registration_rows rr
+                    LEFT JOIN nodes n
+                      ON rr.target_node_key <> ''
+                     AND (
+                        n.id::text = rr.target_node_key
+                        OR n.swarm_node_id = rr.target_node_key
+                        OR n.name = rr.target_node_key
+                        OR n.host = rr.target_node_key
+                     )
+                    ORDER BY rr.domain ASC
                     """
                 )
-                return [serialize(dict(row)) for row in cursor.fetchall()]
+                registrations = []
+                for row in cursor.fetchall():
+                    item = serialize(dict(row))
+                    for key in ["target_node_key", "target_node_label_hint", "target_node_name_hint", "target_node_host_hint", "target_swarm_node_id_hint"]:
+                        item.pop(key, None)
+                    registrations.append(item)
+                return registrations
 
     def load(self, env=None):
         with connect(env=env) as connection:

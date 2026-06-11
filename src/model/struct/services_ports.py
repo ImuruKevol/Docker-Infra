@@ -6,6 +6,10 @@ import yaml
 
 nodes_model = wiz.model("struct").nodes
 
+WELL_KNOWN_PORT_MAX = 1023
+DYNAMIC_PRIVATE_PORT_START = 49152
+DYNAMIC_PRIVATE_PORT_END = 65535
+
 
 class PortCheckError(RuntimeError):
     def __init__(self, message, details=None):
@@ -92,14 +96,39 @@ def _is_free_on_node(port, node=None, env=None):
         )
 
 
+def _candidate_ranges(port):
+    requested = int(port or 0)
+    if requested <= WELL_KNOWN_PORT_MAX:
+        return [
+            (DYNAMIC_PRIVATE_PORT_START, DYNAMIC_PRIVATE_PORT_END),
+            (WELL_KNOWN_PORT_MAX + 1, DYNAMIC_PRIVATE_PORT_START - 1),
+        ]
+    if requested > DYNAMIC_PRIVATE_PORT_END:
+        return [
+            (DYNAMIC_PRIVATE_PORT_START, DYNAMIC_PRIVATE_PORT_END),
+            (WELL_KNOWN_PORT_MAX + 1, DYNAMIC_PRIVATE_PORT_START - 1),
+        ]
+    return [(max(WELL_KNOWN_PORT_MAX + 1, requested), DYNAMIC_PRIVATE_PORT_END)]
+
+
 def _next_free(port, reserved=None, node=None, env=None):
-    reserved = reserved or set()
-    candidate = max(1, int(port or 1))
-    while candidate <= 65535:
-        if candidate not in reserved and _is_free_on_node(candidate, node=node, env=env):
-            return candidate
-        candidate += 1
-    raise PortCheckError("사용 가능한 공개 포트를 찾을 수 없습니다.", {"code": "NO_FREE_PUBLISHED_PORT", "start_port": int(port or 1)})
+    if reserved is None:
+        reserved = set()
+    for start_port, end_port in _candidate_ranges(port):
+        candidate = start_port
+        while candidate <= end_port:
+            if candidate not in reserved and _is_free_on_node(candidate, node=node, env=env):
+                return candidate
+            candidate += 1
+    raise PortCheckError(
+        "사용 가능한 공개 포트를 찾을 수 없습니다.",
+        {
+            "code": "NO_FREE_PUBLISHED_PORT",
+            "start_port": int(port or 1),
+            "minimum_allowed_port": WELL_KNOWN_PORT_MAX + 1,
+            "preferred_range": [DYNAMIC_PRIVATE_PORT_START, DYNAMIC_PRIVATE_PORT_END],
+        },
+    )
 
 
 def _string_port(item, reserved, node=None, env=None):
@@ -111,7 +140,10 @@ def _string_port(item, reserved, node=None, env=None):
     allocated = _next_free(published, reserved=reserved, node=node, env=env)
     reserved.add(allocated)
     next_base = f"{allocated}:{target}" if allocated != published or len(chunks) >= 2 else raw
-    return f"{next_base}/{suffix}" if suffix else next_base, {"target": target, "previous": published, "published": allocated}
+    allocation = {"target": target, "previous": published, "published": allocated}
+    if published <= WELL_KNOWN_PORT_MAX and allocated != published:
+        allocation["reason"] = "well_known_reserved"
+    return f"{next_base}/{suffix}" if suffix else next_base, allocation
 
 
 def _allocate_compose(compose, node=None, env=None):
@@ -127,7 +159,10 @@ def _allocate_compose(compose, node=None, env=None):
                 reserved.add(published)
                 item["published"] = published
                 next_ports.append(item)
-                allocations.append({"service": service_name, "target": target, "previous": previous, "published": published})
+                allocation = {"service": service_name, "target": target, "previous": previous, "published": published}
+                if previous <= WELL_KNOWN_PORT_MAX and published != previous:
+                    allocation["reason"] = "well_known_reserved"
+                allocations.append(allocation)
                 continue
             try:
                 next_item, allocation = _string_port(item, reserved, node=node, env=env)

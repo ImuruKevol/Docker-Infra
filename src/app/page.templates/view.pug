@@ -7,12 +7,9 @@ header(class="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-bl
                 span Compose 템플릿
             h1(class="mt-1 text-xl font-semibold text-zinc-950 dark:text-zinc-50") Compose 템플릿
         div(class="flex flex-wrap items-center gap-2")
-            button(type="button", (click)="createNewTemplate()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                i(class="fa-solid fa-plus")
-                span 새 템플릿
-            button(type="button", (click)="save()", [disabled]="busy() || detailLoading() || !canSaveTemplate()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
-                i(class="fa-solid", [ngClass]="busy() ? 'fa-spinner fa-spin' : 'fa-floppy-disk'")
-                span 저장
+            button(type="button", (click)="refresh()", [disabled]="loading() || detailLoading()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                i(class="fa-solid", [ngClass]="loading() || detailLoading() ? 'fa-spinner fa-spin' : 'fa-rotate-right'")
+                span 새로고침
 
 main(class="space-y-5 px-5 py-5")
     div(*ngIf="loading()", class="h-32 rounded-md border border-zinc-200 bg-white p-5 text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400") 템플릿을 불러오는 중입니다.
@@ -26,70 +23,68 @@ main(class="space-y-5 px-5 py-5")
                     p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 템플릿 목록은 20개 단위로 표시하고 편집기는 별도 화면에서 엽니다.
                 div(class="flex flex-wrap items-center gap-2")
                     span(class="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{templatesBoardSummary()}}
-                    span(class="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-white px-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") README.md
-                    span(class="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-white px-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") docker-compose.yaml
                     button(type="button", (click)="createNewTemplate()", class="inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-3 text-xs font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                         i(class="fa-solid fa-plus")
                         span 새 템플릿
             div(*ngIf="templates().length > 0", class="overflow-x-auto")
-                table(class="w-full min-w-[800px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
+                table(class="w-full min-w-[900px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
                     thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
                         tr
-                            th(class="px-4 py-2 text-left font-semibold") 템플릿
-                            th(class="w-64 px-4 py-2 text-left font-semibold") Namespace
-                            th(class="w-48 px-4 py-2 text-left font-semibold") 태그
-                            th(class="w-28 px-4 py-2 text-left font-semibold") 상태
+                            th(class="w-64 px-4 py-2 text-left font-semibold") 템플릿
+                            th(class="w-56 px-4 py-2 text-left font-semibold") Namespace
+                            th(class="w-40 px-4 py-2 text-left font-semibold") 생성 화면
+                            th(class="px-4 py-2 text-left font-semibold") 태그
                     tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
                         tr(*ngFor="let item of pagedTemplates()", role="button", tabindex="0", [attr.aria-label]="'템플릿 편집으로 이동: ' + (item.name || item.namespace || '')", (click)="selectTemplate(item.id || item.namespace)", (keydown.enter)="selectTemplate(item.id || item.namespace)", (keydown.space)="$event.preventDefault(); selectTemplate(item.id || item.namespace)", class="cursor-pointer align-top transition hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500 dark:hover:bg-zinc-800/60", [ngClass]="isSelected(item) ? 'bg-indigo-50 dark:bg-indigo-950/20' : ''")
                             td(class="px-4 py-3")
                                 p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50", [title]="item.name || item.namespace") {{item.name || item.namespace}}
-                                p(class="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{item.description || item.metadata?.description || 'Compose 표준 파일 세트'}}
-                            td(class="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300") {{item.namespace || item.id}}
+                            td(class="px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-200") {{item.namespace || item.id}}
+                            td(class="px-4 py-3")
+                                span(class="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold", [ngClass]="item.enabled !== false ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300' : 'border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'")
+                                    i(class="fa-solid", [ngClass]="item.enabled !== false ? 'fa-eye' : 'fa-eye-slash'")
+                                    span {{item.enabled !== false ? '노출' : '숨김'}}
                             td(class="px-4 py-3")
                                 div(class="flex flex-wrap gap-1")
-                                    span(*ngFor="let tag of templateTags(item)", class="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300") {{tag}}
-                                    span(*ngIf="templateTags(item).length === 0", class="text-xs text-zinc-400") -
-                            td(class="px-4 py-3")
-                                span(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{templateBadge(item)}}
+                                    span(*ngFor="let tag of templateTags(item)", class="rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200") {{tag}}
+                                    span(*ngIf="templateTags(item).length === 0", class="text-sm text-zinc-400") -
             div(*ngIf="templates().length === 0", class="rounded-md border border-dashed border-zinc-300 px-3 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400") 등록된 템플릿이 없습니다.
             div(*ngIf="templatesPagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
                 p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
                 wiz-portal-season-pagination([current]="templatesPagination().current", [start]="templatesPagination().start", [end]="templatesPagination().end", [maxlength]="10", (pageMove)="moveTemplatePage($event)")
 
         section(*ngIf="isTemplateDetailScreen()", class="min-w-0 rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-            div(class="border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
-                div(class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between")
+            div(class="flex flex-col gap-4 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800 lg:flex-row lg:items-start lg:justify-between")
+                div(class="min-w-0")
                     div(class="flex min-w-0 items-start gap-3")
                         button(type="button", (click)="closeTemplateDetail()", class="mt-0.5 inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-zinc-300 bg-white px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
                             i(class="fa-solid fa-arrow-left")
                             span 목록
                         div(class="min-w-0")
                             div(class="flex flex-wrap items-center gap-2")
-                                span(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") 템플릿 편집
                                 h2(class="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50") {{editorTitle()}}
-                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{editorSubtitle()}}
-                    div(class="flex flex-wrap items-center gap-2")
-                        button(type="button", (click)="useTemplate()", [disabled]="!selectedId()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                            i(class="fa-solid fa-rocket")
-                            span 서비스 생성
-                        button(type="button", (click)="runPreview()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                            i(class="fa-solid fa-eye")
-                            span 미리보기
-                        button(type="button", (click)="remove()", [disabled]="busy() || !selectedId()", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                            i(class="fa-solid fa-trash")
-                            span 삭제
+                            p(*ngIf="!isEditingTemplate()", class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{editorSubtitle()}}
+                div(class="flex flex-wrap items-center justify-end gap-2")
+                    button(type="button", (click)="save()", [disabled]="busy() || detailLoading() || !canSaveTemplate()", class="inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                        i(class="fa-solid", [ngClass]="busy() ? 'fa-spinner fa-spin' : 'fa-floppy-disk'")
+                        span 저장
+                    button(type="button", (click)="useTemplate()", [disabled]="!selectedId()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                        i(class="fa-solid fa-rocket")
+                        span 서비스 생성
+                    button(type="button", (click)="remove()", [disabled]="busy() || !selectedId()", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                        i(class="fa-solid fa-trash")
+                        span 삭제
 
             div(class="space-y-5 px-5 py-5")
                 div(*ngIf="newTemplateMode() === 'choose'", class="rounded-md border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950")
-                    div(class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between")
+                    div(class="space-y-3")
                         div
                             p(class="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400") 새 템플릿
                             h3(class="mt-1 text-base font-semibold text-zinc-950 dark:text-zinc-50") 작성 방식을 선택하세요.
                             p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") AI 초안과 직접 작성 중 하나만 열어 화면을 단순하게 유지합니다.
-                        label(class="block lg:w-[340px]")
+                        label(class="block max-w-xl")
                             span(class="mb-1 block text-xs font-semibold text-zinc-600 dark:text-zinc-300") 기반 템플릿
                             wiz-component-search-select([items]="cloneTemplateOptions()", [value]="cloneSourceId()", (valueChange)="setCloneSource($event)", [placeholder]="'빈 템플릿'", [searchPlaceholder]="'템플릿 검색'", [emptyText]="'복제할 템플릿이 없습니다.'")
-                    div(class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2")
+                    div(class="mt-4 space-y-3")
                         button(type="button", (click)="chooseNewTemplateMode('ai')", [disabled]="!hasAiModels()", class="flex min-h-[132px] w-full items-start gap-3 rounded-md border border-sky-200 bg-sky-50 px-4 py-4 text-left hover:bg-sky-100 disabled:opacity-60 dark:border-sky-900/70 dark:bg-sky-950/30 dark:hover:bg-sky-950")
                             span(class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-sky-600 text-white")
                                 i(class="fa-solid fa-wand-magic-sparkles")
@@ -105,7 +100,7 @@ main(class="space-y-5 px-5 py-5")
                                 span(class="mt-1 block text-xs leading-5 text-zinc-500 dark:text-zinc-400") 기본 표준 파일이나 선택한 기반 템플릿을 복제한 뒤 항목을 직접 수정합니다.
 
                 div(*ngIf="newTemplateMode() === 'ai' && !newTemplateDraftReady()", class="rounded-md border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950")
-                    div(class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_260px]")
+                    div(class="space-y-4")
                         div(class="flex min-w-0 items-start gap-3")
                             span(class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-sky-600 text-white")
                                 i(class="fa-solid fa-wand-magic-sparkles")
@@ -116,7 +111,7 @@ main(class="space-y-5 px-5 py-5")
                         button(type="button", (click)="resetNewTemplateChoice()", [disabled]="aiBusy() || cloneLoading()", class="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                             i(class="fa-solid fa-arrow-left")
                             span 방식 변경
-                    label(class="mt-4 block")
+                    label(class="mt-4 block max-w-xl")
                         span(class="mb-1 block text-xs font-semibold text-zinc-600 dark:text-zinc-300") 기반 템플릿
                         wiz-component-search-select([items]="cloneTemplateOptions()", [value]="cloneSourceId()", (valueChange)="setCloneSource($event)", [placeholder]="'빈 템플릿'", [searchPlaceholder]="'템플릿 검색'", [emptyText]="'복제할 템플릿이 없습니다.'", [disabled]="aiBusy() || cloneLoading()")
                     div(*ngIf="cloneLoading()", class="mt-3 flex items-center gap-2 text-xs font-semibold text-sky-700 dark:text-sky-300")
@@ -125,11 +120,11 @@ main(class="space-y-5 px-5 py-5")
                     label(class="mt-4 block")
                         span(class="mb-1 block text-xs font-semibold text-zinc-600 dark:text-zinc-300") 요청 내용
                         textarea([ngModel]="aiIntent()", (ngModelChange)="aiIntent.set($event)", rows="6", placeholder="예: WIZ Framework 개발용 Python 컨테이너와 PostgreSQL을 서비스 이름만 입력해서 띄우는 템플릿", class="w-full resize-y rounded-md border border-zinc-300 bg-white px-3 py-3 text-sm leading-6 text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                    div(class="mt-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between")
-                        label(class="block lg:w-[320px]")
+                    div(class="mt-3 space-y-3")
+                        label(class="block max-w-xl")
                             span(class="mb-1 block text-xs font-semibold text-zinc-600 dark:text-zinc-300") 사용할 모델
                             wiz-component-search-select([items]="aiModelOptions()", [value]="aiModelRef()", (valueChange)="aiModelRef.set($event)", [placeholder]="'AI 모델 선택'", [searchPlaceholder]="'모델 검색'", [emptyText]="'시스템 설정에서 모델 목록을 불러오세요.'")
-                        button(type="button", (click)="generateTemplateWithAi()", [disabled]="aiBusy() || !hasAiModels()", class="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md bg-sky-600 px-4 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60")
+                        button(type="button", (click)="generateTemplateWithAi()", [disabled]="aiBusy() || !hasAiModels()", class="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-md bg-sky-600 px-4 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60 sm:w-fit")
                             i(class="fa-solid", [ngClass]="aiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
                             span {{aiBusy() ? '생성 중' : 'AI로 초안 만들기'}}
                     div(*ngIf="!hasAiModels()", class="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{aiUnavailableMessage() || '시스템 설정에서 사용 중인 AI 모델이 없습니다.'}}
@@ -146,22 +141,22 @@ main(class="space-y-5 px-5 py-5")
                         p(*ngFor="let warning of aiResult.warnings") {{warning}}
 
                 div(*ngIf="newTemplateMode() === 'manual'", class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
-                    div(class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between")
+                    div(class="space-y-3")
                         div
                             p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 직접 작성
                             p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") 기본 표준 파일을 편집하거나 기존 템플릿을 clone해 새 템플릿으로 저장합니다.
-                        div(class="flex flex-col gap-2 sm:flex-row sm:items-end")
-                            label(class="block sm:w-[320px]")
+                        div(class="space-y-2")
+                            label(class="block max-w-xl")
                                 span(class="mb-1 block text-xs font-semibold text-zinc-600 dark:text-zinc-300") 기반 템플릿
                                 wiz-component-search-select([items]="cloneTemplateOptions()", [value]="cloneSourceId()", (valueChange)="setCloneSource($event)", [placeholder]="'빈 템플릿'", [searchPlaceholder]="'템플릿 검색'", [emptyText]="'복제할 템플릿이 없습니다.'", [disabled]="cloneLoading()")
-                            button(type="button", (click)="resetNewTemplateChoice()", [disabled]="cloneLoading()", class="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                            button(type="button", (click)="resetNewTemplateChoice()", [disabled]="cloneLoading()", class="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800 sm:w-fit")
                                 i(class="fa-solid fa-arrow-left")
                                 span 방식 변경
                     div(*ngIf="cloneLoading()", class="mt-3 flex items-center gap-2 text-xs font-semibold text-sky-700 dark:text-sky-300")
                         i(class="fa-solid fa-spinner fa-spin")
                         span 기반 템플릿을 불러오는 중입니다.
 
-                div(*ngIf="showTemplateEditor()", class="grid grid-cols-1 gap-3 lg:grid-cols-[220px_1fr]")
+                div(*ngIf="showTemplateEditor()", class="space-y-3")
                     label(class="block")
                         span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") Namespace
                         input(type="text", [(ngModel)]="form.namespace", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
@@ -176,26 +171,24 @@ main(class="space-y-5 px-5 py-5")
                             button(type="button", (click)="removeTag(tag)", class="inline-flex h-4 w-4 items-center justify-center rounded text-zinc-500 hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-800")
                                 i(class="fa-solid fa-xmark text-[10px]")
                         input(type="text", [(ngModel)]="tagInput", (keydown)="handleTagKeydown($event)", (blur)="addTagFromInput()", placeholder="입력 후 Enter", class="h-7 min-w-[160px] flex-1 border-0 bg-transparent px-1 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100")
-                label(*ngIf="showTemplateEditor()", class="inline-flex items-center gap-2 text-sm font-semibold text-zinc-700 dark:text-zinc-200")
-                    input(type="checkbox", [(ngModel)]="form.enabled", class="h-4 w-4 rounded border-zinc-300")
+                button(*ngIf="showTemplateEditor()", type="button", role="switch", [attr.aria-checked]="form.enabled ? 'true' : 'false'", (click)="toggleTemplateEnabled()", class="inline-flex h-10 w-fit items-center gap-3 rounded-md border px-3 text-sm font-semibold transition", [ngClass]="form.enabled ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-200 dark:hover:bg-emerald-950' : 'border-zinc-300 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900'")
+                    span(class="relative inline-flex h-5 w-10 shrink-0 rounded-full transition", [ngClass]="form.enabled ? 'bg-emerald-600 dark:bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-700'")
+                        span(class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition", [ngClass]="form.enabled ? 'left-5' : 'left-0.5'")
                     span 서비스 생성 화면에 노출
 
-                div(*ngIf="showTemplateEditor()", class="flex flex-col gap-3 border-b border-zinc-200 pb-3 dark:border-zinc-800 lg:flex-row lg:items-center lg:justify-between")
+                div(*ngIf="showTemplateEditor()", class="space-y-3 border-b border-zinc-200 pb-3 dark:border-zinc-800")
                     div(class="flex flex-wrap gap-2")
                         button(type="button", (click)="setActiveTab('readme')", class="h-8 rounded-md px-3 text-xs font-semibold", [ngClass]="activeTab() === 'readme' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'") README
                         button(type="button", (click)="setActiveTab('compose')", class="h-8 rounded-md px-3 text-xs font-semibold", [ngClass]="activeTab() === 'compose' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'") Compose
                         button(type="button", (click)="setActiveTab('values')", class="h-8 rounded-md px-3 text-xs font-semibold", [ngClass]="activeTab() === 'values' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'") 기본값
                         button(type="button", (click)="setActiveTab('schema')", class="h-8 rounded-md px-3 text-xs font-semibold", [ngClass]="activeTab() === 'schema' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'") Schema
                         button(type="button", (click)="setActiveTab('preview')", class="h-8 rounded-md px-3 text-xs font-semibold", [ngClass]="activeTab() === 'preview' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'") Preview
-                    button(*ngIf="isEditingTemplate() && hasAiModels()", type="button", (click)="openTemplateAiModal()", [disabled]="aiBusy() || detailLoading()", class="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-md border border-sky-300 px-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-60 dark:border-sky-900/70 dark:text-sky-300 dark:hover:bg-sky-950/30")
-                        i(class="fa-solid", [ngClass]="aiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
-                        span AI 수정/점검
 
                 div(*ngIf="showTemplateEditor() && detailLoading()", class="flex h-32 items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-4 py-4 text-sm font-semibold text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200")
                     i(class="fa-solid fa-spinner fa-spin")
                     span 템플릿 파일을 불러오는 중입니다.
                 div(*ngIf="showTemplateEditor() && !detailLoading() && detailLoadError()", class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300") {{detailLoadError()}}
-                div(*ngIf="showTemplateEditor() && !detailLoading() && activeTab() !== 'preview' && templateStandardGuide()", class="grid grid-cols-1 gap-3 xl:grid-cols-[300px_1fr]")
+                div(*ngIf="showTemplateEditor() && !detailLoading() && activeTab() !== 'preview' && templateStandardGuide()", class="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-start")
                     aside(class="h-fit rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
                         div(class="flex min-w-0 items-start gap-3")
                             span(class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200")
@@ -203,7 +196,7 @@ main(class="space-y-5 px-5 py-5")
                             div(class="min-w-0")
                                 p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{templateStandardGuide()?.title}}
                                 p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{templateStandardGuide()?.description}}
-                        div(class="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-1")
+                        div(class="mt-3 space-y-2 text-xs")
                             div(*ngFor="let row of templateStandardRows()", class="rounded-md border border-zinc-200 bg-white px-3 py-2 leading-5 dark:border-zinc-800 dark:bg-zinc-900")
                                 p(class="font-semibold text-zinc-950 dark:text-zinc-50") {{row.label}}
                                 p(class="mt-1 text-zinc-600 dark:text-zinc-300") {{row.value}}
@@ -212,8 +205,8 @@ main(class="space-y-5 px-5 py-5")
                 div(*ngIf="showTemplateEditor() && !detailLoading() && activeTab() !== 'preview' && !templateStandardGuide()", class="overflow-hidden rounded-md border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950")
                     nu-monaco-editor([ngModel]="editorValue()", (ngModelChange)="setEditorValue($event)", [options]="activeEditorOptions", height="520px")
 
-                div(*ngIf="showTemplateEditor() && !detailLoading() && activeTab() === 'preview'", class="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]")
-                    div(class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
+                div(*ngIf="showTemplateEditor() && !detailLoading() && activeTab() === 'preview'", class="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-start")
+                    div(class="h-fit rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950")
                         p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 미리보기 값
                         div(class="mt-3 space-y-2")
                             label(*ngFor="let field of detail()?.fields || []", class="block")
@@ -222,48 +215,9 @@ main(class="space-y-5 px-5 py-5")
                         button(type="button", (click)="runPreview()", [disabled]="busy()", class="mt-3 inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-3 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950")
                             i(class="fa-solid fa-eye")
                             span 렌더링
-                    div(class="min-w-0 space-y-3")
-                        div(class="rounded-md border border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                        div(class="mt-3 rounded-md border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900")
                             p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 검증
                             p(class="mt-1 text-sm font-semibold", [ngClass]="preview()?.validation ? 'text-emerald-700 dark:text-emerald-300' : 'text-zinc-600 dark:text-zinc-300'") {{preview()?.validation ? 'Compose 검증 통과' : '미리보기를 실행하세요.'}}
-                        pre(class="max-h-[560px] overflow-auto rounded-md border border-zinc-200 bg-zinc-950 p-4 text-xs leading-5 text-zinc-100 dark:border-zinc-800") {{preview()?.rendered || files.compose}}
-
-div(*ngIf="templateAiModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center px-4 py-6")
-    div(class="absolute inset-0 bg-zinc-950/55", (click)="closeTemplateAiModal()")
-    section(class="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
-        div(class="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-            div(class="flex min-w-0 items-start gap-3")
-                span(class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-sky-600 text-white")
-                    i(class="fa-solid fa-wand-magic-sparkles")
-                div(class="min-w-0")
-                    h2(class="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50") AI 템플릿 수정/점검
-                    p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") 현재 템플릿을 기준으로 README, Compose, 기본값, Schema 초안을 보정합니다.
-            button(type="button", (click)="closeTemplateAiModal()", [disabled]="aiBusy()", class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
-                i(class="fa-solid fa-xmark")
-        div(class="min-h-0 flex-1 space-y-4 overflow-auto px-4 py-3")
-            label(class="block")
-                span(class="mb-1 block text-xs font-semibold text-zinc-600 dark:text-zinc-300") 수정/점검 요청
-                textarea([ngModel]="aiIntent()", (ngModelChange)="aiIntent.set($event)", rows="5", placeholder="예: Schema 설명을 더 자세히 쓰고, Compose 변수 누락 여부를 점검한 뒤 README에 사용 예시를 추가", class="w-full resize-y rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm leading-6 text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-            label(class="block")
-                span(class="mb-1 block text-xs font-semibold text-zinc-600 dark:text-zinc-300") 사용할 모델
-                wiz-component-search-select([items]="aiModelOptions()", [value]="aiModelRef()", (valueChange)="aiModelRef.set($event)", [placeholder]="'AI 모델 선택'", [searchPlaceholder]="'모델 검색'", [emptyText]="'시스템 설정에서 모델 목록을 불러오세요.'")
-            div(class="grid grid-cols-1 gap-2 sm:grid-cols-2")
-                div(*ngFor="let row of templateAiTargetRows()", class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-5 dark:border-zinc-800 dark:bg-zinc-950")
-                    p(class="font-semibold text-zinc-950 dark:text-zinc-50") {{row.label}}
-                    p(class="mt-1 text-zinc-500 dark:text-zinc-400") {{row.value}}
-            div(*ngIf="aiBusy() || aiStreamRows().length", class="rounded-md border border-sky-200 bg-sky-50/70 px-3 py-2 dark:border-sky-900/70 dark:bg-sky-950/30")
-                div(class="flex items-center justify-between gap-2")
-                    p(class="text-[11px] font-semibold uppercase text-sky-700 dark:text-sky-300") AI 진행 요약
-                    span(class="text-[11px] font-semibold text-sky-500 dark:text-sky-400") {{aiOutputTokenCount()}}자
-                div(class="mt-2 max-h-32 space-y-1 overflow-auto")
-                    p(*ngFor="let event of aiStreamRows()", class="text-xs leading-5", [ngClass]="event.type === 'error' ? 'text-rose-600 dark:text-rose-300' : 'text-sky-900 dark:text-sky-100'")
-                        i(*ngIf="event.type === 'progress'", class="fa-solid fa-spinner fa-spin mr-1")
-                        span(class="font-semibold") {{event.label || (event.type === 'provider' ? 'model' : event.type)}}
-                        span  · {{event.message || event.text || event.provider?.label + ' / ' + event.provider?.model + (event.provider?.reasoning_effort ? ' / ' + event.provider.reasoning_effort : '') + (event.provider?.cli_label ? ' / ' + event.provider.cli_label : '')}}
-            div(*ngIf="aiResult?.warnings?.length", class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
-                p(*ngFor="let warning of aiResult.warnings") {{warning}}
-        div(class="flex items-center justify-end gap-2 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800")
-            button(type="button", (click)="closeTemplateAiModal()", [disabled]="aiBusy()", class="inline-flex h-9 min-w-[76px] items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800") 취소
-            button(type="button", (click)="generateTemplateWithAi()", [disabled]="aiBusy() || !hasAiModels()", class="inline-flex h-9 min-w-[126px] items-center justify-center gap-2 rounded-md bg-sky-600 px-3 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60")
-                i(class="fa-solid", [ngClass]="aiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
-                span {{aiBusy() ? '점검 중' : 'AI로 반영'}}
+                    div(class="min-w-0")
+                        div(class="rounded-md border border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                            pre(class="max-h-[560px] overflow-auto rounded-md bg-zinc-950 p-4 text-xs leading-5 text-zinc-100") {{preview()?.rendered || files.compose}}

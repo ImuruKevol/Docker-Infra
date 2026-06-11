@@ -414,3 +414,14 @@
 | 2026-06-10 | 026 | DDNS 관리 서버 표 nowrap과 작업 컬럼 겹침 보정 | [상세](devlog/2026-06-10/026-ddns-table-nowrap-action-overlap.md) |
 | 2026-06-10 | 027 | 서비스 상세 콘솔 모달 헤더와 생성 화면 AI 버튼 겹침 보정 | [상세](devlog/2026-06-10/027-service-console-header-ai-toggle-overlap.md) |
 | 2026-06-10 | 028 | 컨테이너 파일 미리보기 모달 overflow 보정 | [상세](devlog/2026-06-10/028-container-file-preview-modal-overflow.md) |
+| 2026-06-11 | 001 | 서비스 목록 컨테이너 컬럼과 컨테이너 파일 탭 정렬 적용 | [상세](devlog/2026-06-11/001-service-list-container-column-file-sort.md) |
+| 2026-06-11 | 002 | 서비스 생성 공개 포트 well-known 자동 할당 회피 | [상세](devlog/2026-06-11/002-service-create-well-known-port-avoidance.md) |
+| 2026-06-11 | 003 | 서비스 목록 컨테이너/포트 컬럼 분리 | [상세](devlog/2026-06-11/003-service-list-container-port-columns.md) |
+| 2026-06-11 | 004 | DDNS 도메인 관리 UI 컬럼과 등록 레코드 서버 표시 보정 | [상세](devlog/2026-06-11/004-domain-ddns-ui-target-server.md) |
+| 2026-06-11 | 005 | 서비스 관리 생성 UI 레이아웃과 필수값 검증 보정 | [상세](devlog/2026-06-11/005-service-management-create-ui-validation.md) |
+| 2026-06-11 | 006 | DDNS 관리 서버 컬럼 순서와 등록 레코드 필터 UI 보정 | [상세](devlog/2026-06-11/006-ddns-column-order-registration-filter.md) |
+| 2026-06-11 | 007 | 서비스/템플릿 생성 화면 세로 흐름과 레이어 검증 보정 | [상세](devlog/2026-06-11/007-service-template-create-vertical-flow-browser-validation.md) |
+| 2026-06-11 | 008 | custom select overlay 복원과 README 버튼 배치 보정 | [상세](devlog/2026-06-11/008-custom-select-overlay-readme-placement.md) |
+| 2026-06-11 | 009 | 서비스 생성 README 팝오버 마크다운 렌더링 적용 | [상세](devlog/2026-06-11/009-service-create-readme-markdown-popover.md) |
+| 2026-06-11 | 010 | 템플릿 관리 목록과 상세 편집 UI 정리 | [상세](devlog/2026-06-11/010-template-management-ui-polish.md) |
+| 2026-06-11 | 011 | 템플릿 목록 생성 화면 노출 컬럼 추가 | [상세](devlog/2026-06-11/011-template-list-enabled-column.md) |

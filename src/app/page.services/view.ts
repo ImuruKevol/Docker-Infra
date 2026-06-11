@@ -2845,11 +2845,12 @@ export class Component implements OnInit, OnDestroy {
 
     public containerFileContainers() {
         const browsable = new Set(['running', 'healthy', 'unhealthy', 'starting']);
+        const namespace = this.detail()?.service?.namespace || '';
         return this.runtimeContainers().filter((container: any) => (
             container?.id
             && container?.node_id
             && browsable.has(this.containerSignal(container))
-        ));
+        )).sort((a: any, b: any) => this.compareContainersByName(a, b, namespace));
     }
 
     public containerFileKey(container: any) {
@@ -2979,6 +2980,68 @@ export class Component implements OnInit, OnDestroy {
 
     public servicePrimaryDomain(service: any) {
         return service?.primary_domain || (Number(service?.domain_count || 0) > 0 ? '도메인 연결됨' : '도메인 미연결');
+    }
+
+    private serviceRuntimeStatus(service: any) {
+        return service?.runtime_status || service?.metadata?.runtime_status || {};
+    }
+
+    private serviceRuntimeContainers(service: any) {
+        const containers = this.serviceRuntimeStatus(service)?.containers?.containers;
+        return Array.isArray(containers) ? containers : [];
+    }
+
+    private containerBaseName(container: any, namespace: string = '') {
+        const raw = String(container?.runtime_service_name || container?.name || '').trim();
+        if (namespace && raw.startsWith(`${namespace}_`)) return raw.slice(namespace.length + 1);
+        if (namespace && raw.startsWith(`${namespace}-`)) return raw.slice(namespace.length + 1);
+        return raw || '이름 없음';
+    }
+
+    private containerNameSortKey(container: any, namespace: string = '') {
+        return this.containerBaseName(container, namespace).toLowerCase();
+    }
+
+    private compareContainersByName(a: any, b: any, namespace: string = '') {
+        const left = this.containerNameSortKey(a, namespace);
+        const right = this.containerNameSortKey(b, namespace);
+        if (left !== right) return left.localeCompare(right, 'ko', { numeric: true, sensitivity: 'base' });
+        return String(a?.node_name || a?.node_host || '').localeCompare(String(b?.node_name || b?.node_host || ''), 'ko', { numeric: true, sensitivity: 'base' });
+    }
+
+    public serviceListContainers(service: any) {
+        return [...this.serviceRuntimeContainers(service)].sort((a: any, b: any) => this.compareContainersByName(a, b, service?.namespace || ''));
+    }
+
+    public serviceListContainerName(service: any, container: any) {
+        return this.containerBaseName(container, service?.namespace || '');
+    }
+
+    public serviceListContainerTitle(service: any, container: any) {
+        return [
+            this.serviceListContainerName(service, container),
+            container?.node_name || container?.node_host,
+            container?.image,
+        ].filter((item: any) => Boolean(item)).join(' · ');
+    }
+
+    public serviceListContainerEmptyText(service: any) {
+        return this.serviceRuntimeStatus(service)?.checked_at ? '컨테이너 없음' : '상태 확인 전';
+    }
+
+    public serviceListPortBadges(service: any) {
+        const badges: string[] = [];
+        for (const container of this.serviceListContainers(service)) {
+            const name = this.serviceListContainerName(service, container);
+            for (const port of this.serviceExternalPortLabels(container)) {
+                badges.push(`${name}: ${port}`);
+            }
+        }
+        return badges;
+    }
+
+    public serviceListPortEmptyText(service: any) {
+        return this.serviceListContainers(service).length ? '외부 포트 없음' : this.serviceListContainerEmptyText(service);
     }
 
     public serviceServerSummaryText(service: any) {
@@ -3490,10 +3553,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public containerDisplayName(container: any) {
-        const namespace = this.detail()?.service?.namespace || '';
-        const raw = String(container?.runtime_service_name || container?.name || '').trim();
-        if (namespace && raw.startsWith(`${namespace}_`)) return raw.slice(namespace.length + 1);
-        return raw || '이름 없음';
+        return this.containerBaseName(container, this.detail()?.service?.namespace || '');
     }
 
     public containerStatusLabel(container: any) {
@@ -3518,13 +3578,21 @@ export class Component implements OnInit, OnDestroy {
         return this.statusClass('');
     }
 
+    private portBindingLabel(port: any) {
+        const protocol = port?.protocol || 'tcp';
+        if (port?.internal_only) return `내부 ${port?.target}/${protocol}`;
+        const host = port?.host && port.host !== '0.0.0.0' ? `${port.host}:` : '';
+        return `${host}${port?.published} -> ${port?.target}/${protocol}`;
+    }
+
     public containerPortLabels(container: any) {
-        return (container?.port_bindings || []).map((port: any) => {
-            const protocol = port.protocol || 'tcp';
-            if (port.internal_only) return `내부 ${port.target}/${protocol}`;
-            const host = port.host && port.host !== '0.0.0.0' ? `${port.host}:` : '';
-            return `${host}${port.published} -> ${port.target}/${protocol}`;
-        });
+        return (container?.port_bindings || []).map((port: any) => this.portBindingLabel(port));
+    }
+
+    public serviceExternalPortLabels(container: any) {
+        return (container?.port_bindings || [])
+            .filter((port: any) => port?.published && !port?.internal_only)
+            .map((port: any) => this.portBindingLabel(port));
     }
 
     public containerSignal(container: any) {

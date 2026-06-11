@@ -23,7 +23,7 @@ export class Component implements OnDestroy {
 
     private readonly dropdownGap = 8;
     private readonly viewportPadding = 12;
-    private readonly minPanelWidth = 240;
+    private readonly minPanelWidth = 280;
     private readonly maxPanelWidth = 560;
     private readonly preferredPanelHeight = 360;
     private readonly panelHeaderHeight = 66;
@@ -135,7 +135,7 @@ export class Component implements OnDestroy {
             maxWidth: `${maxViewportWidth}px`,
             maxHeight: `${panelMaxHeight}px`,
             boxSizing: 'border-box',
-            zIndex: '80',
+            zIndex: '220',
         };
         this.dropdownListMaxHeight = Math.max(112, panelMaxHeight - this.panelHeaderHeight);
     }

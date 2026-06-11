@@ -5,10 +5,6 @@ header(class="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-bl
                 i(class="fa-solid fa-globe")
                 span Domains
             h1(class="mt-1 text-xl font-semibold text-zinc-950 dark:text-zinc-50") 도메인 관리
-        div(class="flex flex-wrap items-center gap-2")
-            button(type="button", (click)="openDdnsModal()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
-                i(class="fa-solid fa-plus")
-                span DDNS 서버 추가
 
 main(class="space-y-5 px-5 py-5")
     div(*ngIf="loading()", class="h-32 rounded-md border border-zinc-200 bg-white p-5 text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400") 정보를 불러오는 중입니다.
@@ -28,23 +24,22 @@ main(class="space-y-5 px-5 py-5")
                     button(*ngIf="ddnsDispatcher()?.registered !== true", type="button", (click)="ensureDdnsDispatcher()", [disabled]="ddnsDispatcherBusy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-amber-300 px-2.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-900/70 dark:text-amber-300 dark:hover:bg-amber-950/30")
                         i(class="fa-solid fa-plug-circle-plus")
                         span {{ddnsDispatcherBusy() ? '등록 중...' : 'Dispatcher 등록'}}
-                    button(type="button", (click)="openDdnsModal()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                    button(type="button", (click)="openDdnsModal()", class="inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-2.5 text-xs font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                         i(class="fa-solid fa-plus")
-                        span 추가
+                        span DDNS 서버 추가
             div(*ngIf="ddnsWarning()", class="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{ddnsWarning()}}
             div(*ngIf="!ddnsWarning() && ddnsEndpoints().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 DDNS 관리 서버가 없습니다.
             div(*ngIf="ddnsEndpoints().length > 0", class="overflow-x-auto")
-                table(class="w-full min-w-[1100px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
+                table(class="w-full min-w-[1360px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
                     thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
                         tr
                             th(class="w-32 px-4 py-2 text-left font-semibold") 서버명
                             th(class="w-24 whitespace-nowrap px-4 py-2 text-left font-semibold") 상태
-                            th(class="w-36 px-4 py-2 text-left font-semibold") Wildcard suffix
-                            th(class="px-4 py-2 text-left font-semibold") DDNS 서버 API
-                            th(class="w-36 whitespace-nowrap px-4 py-2 text-left font-semibold") Dispatcher 요청
-                            th(class="w-28 whitespace-nowrap px-4 py-2 text-left font-semibold") IP
-                            th(class="w-28 px-4 py-2 text-left font-semibold") Host
+                            th(class="w-48 whitespace-nowrap px-4 py-2 text-left font-semibold") Dispatcher 요청
+                            th(class="w-44 px-4 py-2 text-left font-semibold") Host
+                            th(class="w-52 whitespace-nowrap px-4 py-2 text-left font-semibold") IP
                             th(class="w-24 px-4 py-2 text-center font-semibold") 등록
+                            th(class="px-4 py-2 text-left font-semibold") DDNS 서버 API
                             th(class="w-36 px-4 py-2 text-right font-semibold") 작업
                     tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
                         tr(*ngFor="let endpoint of pagedDdnsEndpoints()", class="align-top")
@@ -52,21 +47,18 @@ main(class="space-y-5 px-5 py-5")
                                 p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{endpoint.name || endpoint.domain_suffix}}
                             td(class="whitespace-nowrap px-4 py-3")
                                 span(class="inline-flex whitespace-nowrap rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(endpoint.status)") {{ddnsStatusLabel(endpoint)}}
+                            td(class="whitespace-nowrap px-4 py-3")
+                                p(class="whitespace-nowrap text-xs font-medium text-zinc-700 dark:text-zinc-200", [title]="formatDate(endpoint.dispatcher?.last_sent_at)") {{formatDate(endpoint.dispatcher?.last_sent_at)}}
                             td(class="px-4 py-3")
                                 span(class="inline-flex max-w-full rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-300")
                                     span(class="truncate") *.{{endpoint.domain_suffix}}
-                            td(class="px-4 py-3")
-                                p(class="break-all font-mono text-xs text-zinc-700 dark:text-zinc-200") {{endpoint.api_url || endpoint.api_base_url}}
                             td(class="whitespace-nowrap px-4 py-3")
-                                p(class="truncate whitespace-nowrap text-xs font-medium text-zinc-700 dark:text-zinc-200", [title]="formatDate(endpoint.dispatcher?.last_sent_at)") {{formatDate(endpoint.dispatcher?.last_sent_at)}}
-                            td(class="whitespace-nowrap px-4 py-3")
-                                p(class="truncate whitespace-nowrap font-mono text-xs text-zinc-700 dark:text-zinc-200", [title]="endpoint.dispatcher?.last_sent_ip || '-'") {{endpoint.dispatcher?.last_sent_ip || '-'}}
-                            td(class="px-4 py-3")
-                                p(class="truncate text-xs font-medium text-zinc-700 dark:text-zinc-200") {{endpoint.dispatcher?.last_hostname || '-'}}
-                                p(class="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500") agent 레코드 {{endpoint.dispatcher?.record_count || 0}}개
+                                p(class="whitespace-nowrap font-mono text-xs text-zinc-700 dark:text-zinc-200", [title]="endpoint.dispatcher?.last_sent_ip || '-'") {{endpoint.dispatcher?.last_sent_ip || '-'}}
                             td(class="whitespace-nowrap px-4 py-3 text-center")
                                 div(class="flex flex-col items-center gap-1")
                                     span(class="inline-flex min-w-[4rem] justify-center whitespace-nowrap rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200") {{endpointRegistrationCount(endpoint)}}개
+                            td(class="px-4 py-3")
+                                p(class="break-all font-mono text-xs text-zinc-700 dark:text-zinc-200") {{endpoint.api_url || endpoint.api_base_url}}
                             td(class="whitespace-nowrap px-4 py-3")
                                 div(class="flex flex-nowrap items-center justify-end gap-1 whitespace-nowrap")
                                     button(type="button", (click)="forceUpdateDdnsEndpoint(endpoint)", [disabled]="ddnsUpdateEndpointId() === endpoint.id", title="DDNS API 호출", aria-label="DDNS API 호출", class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-sky-300 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-sky-900/70 dark:text-sky-300 dark:hover:bg-sky-950/30")
@@ -84,43 +76,51 @@ main(class="space-y-5 px-5 py-5")
                 div
                     h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 등록된 DDNS 레코드
                     p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 서비스 배포가 DDNS API로 등록한 hostname, 연결 서비스, Docker Infra 연결 대상입니다.
-                span(class="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{ddnsRegistrations().length}}개
-            div(*ngIf="ddnsRegistrations().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 DDNS 레코드가 없습니다.
-            div(*ngIf="ddnsRegistrations().length > 0", class="overflow-x-auto")
-                table(class="w-full min-w-[1040px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
+                span(class="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{filteredDdnsRegistrations().length}} / {{ddnsRegistrations().length}}개
+            div(*ngIf="ddnsRegistrations().length > 0", class="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
+                button(type="button", (click)="setDdnsRegistrationFilter('')", class="inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-semibold", [ngClass]="ddnsRegistrationFilterClass('')")
+                    span 전체
+                    span(class="text-[11px] opacity-80") {{ddnsRegistrations().length}}개
+                button(*ngFor="let endpoint of ddnsEndpoints()", type="button", (click)="setDdnsRegistrationFilter(endpoint.id)", [title]="'*.' + endpoint.domain_suffix", class="inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-semibold", [ngClass]="ddnsRegistrationFilterClass(endpoint.id)")
+                    span {{endpoint.name || endpoint.domain_suffix}}
+                    span(class="text-[11px] opacity-80") {{endpointRegistrationCount(endpoint)}}개
+            div(*ngIf="filteredDdnsRegistrations().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 DDNS 레코드가 없습니다.
+            div(*ngIf="filteredDdnsRegistrations().length > 0", class="overflow-x-auto")
+                table(class="w-full min-w-[1160px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
                     thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
                         tr
                             th(class="px-4 py-2 text-left font-semibold") Hostname
-                            th(class="w-48 px-4 py-2 text-left font-semibold") 연결 서비스
-                            th(class="w-56 px-4 py-2 text-left font-semibold") 연결 대상
+                            th(class="w-64 px-4 py-2 text-left font-semibold") 연결 서비스
+                            th(class="w-48 px-4 py-2 text-left font-semibold") 연결 대상
                             th(class="w-36 px-4 py-2 text-left font-semibold") DDNS 서버
                             th(class="w-24 px-4 py-2 text-left font-semibold") 상태
-                            th(class="w-36 px-4 py-2 text-left font-semibold") 마지막 갱신
+                            th(class="w-40 whitespace-nowrap px-4 py-2 text-left font-semibold") 마지막 갱신
                     tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
                         tr(*ngFor="let item of pagedDdnsRegistrations()", class="align-top")
                             td(class="px-4 py-3")
-                                a([href]="registrationHostnameHref(item)", target="_blank", rel="noopener noreferrer", class="inline-flex max-w-full items-center font-semibold text-zinc-950 hover:underline dark:text-zinc-50")
-                                    span(class="min-w-0 break-all") {{item.domain}}
-                                    i(class="fa-solid fa-arrow-up-right-from-square ml-2 mr-2 flex-none text-xs text-zinc-500 dark:text-zinc-400")
+                                div(class="flex min-w-0 items-start")
+                                    p(class="min-w-0 break-all text-xs font-semibold text-zinc-950 dark:text-zinc-50") {{item.domain}}
+                                    a([href]="registrationHostnameHref(item)", target="_blank", rel="noopener noreferrer", title="Hostname 열기", [attr.aria-label]="'Hostname 열기'", class="ml-2 mr-2 inline-flex h-6 w-6 flex-none items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100")
+                                        i(class="fa-solid fa-arrow-up-right-from-square")
                                 p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{item.remote_record_id || '-'}}
                             td(class="px-4 py-3")
-                                div(class="flex items-start justify-between gap-3")
-                                    div(class="min-w-0")
-                                        p(class="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-100") {{registrationServiceLabel(item)}}
-                                        p(class="mt-1 truncate text-[11px] text-zinc-400 dark:text-zinc-500") {{registrationServiceSubtitle(item)}}
-                                    a(*ngIf="hasLinkedService(item)", [routerLink]="serviceDetailLink(item)", title="서비스 상세", [attr.aria-label]="'서비스 상세로 이동'", class="inline-flex h-8 w-8 flex-none items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100")
-                                        i(class="fa-solid fa-arrow-up-right-from-square")
+                                div(class="min-w-0")
+                                    div(class="flex min-w-0 items-center")
+                                        p(class="min-w-0 truncate text-xs font-semibold text-zinc-800 dark:text-zinc-100") {{registrationServiceLabel(item)}}
+                                        a(*ngIf="hasLinkedService(item)", [routerLink]="serviceDetailLink(item)", title="서비스 상세", [attr.aria-label]="'서비스 상세로 이동'", class="ml-2 mr-2 inline-flex h-6 w-6 flex-none items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100")
+                                            i(class="fa-solid fa-arrow-up-right-from-square")
+                                    p(class="mt-1 truncate text-[11px] text-zinc-400 dark:text-zinc-500") {{registrationServiceSubtitle(item)}}
                             td(class="px-4 py-3")
-                                div(class="flex items-start justify-between gap-3")
-                                    div(class="min-w-0")
-                                        p(class="break-words text-xs font-semibold text-zinc-700 dark:text-zinc-200") {{registrationTargetTitle(item)}}
-                                        p(*ngIf="registrationTargetSubtitle(item)", class="mt-1 break-words text-[11px] text-zinc-500 dark:text-zinc-400") {{registrationTargetSubtitle(item)}}
-                                    a(*ngIf="hasTargetDetail(item)", [routerLink]="targetDetailLink(item)", title="서버 상세", [attr.aria-label]="'서버 상세로 이동'", class="inline-flex h-8 w-8 flex-none items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100")
-                                        i(class="fa-solid fa-server")
+                                div(class="min-w-0")
+                                    div(class="flex min-w-0 items-start")
+                                        p(class="min-w-0 break-words text-xs font-semibold text-zinc-700 dark:text-zinc-200") {{registrationTargetTitle(item)}}
+                                        a(*ngIf="hasTargetDetail(item)", [routerLink]="targetDetailLink(item)", title="서버 상세", [attr.aria-label]="'서버 상세로 이동'", class="ml-2 mr-2 inline-flex h-6 w-6 flex-none items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100")
+                                            i(class="fa-solid fa-server")
+                                    p(*ngIf="registrationTargetSubtitle(item)", class="mt-1 break-words text-[11px] text-zinc-500 dark:text-zinc-400") {{registrationTargetSubtitle(item)}}
                             td(class="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300") {{registrationEndpointLabel(item)}}
                             td(class="px-4 py-3")
                                 span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(item.status)") {{registrationStatusLabel(item)}}
-                            td(class="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300") {{formatDate(item.last_sync_at)}}
+                            td(class="whitespace-nowrap px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300") {{formatDate(item.last_sync_at)}}
             div(*ngIf="ddnsRegistrationPagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
                 p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
                 wiz-portal-season-pagination([current]="ddnsRegistrationPagination().current", [start]="ddnsRegistrationPagination().start", [end]="ddnsRegistrationPagination().end", [maxlength]="10", (pageMove)="moveDdnsRegistrationPage($event)")

@@ -14,6 +14,7 @@ export class Component implements OnInit {
     public ddnsModalOpen = signal<boolean>(false);
     public ddnsUpdateEndpointId = signal<string>('');
     public ddnsDispatcherBusy = signal<boolean>(false);
+    public ddnsRegistrationEndpointFilter = signal<string>('');
     public pageSize = 20;
     public ddnsForm: any = this.emptyDdnsForm();
 
@@ -41,8 +42,9 @@ export class Component implements OnInit {
             const ddns = data.ddns || {};
             this.ddnsEndpoints.set(ddns.endpoints || []);
             this.ddnsRegistrations.set(ddns.registrations || []);
+            this.ensureDdnsRegistrationFilter();
             this.ddnsEndpointPagination.set(this.paginationFor(this.ddnsEndpoints().length, this.ddnsEndpointPagination().current));
-            this.ddnsRegistrationPagination.set(this.paginationFor(this.ddnsRegistrations().length, this.ddnsRegistrationPagination().current));
+            this.ddnsRegistrationPagination.set(this.paginationFor(this.filteredDdnsRegistrations().length, this.ddnsRegistrationPagination().current));
             this.ddnsSummary.set(ddns.summary || {});
             this.ddnsDispatcher.set(ddns.dispatcher || {});
             this.ddnsWarning.set(ddns.available === false ? (ddns.message || 'DDNS 관리 서버 정보를 불러올 수 없습니다.') : '');
@@ -52,6 +54,7 @@ export class Component implements OnInit {
             this.ddnsRegistrations.set([]);
             this.ddnsEndpointPagination.set(this.paginationFor(0, 1));
             this.ddnsRegistrationPagination.set(this.paginationFor(0, 1));
+            this.ddnsRegistrationEndpointFilter.set('');
             this.ddnsSummary.set({});
             this.ddnsDispatcher.set({});
             this.ddnsWarning.set('');
@@ -192,7 +195,7 @@ export class Component implements OnInit {
     }
 
     public pagedDdnsRegistrations() {
-        return this.pageRows(this.ddnsRegistrations(), this.ddnsRegistrationPagination());
+        return this.pageRows(this.filteredDdnsRegistrations(), this.ddnsRegistrationPagination());
     }
 
     public async moveDdnsEndpointPage(page: number) {
@@ -201,8 +204,33 @@ export class Component implements OnInit {
     }
 
     public async moveDdnsRegistrationPage(page: number) {
-        this.ddnsRegistrationPagination.set(this.paginationFor(this.ddnsRegistrations().length, page));
+        this.ddnsRegistrationPagination.set(this.paginationFor(this.filteredDdnsRegistrations().length, page));
         await this.service.render();
+    }
+
+    public filteredDdnsRegistrations() {
+        const endpointId = String(this.ddnsRegistrationEndpointFilter() || '').trim();
+        if (!endpointId) return this.ddnsRegistrations();
+        return this.ddnsRegistrations().filter((item: any) => String(item?.endpoint_id || '') === endpointId);
+    }
+
+    public async setDdnsRegistrationFilter(endpointId: any) {
+        this.ddnsRegistrationEndpointFilter.set(String(endpointId || '').trim());
+        this.ddnsRegistrationPagination.set(this.paginationFor(this.filteredDdnsRegistrations().length, 1));
+        await this.service.render();
+    }
+
+    public ddnsRegistrationFilterClass(endpointId: any) {
+        const active = String(endpointId || '').trim() === String(this.ddnsRegistrationEndpointFilter() || '').trim();
+        if (active) return 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950';
+        return 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800';
+    }
+
+    private ensureDdnsRegistrationFilter() {
+        const endpointId = String(this.ddnsRegistrationEndpointFilter() || '').trim();
+        if (!endpointId) return;
+        const exists = this.ddnsEndpoints().some((endpoint: any) => String(endpoint?.id || '') === endpointId);
+        if (!exists) this.ddnsRegistrationEndpointFilter.set('');
     }
 
     public registrationEndpointLabel(item: any) {
@@ -249,37 +277,30 @@ export class Component implements OnInit {
 
     public registrationTargetTitle(item: any) {
         const metadata = this.registrationMetadata(item);
-        const nodeLabel = this.firstText(
-            metadata.proxy_node_name,
+        return this.firstText(
+            item?.target_node_label,
+            item?.target_node_name,
+            metadata.proxy_node_display_name,
             metadata.proxy_registered_node_name,
+            metadata.proxy_node_name,
             metadata.proxy_swarm_node_name,
-            metadata.proxy_host,
             metadata.proxy_node_id,
-        );
-        const host = this.firstText(
             metadata.proxy_host,
-            metadata.proxy_registered_node_private_host,
-            metadata.proxy_registered_node_host,
-            metadata.proxy_swarm_addr,
-        );
-        const port = this.firstText(metadata.published_port, item?.target_port, metadata.target_port);
-        const endpoint = host ? `${host}${port ? `:${port}` : ''}` : (port ? `포트 ${port}` : '');
-        if (nodeLabel && endpoint && endpoint !== nodeLabel) return `${nodeLabel} · ${endpoint}`;
-        return nodeLabel || endpoint || '-';
+        ) || '-';
     }
 
     public registrationTargetSubtitle(item: any) {
         const metadata = this.registrationMetadata(item);
-        const parts = [];
-        const composeService = this.firstText(metadata.compose_service);
-        const targetPort = this.firstText(metadata.target_port, item?.service_domain_port);
-        const publishedPort = this.firstText(metadata.published_port, item?.target_port);
-        const topology = this.firstText(metadata.proxy_topology);
-        if (composeService) parts.push(composeService);
-        if (targetPort) parts.push(`서비스 포트 ${targetPort}`);
-        if (publishedPort && publishedPort !== targetPort) parts.push(`공개 포트 ${publishedPort}`);
-        if (topology) parts.push(topology);
-        return parts.join(' · ');
+        const title = this.registrationTargetTitle(item);
+        const host = this.firstText(
+            item?.target_node_host,
+            metadata.proxy_registered_node_private_host,
+            metadata.proxy_registered_node_host,
+            metadata.proxy_swarm_addr,
+            metadata.proxy_host,
+        );
+        if (!host || host === title) return '';
+        return host;
     }
 
     public formatDate(value: any) {
@@ -305,7 +326,7 @@ export class Component implements OnInit {
 
     private registrationTargetNodeId(item: any) {
         const metadata = this.registrationMetadata(item);
-        return this.firstText(metadata.proxy_node_id);
+        return this.firstText(item?.target_node_id, metadata.proxy_node_id, metadata.proxy_registered_node_id);
     }
 
     private objectValue(value: any) {

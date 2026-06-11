@@ -199,6 +199,60 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         for token in ["_letsencrypt_cert", "certbot.nginx.issue"]:
             self.assertIn(token, nginx_cert)
 
+    def _load_ports_module(self):
+        class FakeStruct:
+            nodes = object()
+
+        class FakeWiz:
+            def model(self, name):
+                if name == "struct":
+                    return FakeStruct()
+                raise AssertionError(f"unexpected model: {name}")
+
+        spec = importlib.util.spec_from_file_location("services_ports_contract", PORTS_MODEL)
+        module = importlib.util.module_from_spec(spec)
+        module.wiz = FakeWiz()
+        spec.loader.exec_module(module)
+        return module
+
+    def test_service_port_allocation_avoids_well_known_published_ports(self):
+        ports_module = self._load_ports_module()
+        checked = []
+
+        def fake_is_free_on_node(port, node=None, env=None):
+            checked.append(port)
+            return True
+
+        ports_module._is_free_on_node = fake_is_free_on_node
+        plan = ports_module.Model.preview_content("""
+services:
+  ssh:
+    image: linuxserver/openssh-server:latest
+    ports:
+      - "22"
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+  admin:
+    image: example/admin:latest
+    ports:
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+""")
+
+        allocations = plan["allocations"]
+        self.assertEqual([item["previous"] for item in allocations], [22, 80, 443])
+        self.assertEqual([item["published"] for item in allocations], [49152, 49153, 49154])
+        self.assertTrue(all(item["published"] > ports_module.WELL_KNOWN_PORT_MAX for item in allocations))
+        self.assertTrue(all(item.get("reason") == "well_known_reserved" for item in allocations))
+        self.assertEqual(plan["compose"]["services"]["ssh"]["ports"], ["49152:22"])
+        self.assertEqual(plan["compose"]["services"]["web"]["ports"], ["49153:80"])
+        self.assertEqual(plan["compose"]["services"]["admin"]["ports"][0]["published"], 49154)
+        self.assertEqual(checked[:3], [49152, 49153, 49154])
+
     def test_server_compose_import_uses_service_create_wizard(self):
         api = CREATE_API.read_text(encoding="utf-8")
         view = CREATE_VIEW.read_text(encoding="utf-8")
@@ -581,6 +635,24 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertNotIn("서비스 적용", template)
         self.assertNotIn("준비 중", view)
         self.assertNotIn("준비 중", template)
+
+    def test_service_list_container_and_port_columns_are_wired(self):
+        view = SERVICES_VIEW.read_text(encoding="utf-8")
+        template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn("컨테이너", template)
+        self.assertIn("포트", template)
+        self.assertIn("serviceListContainers(item)", template)
+        self.assertIn("serviceListPortBadges(item)", template)
+        self.assertIn("serviceListPortEmptyText(item)", template)
+        self.assertIn("serviceListContainerEmptyText(item)", template)
+        self.assertNotIn('th(class="w-44 px-4 py-2 text-left font-semibold") 버전', template)
+        for token in ["serviceRuntimeStatus", "serviceListContainers", "serviceListContainerName", "serviceExternalPortLabels", "serviceListPortBadges", "serviceListPortEmptyText"]:
+            self.assertIn(token, view)
+        self.assertIn("badges.push(`${name}: ${port}`)", view)
+        self.assertIn("containerNameSortKey", view)
+        self.assertIn("compareContainersByName(a, b, namespace)", view)
+        self.assertIn(".sort((a: any, b: any) => this.compareContainersByName(a, b, namespace))", view)
 
     def test_service_edit_wizard_contract_is_wired(self):
         api = SERVICES_API.read_text(encoding="utf-8")

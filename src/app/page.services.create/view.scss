@@ -1,0 +1,238 @@
+:host {
+    display: block;
+}
+
+.service-readme-markdown.ai-agent-markdown {
+    overflow-wrap: anywhere;
+    color: #27272a;
+    font-size: 13px;
+    line-height: 1.62;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown *,
+.service-readme-markdown.ai-agent-markdown * {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown p {
+    margin: 0 0 10px;
+    white-space: normal;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown p:last-child,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown ol:last-child,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown ul:last-child,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown pre:last-child,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-code-block:last-child,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-markdown-table-wrap:last-child,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown h4:last-child,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown h5:last-child,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown h6:last-child {
+    margin-bottom: 0;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown h4,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown h5,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown h6 {
+    margin: 3px 0 7px;
+    color: #18181b;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown ol,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown ul {
+    margin: 6px 0 12px 18px;
+    padding: 0;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown li {
+    margin: 5px 0;
+    padding-left: 2px;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown p > strong:only-child {
+    display: block;
+    margin-top: 3px;
+    margin-bottom: 6px;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown strong {
+    color: #18181b;
+    font-weight: 700;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown em {
+    font-style: italic;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown a {
+    color: #c2410c;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown code {
+    border: 1px solid #e4e4e7;
+    border-radius: 4px;
+    background: #f4f4f5;
+    padding: 1px 4px;
+    color: #18181b;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-code-block {
+    margin: 10px 0 12px;
+    max-width: 100%;
+    overflow: hidden;
+    border: 1px solid #27272a;
+    border-radius: 8px;
+    background: #18181b;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-code-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 34px;
+    border-bottom: 1px solid #27272a;
+    background: #111827;
+    padding: 5px 8px 5px 12px;
+    color: #d4d4d8;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-code-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 24px;
+    border: 1px solid rgba(244, 244, 245, 0.16);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #f4f4f5;
+    padding: 0 8px;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-code-block pre {
+    margin: 0;
+    max-width: 100%;
+    overflow: auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 12px 14px;
+    box-shadow: none;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-code-block code {
+    display: block;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: #f4f4f5;
+    line-height: 1.55;
+    white-space: pre;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-markdown-table-wrap {
+    margin: 6px 0 8px;
+    max-width: 100%;
+    overflow: auto;
+    border: 1px solid #e4e4e7;
+    border-radius: 6px;
+    background: #ffffff;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown table {
+    width: 100%;
+    min-width: 320px;
+    border-collapse: collapse;
+    background: #ffffff;
+    table-layout: auto;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown th,
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown td {
+    border-bottom: 1px solid #e4e4e7;
+    border-right: 1px solid #e4e4e7;
+    padding: 7px 8px;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: break-word;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown th {
+    background: #fafafa;
+    color: #18181b;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown td {
+    color: #27272a;
+    font-size: 12px;
+}
+
+:host ::ng-deep .service-readme-markdown.ai-agent-markdown tbody tr:nth-child(even) {
+    background: #fafafa;
+}
+
+:host-context(.dark) .service-readme-markdown.ai-agent-markdown,
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown td {
+    color: #f4f4f5;
+}
+
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown strong,
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown h4,
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown h5,
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown h6,
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown code {
+    color: #f4f4f5;
+}
+
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown a {
+    color: #fed7aa;
+}
+
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown code,
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-markdown-table-wrap {
+    border-color: #3f3f46;
+    background: #09090b;
+}
+
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-code-block {
+    border-color: #3f3f46;
+    background: #09090b;
+}
+
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown .ai-agent-code-toolbar {
+    border-color: #3f3f46;
+    background: #18181b;
+}
+
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown table,
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown th {
+    background: #18181b;
+}
+
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown th,
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown td {
+    border-color: #3f3f46;
+    color: #f4f4f5;
+}
+
+:host-context(.dark) ::ng-deep .service-readme-markdown.ai-agent-markdown tbody tr:nth-child(even) {
+    background: #111827;
+}
