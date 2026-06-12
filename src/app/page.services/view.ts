@@ -73,7 +73,6 @@ export class Component implements OnInit, OnDestroy {
     public migrationModalOpen = signal<boolean>(false);
     public migrationBusy = signal<boolean>(false);
     public migrationTargetNodeId = signal<string>('');
-    public migrationPause = signal<boolean>(true);
     public operationModalOpen = signal<boolean>(false);
     public operationBusy = signal<boolean>(false);
     public operationDetail = signal<any>(null);
@@ -222,7 +221,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     private detailTabKeys() {
-        return ['overview', 'logs', 'source', 'files', 'versions'];
+        return ['overview', 'logs', 'files', 'versions'];
     }
 
     private routeServiceId() {
@@ -1185,7 +1184,6 @@ export class Component implements OnInit, OnDestroy {
         if (!(await this.ensureSupportOptions())) return;
         const first = this.migrationNodeOptions().find((item: any) => !item.disabled);
         this.migrationTargetNodeId.set(first?.value || '');
-        this.migrationPause.set(true);
         this.migrationModalOpen.set(true);
         await this.service.render();
         await this.refreshDetailExtras(serviceId, this.detailRequestSeq);
@@ -1215,7 +1213,7 @@ export class Component implements OnInit, OnDestroy {
         const { code, data } = await wiz.call('migrate_service', {
             service_id: serviceId,
             target_node_id: this.migrationTargetNodeId(),
-            pause: this.migrationPause(),
+            pause: true,
         });
         this.migrationBusy.set(false);
         if ([200, 202].includes(code)) {
@@ -1855,6 +1853,13 @@ export class Component implements OnInit, OnDestroy {
                 await this.service.render();
             }
         }
+    }
+
+    public returnBasicEditMode() {
+        if (this.editBusy() || this.editLoading()) return;
+        this.editAdvancedSettings.set(false);
+        this.editAdvancedComponentKey.set('');
+        this.editSection.set('basic');
     }
 
     private matchEditDomainZone(domain: string) {
@@ -3146,7 +3151,6 @@ export class Component implements OnInit, OnDestroy {
         return [
             { key: 'overview', label: '구성', icon: 'fa-diagram-project' },
             { key: 'logs', label: '로그', icon: 'fa-terminal' },
-            { key: 'source', label: 'Compose/Nginx', icon: 'fa-code' },
             { key: 'files', label: '컨테이너 파일', icon: 'fa-folder-tree' },
             { key: 'versions', label: '버전 이력', icon: 'fa-clock-rotate-left' },
         ];

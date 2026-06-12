@@ -10,6 +10,8 @@ SNAPSHOT_RUNNER = ROOT / "src" / "model" / "struct" / "service_image_snapshot_ru
 SERVICES_API = ROOT / "src" / "app" / "page.services" / "api.py"
 SERVICES_VIEW = ROOT / "src" / "app" / "page.services" / "view.pug"
 SERVICES_TS = ROOT / "src" / "app" / "page.services" / "view.ts"
+SEARCH_SELECT_TS = ROOT / "src" / "app" / "component.search.select" / "view.ts"
+SEARCH_SELECT_HTML = ROOT / "src" / "app" / "component.search.select" / "view.html"
 
 
 class ServiceMigrationStaticContractTest(unittest.TestCase):
@@ -21,6 +23,8 @@ class ServiceMigrationStaticContractTest(unittest.TestCase):
         snapshot_runner = SNAPSHOT_RUNNER.read_text(encoding="utf-8")
         view = SERVICES_VIEW.read_text(encoding="utf-8")
         view_ts = SERVICES_TS.read_text(encoding="utf-8")
+        search_select_ts = SEARCH_SELECT_TS.read_text(encoding="utf-8")
+        search_select_html = SEARCH_SELECT_HTML.read_text(encoding="utf-8")
 
         self.assertIn('ServiceMigrationMixin = wiz.model("struct/services_migration")', services_model)
         self.assertIn("def migrate_service():", services_api)
@@ -50,10 +54,20 @@ class ServiceMigrationStaticContractTest(unittest.TestCase):
 
         self.assertIn("서비스 마이그레이션", view)
         self.assertIn("wiz-component-search-select([items]=\"migrationNodeOptions()\"", view)
+        self.assertNotIn('select([ngModel]="migrationTargetNodeId()"', view)
         self.assertIn("submitServiceMigration()", view)
+        self.assertLess(view.index("detailTab() === 'versions'"), view.index('(click)="openMigrationModal()"'))
+        self.assertNotIn("컨테이너 일시 정지 후 스냅샷", view)
         self.assertIn("migrate_service", view_ts)
+        self.assertIn("pause: true", view_ts)
         self.assertIn("'service.migrate': '서비스 마이그레이션'", view_ts)
         self.assertIn("currentMigrationSourceNodeId", view_ts)
+        self.assertIn("visualViewport", search_select_ts)
+        self.assertIn("preventScroll: true", search_select_ts)
+        self.assertIn("position: 'absolute'", search_select_ts)
+        self.assertIn("zIndex: '220'", search_select_ts)
+        self.assertIn('class="absolute z-[220]', search_select_html)
+        self.assertIn("overflow-visible rounded-md", view)
 
 
 if __name__ == "__main__":

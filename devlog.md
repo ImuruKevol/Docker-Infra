@@ -425,3 +425,6 @@
 | 2026-06-11 | 009 | 서비스 생성 README 팝오버 마크다운 렌더링 적용 | [상세](devlog/2026-06-11/009-service-create-readme-markdown-popover.md) |
 | 2026-06-11 | 010 | 템플릿 관리 목록과 상세 편집 UI 정리 | [상세](devlog/2026-06-11/010-template-management-ui-polish.md) |
 | 2026-06-11 | 011 | 템플릿 목록 생성 화면 노출 컬럼 추가 | [상세](devlog/2026-06-11/011-template-list-enabled-column.md) |
+| 2026-06-11 | 012 | 서비스 상세 Compose/Nginx 탭 제거 | [상세](devlog/2026-06-11/012-service-detail-compose-nginx-tab-removal.md) |
+| 2026-06-12 | 001 | 서비스 상세 마이그레이션/수정 모달 UX 보정 | [상세](devlog/2026-06-12/001-service-detail-migration-edit-modal-ux.md) |
+| 2026-06-12 | 002 | 마이그레이션 모달 custom search-select 유지 보정 | [상세](devlog/2026-06-12/002-migration-custom-search-select-fix.md) |

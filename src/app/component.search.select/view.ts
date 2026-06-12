@@ -69,7 +69,13 @@ export class Component implements OnDestroy {
             setTimeout(() => {
                 this.updateDropdownPosition();
                 const input = this.elementRef.nativeElement.querySelector('[data-search-select-input]');
-                if (input && typeof input.focus === 'function') input.focus();
+                if (input && typeof input.focus === 'function') {
+                    try {
+                        input.focus({ preventScroll: true });
+                    } catch (_) {
+                        input.focus();
+                    }
+                }
                 this.cdr.detectChanges();
             }, 0);
         } else {
@@ -101,28 +107,35 @@ export class Component implements OnDestroy {
         if (typeof window === 'undefined') return;
         const trigger = this.elementRef.nativeElement.querySelector('[data-search-select-trigger]') || this.elementRef.nativeElement;
         const hostRect = trigger.getBoundingClientRect();
-        const viewportHeightCandidates = [
-            window.innerHeight,
-            document.documentElement?.clientHeight,
-        ].filter((value: any) => Number(value) > 0);
-        const viewportWidthCandidates = [
-            window.innerWidth,
-            document.documentElement?.clientWidth,
-        ].filter((value: any) => Number(value) > 0);
-        const viewportHeight = viewportHeightCandidates.length ? Math.min(...viewportHeightCandidates) : 800;
-        const viewportWidth = viewportWidthCandidates.length ? Math.min(...viewportWidthCandidates) : 1024;
+        const visualViewport = window.visualViewport;
+        const viewportTop = Number(visualViewport?.offsetTop || 0);
+        const viewportLeft = Number(visualViewport?.offsetLeft || 0);
+        const viewportHeight = Number(
+            visualViewport?.height
+            || window.innerHeight
+            || document.documentElement?.clientHeight
+            || 800,
+        );
+        const viewportWidth = Number(
+            visualViewport?.width
+            || window.innerWidth
+            || document.documentElement?.clientWidth
+            || 1024,
+        );
         const maxViewportWidth = Math.max(this.minPanelWidth, viewportWidth - (this.viewportPadding * 2));
         const width = Math.min(
             Math.max(hostRect.width, this.minPanelWidth),
             maxViewportWidth,
             this.maxPanelWidth,
         );
-        const spaceBelow = viewportHeight - hostRect.bottom - this.viewportPadding - this.dropdownGap;
-        const spaceAbove = hostRect.top - this.viewportPadding - this.dropdownGap;
+        const spaceBelow = viewportTop + viewportHeight - hostRect.bottom - this.viewportPadding - this.dropdownGap;
+        const spaceAbove = hostRect.top - viewportTop - this.viewportPadding - this.dropdownGap;
         const openUp = spaceBelow < 260 && spaceAbove > spaceBelow;
         const availableSpace = Math.max(0, openUp ? spaceAbove : spaceBelow);
-        const panelMaxHeight = Math.max(180, Math.min(this.preferredPanelHeight, availableSpace || this.preferredPanelHeight));
-        const alignRight = hostRect.left + width > viewportWidth - this.viewportPadding;
+        const viewportMaxHeight = Math.max(180, viewportHeight - (this.viewportPadding * 2));
+        const panelMaxHeight = Math.max(180, Math.min(this.preferredPanelHeight, availableSpace || viewportMaxHeight, viewportMaxHeight));
+        const viewportRight = viewportLeft + viewportWidth - this.viewportPadding;
+        const alignRight = hostRect.left + width > viewportRight;
         const verticalOffset = hostRect.height + this.dropdownGap;
 
         this.dropdownPanelStyle = {
