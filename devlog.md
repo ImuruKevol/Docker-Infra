@@ -428,3 +428,8 @@
 | 2026-06-11 | 012 | 서비스 상세 Compose/Nginx 탭 제거 | [상세](devlog/2026-06-11/012-service-detail-compose-nginx-tab-removal.md) |
 | 2026-06-12 | 001 | 서비스 상세 마이그레이션/수정 모달 UX 보정 | [상세](devlog/2026-06-12/001-service-detail-migration-edit-modal-ux.md) |
 | 2026-06-12 | 002 | 마이그레이션 모달 custom search-select 유지 보정 | [상세](devlog/2026-06-12/002-migration-custom-search-select-fix.md) |
+| 2026-06-12 | 003 | 서버 관리 목록 런타임 수량 컬럼과 설명 문구 정리 | [상세](devlog/2026-06-12/003-server-management-runtime-count-columns.md) |
+| 2026-06-12 | 004 | 매크로 화면 통합 실행 패널과 첨부 다운로드 적용 | [상세](devlog/2026-06-12/004-macro-unified-run-panel.md) |
+| 2026-06-12 | 005 | 서버 상세 헤더 뱃지 배치 정리 | [상세](devlog/2026-06-12/005-server-detail-header-badges.md) |
+| 2026-06-12 | 006 | 매크로 목록 압축과 서비스-컨테이너 선택 분리 | [상세](devlog/2026-06-12/006-macro-compact-list-service-container-select.md) |
+| 2026-06-13 | 001 | 매크로 실행 인자 사용 옵션 복원 | [상세](devlog/2026-06-13/001-macro-run-args-option-restore.md) |

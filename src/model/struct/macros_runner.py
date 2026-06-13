@@ -344,12 +344,23 @@ class MacroRunner:
             with connection.cursor() as cursor:
                 macro = self._fetch(cursor, macro_id)
                 macro_files = self._fetch_files(cursor, macro_id)
-        if not macro["enabled"]:
-            raise MacroError(409, "비활성화된 매크로는 실행할 수 없습니다.", "MACRO_DISABLED")
         if macro["scope_type"] == SCOPE_NODE and macro["node_id"] != str(node_id):
             raise MacroError(409, "서버 전용 매크로는 연결된 서버에서만 실행할 수 있습니다.", "MACRO_SCOPE_MISMATCH")
 
         node = nodes_model.detail(node_id, env=env)
+        target_context = {
+            key: payload.get(key)
+            for key in [
+                "target_type",
+                "service_target_id",
+                "service_id",
+                "service_name",
+                "service_namespace",
+                "container_id",
+                "container_name",
+            ]
+            if payload.get(key)
+        }
         operation = operations_model.create(
             "macro.run",
             target_type="node",
@@ -360,6 +371,7 @@ class MacroRunner:
                 "node_id": node_id,
                 "args": args,
                 "files": [{key: item[key] for key in ("id", "filename", "content_type", "size_bytes", "created_at")} for item in macro_files],
+                "target_context": target_context,
             },
             test_run_id=payload.get("test_run_id"),
             metadata={
@@ -369,6 +381,7 @@ class MacroRunner:
                 "macro_file_count": len(macro_files),
                 "node_name": node.get("name"),
                 "node_host": node.get("host"),
+                **target_context,
             },
             env=env,
         )

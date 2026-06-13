@@ -290,7 +290,7 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
 
         for token in [
             "macro.create_global",
-            "server.run_macro",
+            "macro.run",
             "_looks_like_server_status_macro_request",
             "_looks_like_server_status_macro_run_request",
             "_server_status_macro_payload",
@@ -372,19 +372,12 @@ class AIAgentHistoryStaticContractTest(unittest.TestCase):
             "startAgentCommandListener",
             "handleAgentCommand",
             "createGlobalMacroFromAgent",
+            "runMacroFromAgent",
             "publishAgentCommandResult",
             "macro.create_global",
+            "macro.run",
         ]:
             self.assertIn(token, macros)
-
-        for token in [
-            "startAgentCommandListener",
-            "handleAgentCommand",
-            "runMacroFromAgent",
-            "saveAgentGlobalMacro",
-            "server.run_macro",
-        ]:
-            self.assertIn(token, servers)
 
 
 if __name__ == "__main__":

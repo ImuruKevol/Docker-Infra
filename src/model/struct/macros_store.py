@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import PurePosixPath
 
@@ -212,7 +213,7 @@ class MacroStore:
         sql = self._select_sql()
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY CASE WHEN m.scope_type = 'node' THEN 0 ELSE 1 END, m.enabled DESC, lower(m.name) ASC, m.created_at DESC"
+        sql += " ORDER BY CASE WHEN m.scope_type = 'node' THEN 0 ELSE 1 END, lower(m.name) ASC, m.created_at DESC"
 
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -278,6 +279,38 @@ class MacroStore:
                 macro = macro_row(self._fetch(cursor, macro_id))
                 cursor.execute("DELETE FROM shell_macros WHERE id = %s", (macro_id,))
                 return {"deleted": True, "macro": macro}
+
+    def download_file(self, file_id, macro_id=None, env=None):
+        file_id = str(file_id or "").strip()
+        macro_id = str(macro_id or "").strip()
+        if not file_id:
+            raise MacroError(400, "file_id는 필수입니다.", "MACRO_FILE_ID_REQUIRED")
+
+        query = """
+            SELECT id, macro_id, filename, content_type, size_bytes, content, created_at
+            FROM shell_macro_files
+            WHERE id = %s
+        """
+        params = [file_id]
+        if macro_id:
+            query += " AND macro_id = %s"
+            params.append(macro_id)
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, params)
+                row = cursor.fetchone()
+        if row is None:
+            raise MacroError(404, "첨부 파일을 찾을 수 없습니다.", "MACRO_FILE_NOT_FOUND")
+        content = bytes(row["content"] or b"")
+        return {
+            "id": str(row["id"]),
+            "macro_id": str(row["macro_id"]),
+            "filename": row["filename"],
+            "content_type": row["content_type"] or "application/octet-stream",
+            "size_bytes": int(row["size_bytes"] or len(content)),
+            "created_at": row["created_at"],
+            "content_base64": base64.b64encode(content).decode("ascii"),
+        }
 
 
 Model = MacroStore()

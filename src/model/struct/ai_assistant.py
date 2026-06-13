@@ -465,7 +465,7 @@ class AIAssistant:
         macro = self._server_status_macro_payload()
         return {
             "answer": (
-                "- 전역 매크로 관리 화면으로 이동해 `서버 상태 한눈에 보기` 매크로를 추가합니다.\n"
+                "- 매크로 화면으로 이동해 `서버 상태 한눈에 보기` 매크로를 추가합니다.\n"
                 "- 매크로는 CPU, 메모리, 디스크, Docker 데몬, 컨테이너, Swarm 서비스/노드 상태를 한 번에 출력합니다.\n"
                 "- 같은 이름의 매크로가 이미 있으면 최신 스크립트로 갱신합니다."
             ),
@@ -475,7 +475,7 @@ class AIAssistant:
                 {
                     "type": "navigate",
                     "target": "/macros",
-                    "reason": "전역 매크로 관리 화면으로 이동",
+                    "reason": "매크로 화면으로 이동",
                 },
                 {
                     "type": "app_event",
@@ -492,9 +492,9 @@ class AIAssistant:
                     "reason": "매크로 생성 후 실제 출력 확인",
                 },
                 {
-                    "label": "서버 화면 열기",
-                    "prompt": "서버 관리 화면으로 이동해서 매크로 실행 위치를 보여줘",
-                    "reason": "서버 상세의 매크로 탭으로 이어서 이동",
+                    "label": "매크로 화면 열기",
+                    "prompt": "매크로 화면으로 이동해서 실행 대상을 선택하는 위치를 보여줘",
+                    "reason": "매크로 화면에서 실행 대상 선택 위치 확인",
                 },
             ],
             "confidence": "high",
@@ -507,19 +507,19 @@ class AIAssistant:
             "answer": (
                 "- 마스터 노드에서 `서버 상태 한눈에 보기` 매크로 실행을 시작합니다.\n"
                 "- 전역 매크로가 없으면 생성하고, 있으면 최신 스크립트로 갱신한 뒤 실행합니다.\n"
-                "- 실행 로그는 서버 관리 화면의 매크로 탭에서 확인할 수 있습니다."
+                "- 실행 로그는 매크로 화면에서 확인할 수 있습니다."
             ),
             "summary": "마스터 노드에서 서버 상태 요약 매크로를 실행하는 순차 액션을 준비했습니다.",
             "needs_confirmation": False,
             "client_actions": [
                 {
                     "type": "navigate",
-                    "target": "/servers",
-                    "reason": "서버 관리 화면으로 이동",
+                    "target": "/macros",
+                    "reason": "매크로 화면으로 이동",
                 },
                 {
                     "type": "app_event",
-                    "target": "server.run_macro",
+                    "target": "macro.run",
                     "payload": {
                         "node_selector": "local_master",
                         "macro_name": macro["name"],
@@ -891,14 +891,14 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 "The browser executes client_actions in order and waits after navigation, so multi-step workflows can navigate first and then click, fill, focus, or dispatch an app_event on the destination screen.",
                 "The browser already shows the current TODO item above the input. Do not repeat the planning TODO list in the answer; explain the result of the current TODO instead.",
                 "When useful, use Codex's built-in TODO/plan update mechanism early in the turn. The UI consumes those plan updates from the Codex JSON stream; do not put the TODO list only in the final answer JSON.",
-                "Use app_event for first-class Docker Infra page commands that are safer than brittle field automation. Supported app_event commands: target='macro.create_global' with payload {name, description, script, enabled, update_existing}; target='server.run_macro' with payload {node_selector, node_id, macro_name, macro, args}.",
+                "Use app_event for first-class Docker Infra page commands that are safer than brittle field automation. Supported app_event commands: target='macro.create_global' with payload {name, description, script, enabled, update_existing}; target='macro.run' with payload {node_selector, node_id, macro_name, macro, args}.",
                 "Use api_request when the user asks you to operate a Docker Infra menu through the Swagger/OpenAPI catalog. Prefer api_request over brittle click/fill automation whenever openapi_guidance.operations contains the needed page command. Choose operation_id only from openapi_guidance.operations and provide body/params with required fields.",
                 "Treat openapi_guidance.mcp_action_catalog as the Docker Infra MCP tool catalog. Pick the matching docker_infra.* tool first, then emit the corresponding api_request operation_id.",
                 "For service MCP tools that require service_id, if the user names a service but the id is not visible, put body.service_name with the exact name. The browser resolves service_name to service_id before calling the API.",
                 "For chained api_request workflows, set save_as on the action whose response is needed, then reference it in later params/body strings as {{alias.path.to.value}}. The browser resolves references from the API response data object before sending the later request. Example: services_create.create with save_as='created_service', then services_create.deploy_background body {'service_id': '{{created_service.result.service.id}}'}, then services.refresh_status body {'service_id': '{{created_service.result.service.id}}'}.",
                 "Read safety api_request actions may run directly for explicit inspection/refresh requests. Write safety actions require explicit user intent in the current message. Destructive safety actions require needs_confirmation=true unless the current message explicitly confirms the exact destructive operation.",
                 "When the user asks to add a macro that checks server status at a glance, navigate to /macros and dispatch app_event macro.create_global with a safe read-only shell script.",
-                "When the user asks to run the server status macro on the master node, navigate to /servers and dispatch app_event server.run_macro with node_selector='local_master' and the server status macro payload.",
+                "When the user asks to run the server status macro on the master node, navigate to /macros and dispatch app_event macro.run with node_selector='local_master' and the server status macro payload.",
                 "Return client_actions only when the current user message explicitly asks you to navigate, click, fill, save, run, refresh, close, or otherwise operate a visible UI element. For informational questions, analysis, summaries, inspections, and recommendations, leave client_actions empty and use suggested_actions instead.",
                 "Do not return client_actions for destructive or irreversible operations unless the user has explicitly confirmed the exact action in the current message. For those cases set needs_confirmation=true and explain what confirmation is needed.",
                 "Never delete Docker Infra itself, stop/remove its control services or containers, shut down/reboot the OS, wipe disks, or recursively delete OS-critical paths.",

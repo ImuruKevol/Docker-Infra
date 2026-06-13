@@ -17,6 +17,9 @@ REPORTER_TOKEN_TYPE = shared.REPORTER_TOKEN_TYPE
 NodeError = shared.NodeError
 _node_to_dict = shared.node_to_dict
 _credential_to_public = shared.credential_to_public
+_container_items = shared.container_items
+_container_summary = shared.container_summary
+_normalize_container_item = shared.normalize_container_item
 
 
 class NodeService(NodeLocalMasterMixin, NodeRegistryMixin, NodeManageMixin, NodeDeleteMixin, NodeRuntimeMixin, NodeBackupRegistryMixin, NodeJoinMixin, NodeReporterMixin):
@@ -65,6 +68,78 @@ class NodeService(NodeLocalMasterMixin, NodeRegistryMixin, NodeManageMixin, Node
                     cursor.execute("SELECT * FROM nodes ORDER BY is_local_master DESC, created_at ASC, name ASC")
                 return [_node_to_dict(row) for row in cursor.fetchall()]
 
+    def _runtime_summary_from_containers(self, containers, service_maps=None, env=None):
+        items = _container_items(containers or {})
+        summary = _container_summary(items)
+        if not items:
+            return {
+                "service_count": 0,
+                "container_total": summary["total"],
+                "container_running": summary["running"],
+                "container_stopped": summary["stopped"],
+            }
+        by_namespace, by_stack = service_maps or self._services_map(env=env)
+        service_keys = set()
+        for raw_item in items:
+            service = self._match_service(_normalize_container_item(raw_item), by_namespace, by_stack)
+            if not service:
+                continue
+            key = service.get("namespace") or service.get("id") or service.get("stack_name")
+            if key:
+                service_keys.add(str(key))
+        return {
+            "service_count": len(service_keys),
+            "container_total": summary["total"],
+            "container_running": summary["running"],
+            "container_stopped": summary["stopped"],
+        }
+
+    def list_with_runtime_summary(self, test_run_id=None, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                if test_run_id:
+                    cursor.execute(
+                        """
+                        SELECT n.*, m.containers AS latest_containers
+                        FROM nodes n
+                        LEFT JOIN LATERAL (
+                            SELECT containers
+                            FROM node_metrics
+                            WHERE node_id = n.id
+                            ORDER BY reported_at DESC, created_at DESC
+                            LIMIT 1
+                        ) m ON true
+                        WHERE n.test_run_id = %s
+                        ORDER BY n.is_local_master DESC, n.created_at ASC, n.name ASC
+                        """,
+                        (test_run_id,),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT n.*, m.containers AS latest_containers
+                        FROM nodes n
+                        LEFT JOIN LATERAL (
+                            SELECT containers
+                            FROM node_metrics
+                            WHERE node_id = n.id
+                            ORDER BY reported_at DESC, created_at DESC
+                            LIMIT 1
+                        ) m ON true
+                        ORDER BY n.is_local_master DESC, n.created_at ASC, n.name ASC
+                        """
+                    )
+                rows = [dict(row) for row in cursor.fetchall()]
+
+        service_maps = self._services_map(env=env) if rows else ({}, {})
+        nodes = []
+        for row in rows:
+            latest_containers = row.pop("latest_containers", None)
+            node = _node_to_dict(row)
+            node["runtime_summary"] = self._runtime_summary_from_containers(latest_containers, service_maps=service_maps, env=env)
+            nodes.append(node)
+        return nodes
+
     def overview_summary(self, selected_id=None, auto_sync_local_master=False, env=None):
         sync_result = None
         if auto_sync_local_master:
@@ -72,7 +147,7 @@ class NodeService(NodeLocalMasterMixin, NodeRegistryMixin, NodeManageMixin, Node
                 sync_result = self.sync_local_master(env=env)
             except Exception as exc:
                 sync_result = {"ok": False, "message": str(exc)}
-        nodes = self.list(env=env)
+        nodes = self.list_with_runtime_summary(env=env)
         selected = None
         if nodes:
             selected = next((node for node in nodes if node["id"] == selected_id), None) if selected_id else None
@@ -86,7 +161,7 @@ class NodeService(NodeLocalMasterMixin, NodeRegistryMixin, NodeManageMixin, Node
                 sync_result = self.sync_local_master(env=env)
             except Exception as exc:
                 sync_result = {"ok": False, "message": str(exc)}
-        nodes = self.list(env=env)
+        nodes = self.list_with_runtime_summary(env=env)
         selected = None
         panel = {"containers": [], "service_groups": [], "unmanaged_containers": [], "cached": True}
         if nodes:

@@ -121,7 +121,7 @@ def ensure_local_master():
                 result["local_master"] = selected
             except Exception as exc:
                 monitoring_result = {"status": "failed", "message": str(exc)}
-        nodes = nodes_model.list()
+        nodes = nodes_model.list_with_runtime_summary()
         containers = nodes_model.containers(selected["id"])["containers"] if selected else []
         payload = _with_monitoring_state(
             {"result": result, "monitoring_auto_configure": monitoring_result, "nodes": nodes, "selected": selected, "containers": containers},

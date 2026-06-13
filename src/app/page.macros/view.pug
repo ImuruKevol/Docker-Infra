@@ -4,7 +4,7 @@ header(class="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-bl
             div(class="flex items-center gap-2 text-xs font-medium text-zinc-500 dark:text-zinc-400")
                 i(class="fa-solid fa-bolt")
                 span 매크로
-            h1(class="mt-1 text-xl font-semibold text-zinc-950 dark:text-zinc-50") 전역 매크로
+            h1(class="mt-1 text-xl font-semibold text-zinc-950 dark:text-zinc-50") 매크로
         div(class="flex flex-wrap items-center gap-2")
             button(type="button", (click)="load()", class="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
                 i(class="fa-solid fa-rotate-right")
@@ -14,138 +14,132 @@ main(class="space-y-5 px-5 py-5")
     div(*ngIf="loading()", class="h-32 rounded-md border border-zinc-200 bg-white p-5 text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400") 정보를 불러오는 중입니다.
     div(*ngIf="error()", class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300") {{error()}}
 
-    div(*ngIf="!loading() && !error()", class="space-y-5")
-        section(*ngIf="!isMacroDetailScreen()", class="grid grid-cols-1 gap-3 md:grid-cols-3")
-            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
-                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 전체 매크로
-                p(class="mt-2 text-2xl font-semibold text-zinc-950 dark:text-zinc-50") {{summary()?.total || 0}}
-            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
-                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 사용 가능
-                p(class="mt-2 text-2xl font-semibold text-zinc-950 dark:text-zinc-50") {{summary()?.enabled || 0}}
-            div(class="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900")
-                p(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") 비활성화
-                p(class="mt-2 text-2xl font-semibold text-zinc-950 dark:text-zinc-50") {{summary()?.disabled || 0}}
-
-        section(class="space-y-5")
-            div(*ngIf="!isMacroDetailScreen()", class="overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-                div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 lg:flex-row lg:items-end lg:justify-between")
+    div(*ngIf="!loading() && !error()", class="grid grid-cols-1 gap-5 xl:grid-cols-[340px_minmax(0,1fr)]")
+        section(class="min-w-0 overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+            div(class="border-b border-zinc-200 px-3 py-3 dark:border-zinc-800")
+                div(class="flex items-center justify-between gap-3")
                     div
-                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 매크로 보드
-                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 전역 매크로는 검색 결과 기준 20개 단위로 표시하고 상세는 별도 화면에서 엽니다.
-                    div(class="flex flex-col gap-2 md:flex-row md:items-end")
-                        label(class="block min-w-72")
-                            span(class="mb-1 block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 검색
-                            input(type="text", [ngModel]="search()", (ngModelChange)="setMacroSearch($event)", placeholder="매크로 이름 또는 설명 검색", class="h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                        span(class="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{macroBoardSummary()}}
-                        button(type="button", (click)="openAddMacro()", [disabled]="busy()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
-                            i(class="fa-solid fa-plus")
-                            span 매크로 추가
-                div(*ngIf="filteredMacros().length > 0", class="overflow-x-auto")
-                    table(class="w-full min-w-[800px] table-fixed divide-y divide-zinc-100 text-sm dark:divide-zinc-800")
-                        thead(class="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
-                            tr
-                                th(class="px-4 py-2 text-left font-semibold") 매크로
-                                th(class="w-36 px-4 py-2 text-left font-semibold") 상태
-                                th(class="w-32 px-4 py-2 text-left font-semibold") 첨부
-                                th(class="w-44 px-4 py-2 text-left font-semibold") 수정일
-                        tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
-                            tr(*ngFor="let macro of pagedMacros()", role="button", tabindex="0", [attr.aria-label]="'매크로 상세로 이동: ' + (macro.name || '')", (click)="selectMacro(macro.id)", (keydown.enter)="selectMacro(macro.id)", (keydown.space)="$event.preventDefault(); selectMacro(macro.id)", class="cursor-pointer align-top transition hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-sky-500 dark:hover:bg-zinc-800/60", [ngClass]="selectedMacroId() === macro.id ? 'bg-sky-50 dark:bg-sky-950/20' : ''")
-                                td(class="px-4 py-3")
-                                    p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50", [title]="macro.name") {{macro.name}}
-                                    p(*ngIf="macro.description", class="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{macro.description}}
-                                td(class="px-4 py-3")
-                                    span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="statusClass(macro.enabled)") {{macro.enabled ? '사용 가능' : '비활성화'}}
-                                td(class="px-4 py-3")
-                                    span(class="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300")
-                                        i(class="fa-solid fa-paperclip")
-                                        span {{macroFileCount(macro)}}개
-                                td(class="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300") {{formatDate(macro.updated_at || macro.created_at)}}
-                div(*ngIf="filteredMacros().length === 0", class="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 전역 매크로가 없습니다.
-                div(*ngIf="macroPagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
-                    p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개
-                    wiz-portal-season-pagination([current]="macroPagination().current", [start]="macroPagination().start", [end]="macroPagination().end", [maxlength]="10", (pageMove)="moveMacroPage($event)")
+                        h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 매크로 목록
+                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{macroBoardSummary()}}
+                    button(type="button", (click)="openAddMacro()", [disabled]="busy()", class="inline-flex h-8 shrink-0 items-center gap-2 rounded-md bg-zinc-950 px-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                        i(class="fa-solid fa-plus")
+                        span 추가
+                div(class="mt-3")
+                    input(type="text", [ngModel]="search()", (ngModelChange)="setMacroSearch($event)", placeholder="매크로 검색", class="h-8 w-full rounded-md border border-zinc-300 bg-white px-3 text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
 
-            div(*ngIf="isMacroDetailScreen()", class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
-                div(class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                    div(class="flex min-w-0 items-start gap-3")
-                        button(type="button", (click)="closeMacroDetail()", [disabled]="busy()", class="mt-0.5 inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-zinc-300 bg-white px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                            i(class="fa-solid fa-arrow-left")
-                            span 목록
+            div(*ngIf="filteredMacros().length > 0", class="divide-y divide-zinc-100 dark:divide-zinc-800")
+                button(*ngFor="let macro of pagedMacros()", type="button", (click)="selectMacro(macro.id)", class="block w-full px-3 py-2 text-left transition hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-sky-500 dark:hover:bg-zinc-800/60", [ngClass]="selectedMacroId() === macro.id && !isEditingMacro() ? 'bg-sky-50 dark:bg-sky-950/20' : ''")
+                    div(class="flex min-w-0 items-center justify-between gap-2")
                         div(class="min-w-0")
-                            div(class="flex flex-wrap items-center gap-2")
-                                span(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") 매크로 상세
-                                h2(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{selectedMacro()?.name || '전역 매크로'}}
-                            p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{selectedMacro()?.description || '서버 상세의 매크로 탭에서 실행할 수 있습니다.'}}
-                    div(*ngIf="selectedMacro()", class="flex items-center gap-2")
+                            p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50", [title]="macro.name") {{macro.name}}
+                        span(*ngIf="macroFileCount(macro)", class="inline-flex shrink-0 items-center gap-1 rounded-md border border-zinc-200 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300")
+                            i(class="fa-solid fa-paperclip")
+                            span {{macroFileCount(macro)}}
+            div(*ngIf="filteredMacros().length === 0", class="px-3 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") 등록된 매크로가 없습니다.
+            div(*ngIf="macroPagination().total > 0", class="flex flex-col gap-2 border-t border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 10개
+                wiz-portal-season-pagination([current]="macroPagination().current", [start]="macroPagination().start", [end]="macroPagination().end", [maxlength]="10", (pageMove)="moveMacroPage($event)")
+
+        section(class="min-w-0 overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+            div(*ngIf="!selectedMacro() && !isEditingMacro()", class="flex min-h-[620px] items-center justify-center px-4 py-14 text-center text-sm text-zinc-500 dark:text-zinc-400") 왼쪽 목록에서 매크로를 선택하세요.
+
+            div(*ngIf="selectedMacro() && !isEditingMacro()", class="flex min-h-[620px] flex-col")
+                div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 lg:flex-row lg:items-start lg:justify-between")
+                    div(class="min-w-0")
+                        h2(class="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50") {{selectedMacro()?.name}}
+                        p(class="mt-1 whitespace-pre-line text-xs text-zinc-500 dark:text-zinc-400") {{selectedMacroDescription()}}
+                    div(class="flex shrink-0 items-center gap-2")
                         button(type="button", (click)="openEditMacro(selectedMacro())", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                             i(class="fa-solid fa-pen")
                             span 수정
                         button(type="button", (click)="deleteMacro(selectedMacro())", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                             i(class="fa-solid fa-trash")
                             span 삭제
-                div(*ngIf="!selectedMacro()", class="px-4 py-14 text-center text-sm text-zinc-500 dark:text-zinc-400") 매크로 보드에서 항목을 선택하세요.
-                div(*ngIf="selectedMacro()", class="space-y-4 px-4 py-4")
-                    div(class="flex flex-wrap items-center gap-2")
-                        span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="statusClass(selectedMacro()?.enabled)") {{selectedMacro()?.enabled ? '사용 가능' : '비활성화'}}
-                        span(class="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300")
-                            i(class="fa-solid fa-paperclip")
-                            span {{macroFileSummary(selectedMacro())}}
-                        span(class="text-xs text-zinc-500 dark:text-zinc-400") 수정 {{formatDate(selectedMacro()?.updated_at)}}
+
+                div(class="space-y-4 border-b border-zinc-200 px-4 py-4 dark:border-zinc-800")
+                    div(class="grid grid-cols-1 gap-2 xl:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto]")
+                        div(class="inline-flex h-10 rounded-md border border-zinc-300 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-950")
+                            button(type="button", (click)="setRunTargetType('server')", class="inline-flex h-8 items-center justify-center rounded px-3 text-xs font-semibold", [ngClass]="runTargetType() === 'server' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'")
+                                i(class="fa-solid fa-server mr-1.5")
+                                span 서버
+                            button(type="button", (click)="setRunTargetType('service')", class="inline-flex h-8 items-center justify-center rounded px-3 text-xs font-semibold", [ngClass]="runTargetType() === 'service' ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'")
+                                i(class="fa-solid fa-cube mr-1.5")
+                                span 서비스
+                        div(*ngIf="runTargetType() === 'server'", class="min-w-0 xl:col-span-2")
+                            wiz-component-search-select([items]="serverTargetItems()", [value]="selectedNodeId()", (valueChange)="selectedNodeId.set($event)", [placeholder]="'서버 선택'", [searchPlaceholder]="'서버 검색'", [emptyText]="'등록된 서버가 없습니다.'")
+                        div(*ngIf="runTargetType() === 'service'", class="min-w-0")
+                            wiz-component-search-select([items]="serviceTargetServiceItems()", [value]="selectedServiceId()", (valueChange)="selectServiceTargetService($event)", [placeholder]="'서비스 선택'", [searchPlaceholder]="'서비스 검색'", [emptyText]="'실행 중인 서비스가 없습니다.'")
+                        div(*ngIf="runTargetType() === 'service'", class="min-w-0")
+                            wiz-component-search-select([items]="serviceContainerTargetItems()", [value]="selectedServiceTargetId()", (valueChange)="selectServiceContainerTarget($event)", [placeholder]="'컨테이너 선택'", [searchPlaceholder]="'컨테이너 검색'", [emptyText]="'선택한 서비스에 실행 중인 컨테이너가 없습니다.'", [disabled]="!selectedServiceId()")
+                        button(type="button", (click)="runSelectedMacro()", [disabled]="!canRunSelectedMacro()", class="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                            i(class="fa-solid", [ngClass]="busy() ? 'fa-spinner fa-spin' : 'fa-play'")
+                            span 실행
+                    div(class="grid grid-cols-1 gap-2 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center")
+                        label(class="inline-flex w-fit max-w-full items-center gap-2 rounded-md border border-zinc-200 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:text-zinc-200")
+                            input(type="checkbox", [ngModel]="macroArgsEnabled()", (ngModelChange)="macroArgsEnabled.set($event)", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
+                            span 실행 인자 사용
+                        input(*ngIf="macroArgsEnabled()", type="text", [ngModel]="macroArgsInput()", (ngModelChange)="macroArgsInput.set($event)", placeholder="예: --force prod", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                    div(*ngIf="runTargetError()", class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300") {{runTargetError()}}
+                    div(*ngIf="macroRunResult()", class="rounded-md border border-zinc-200 dark:border-zinc-800")
+                        div(class="flex flex-col gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
+                            p(class="text-xs font-semibold text-zinc-600 dark:text-zinc-300") {{macroRunTargetLabel()}}
+                            span(class="inline-flex w-fit rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="operationStatusClass(macroRunStatus())") {{operationStatusLabel(macroRunStatus())}}
+                        pre(*ngIf="macroRunLogText()", class="max-h-52 overflow-auto bg-zinc-50 px-3 py-3 font-mono text-xs leading-5 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100") {{macroRunLogText()}}
+                        div(*ngIf="!macroRunLogText()", class="px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400") 실행 로그를 기다리는 중입니다.
+
+                div(class="space-y-4 px-4 py-4")
                     div(*ngIf="macroFilesFor(selectedMacro()).length", class="rounded-md border border-zinc-200 dark:border-zinc-800")
                         div(class="border-b border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-600 dark:border-zinc-800 dark:text-zinc-300") 첨부 파일
-                        div(*ngFor="let file of macroFilesFor(selectedMacro())", class="flex items-center justify-between gap-3 border-t border-zinc-100 px-3 py-2 first:border-t-0 dark:border-zinc-800")
+                        button(*ngFor="let file of macroFilesFor(selectedMacro())", type="button", (click)="downloadMacroFile(file, $event)", class="flex w-full items-center justify-between gap-3 border-t border-zinc-100 px-3 py-2 text-left first:border-t-0 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/60")
                             div(class="min-w-0 text-xs text-zinc-700 dark:text-zinc-200")
-                                i(class="fa-solid fa-file mr-2 text-zinc-400")
+                                i(class="fa-solid fa-file-arrow-down mr-2 text-zinc-400")
                                 span {{file.filename}}
                             span(class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400") {{formatFileSize(file.size_bytes)}}
-                    pre(class="max-h-[520px] overflow-auto rounded-md bg-zinc-950 px-3 py-3 text-xs text-zinc-100") {{selectedMacro()?.script}}
+                    div
+                        div(class="mb-2 flex items-center justify-between gap-2")
+                            h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 코드
+                            span(class="text-xs text-zinc-500 dark:text-zinc-400") shell
+                        pre(class="min-h-[340px] max-h-[560px] overflow-auto rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 font-mono text-xs leading-5 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100") {{selectedMacro()?.script}}
 
-div(*ngIf="modalOpen()", class="fixed inset-0 z-40 flex items-center justify-center px-4 py-6")
-    div(class="absolute inset-0 bg-zinc-950/50", (click)="closeModal()")
-    section(class="relative w-full max-w-5xl rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
-        div(class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            div
-                h2(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") {{modalTitle()}}
-                p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 모든 서버에서 재사용할 공통 스크립트입니다.
-            button(type="button", (click)="closeModal()", [disabled]="busy()", class="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
-                i(class="fa-solid fa-xmark")
-        div(class="grid grid-cols-1 gap-4 px-5 py-4 lg:grid-cols-[320px_1fr]")
-            div(class="space-y-4")
-                label(class="block")
-                    span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 이름
-                    input(type="text", [(ngModel)]="macroForm.name", placeholder="예: Docker 점검", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                label(class="block")
-                    span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 설명
-                    textarea([(ngModel)]="macroForm.description", rows="4", class="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                label(class="flex items-center gap-2 rounded-md border border-zinc-200 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:text-zinc-200")
-                    input(type="checkbox", [(ngModel)]="macroForm.enabled", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
-                    span 사용 상태 유지
-                div(class="rounded-md border border-zinc-200 dark:border-zinc-800")
-                    div(class="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                        span(class="text-xs font-semibold text-zinc-600 dark:text-zinc-300") 첨부 파일
-                        input(#macroFileInput="", type="file", multiple, class="hidden", (change)="selectMacroFiles($event)")
-                        button(type="button", (click)="macroFileInput.click()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                            i(class="fa-solid fa-upload")
-                            span 추가
-                    div(*ngIf="existingMacroFiles().length === 0 && pendingMacroFiles().length === 0", class="px-3 py-4 text-xs text-zinc-500 dark:text-zinc-400") 첨부 파일 없음
-                    div(*ngFor="let file of existingMacroFiles()", class="flex items-center justify-between gap-2 border-t border-zinc-100 px-3 py-2 first:border-t-0 dark:border-zinc-800")
-                        div(class="min-w-0 text-xs text-zinc-700 dark:text-zinc-200")
-                            i(class="fa-solid fa-file mr-2 text-zinc-400")
-                            span {{file.filename}}
-                            span(class="ml-2 text-zinc-400") {{formatFileSize(file.size_bytes)}}
-                        button(type="button", (click)="removeExistingMacroFile(file.id)", [disabled]="busy()", class="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
-                            i(class="fa-solid fa-xmark")
-                    div(*ngFor="let file of pendingMacroFiles(); let i = index", class="flex items-center justify-between gap-2 border-t border-zinc-100 px-3 py-2 first:border-t-0 dark:border-zinc-800")
-                        div(class="min-w-0 text-xs text-sky-700 dark:text-sky-300")
-                            i(class="fa-solid fa-file-arrow-up mr-2")
-                            span {{file.name}}
-                            span(class="ml-2 text-zinc-400") {{formatFileSize(file.size)}}
-                        button(type="button", (click)="removePendingMacroFile(i)", [disabled]="busy()", class="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
-                            i(class="fa-solid fa-xmark")
-            div(class="rounded-md border border-zinc-200 dark:border-zinc-800")
-                nu-monaco-editor([(ngModel)]="macroForm.script", [options]="macroEditorOptions", height="420px")
-        div(class="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")
-            button(type="button", (click)="closeModal()", [disabled]="busy()", class="inline-flex h-9 items-center rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800") 취소
-            button(type="button", (click)="saveMacro()", [disabled]="busy()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
-                i(class="fa-solid fa-floppy-disk")
-                span {{modalSubmitLabel()}}
+            div(*ngIf="isEditingMacro()", class="flex min-h-[620px] flex-col")
+                div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 lg:flex-row lg:items-center lg:justify-between")
+                    div
+                        h2(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") {{formTitle()}}
+                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 이름, 첨부 파일, 실행 코드를 한 화면에서 관리합니다.
+                    div(class="flex items-center gap-2")
+                        button(type="button", (click)="cancelEditMacro()", [disabled]="busy()", class="inline-flex h-8 items-center rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800") 취소
+                        button(type="button", (click)="saveMacro()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md bg-zinc-950 px-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                            i(class="fa-solid fa-floppy-disk")
+                            span {{formSubmitLabel()}}
+                div(class="grid flex-1 grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[320px_minmax(0,1fr)]")
+                    div(class="space-y-4")
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 이름
+                            input(type="text", [(ngModel)]="macroForm.name", placeholder="예: Docker 점검", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        label(class="block")
+                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 설명
+                            textarea([(ngModel)]="macroForm.description", rows="4", class="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                        div(class="rounded-md border border-zinc-200 dark:border-zinc-800")
+                            div(class="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800")
+                                span(class="text-xs font-semibold text-zinc-600 dark:text-zinc-300") 첨부 파일
+                                input(#macroFileInput="", type="file", multiple, class="hidden", (change)="selectMacroFiles($event)")
+                                button(type="button", (click)="macroFileInput.click()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                    i(class="fa-solid fa-upload")
+                                    span 추가
+                            div(*ngIf="existingMacroFiles().length === 0 && pendingMacroFiles().length === 0", class="px-3 py-4 text-xs text-zinc-500 dark:text-zinc-400") 첨부 파일 없음
+                            div(*ngFor="let file of existingMacroFiles()", class="flex items-center justify-between gap-2 border-t border-zinc-100 px-3 py-2 first:border-t-0 dark:border-zinc-800")
+                                div(class="min-w-0 text-xs text-zinc-700 dark:text-zinc-200")
+                                    i(class="fa-solid fa-file mr-2 text-zinc-400")
+                                    span {{file.filename}}
+                                    span(class="ml-2 text-zinc-400") {{formatFileSize(file.size_bytes)}}
+                                button(type="button", (click)="removeExistingMacroFile(file.id)", [disabled]="busy()", class="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                                    i(class="fa-solid fa-xmark")
+                            div(*ngFor="let file of pendingMacroFiles(); let i = index", class="flex items-center justify-between gap-2 border-t border-zinc-100 px-3 py-2 first:border-t-0 dark:border-zinc-800")
+                                div(class="min-w-0 text-xs text-sky-700 dark:text-sky-300")
+                                    i(class="fa-solid fa-file-arrow-up mr-2")
+                                    span {{file.name}}
+                                    span(class="ml-2 text-zinc-400") {{formatFileSize(file.size)}}
+                                button(type="button", (click)="removePendingMacroFile(i)", [disabled]="busy()", class="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                                    i(class="fa-solid fa-xmark")
+                    div(class="min-w-0 rounded-md border border-zinc-200 dark:border-zinc-800")
+                        nu-monaco-editor([(ngModel)]="macroForm.script", [options]="macroEditorOptions", height="520px")

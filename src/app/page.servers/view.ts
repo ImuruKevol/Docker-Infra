@@ -119,7 +119,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     private detailTabKeys() {
-        return ['overview', 'macros', 'files', 'terminal'];
+        return ['overview', 'files', 'terminal'];
     }
 
     private routeNodeId() {
@@ -219,7 +219,7 @@ export class Component implements OnInit, OnDestroy {
     private async runMacroFromAgent(payload: any) {
         await this.waitForServerLoad();
         const node = await this.ensureAgentNodeSelected(payload || {});
-        this.detailTab.set('macros');
+        this.detailTab.set('overview');
         await this.syncNodeRoute(node.id);
         await this.loadMacros(node.id);
         await this.service.render();
@@ -283,7 +283,6 @@ export class Component implements OnInit, OnDestroy {
             macro = this.macros().find((item: any) => item.id === macro?.id) || this.findAgentMacroByName(macroName) || macro;
         }
         if (!macro) throw new Error(`실행할 매크로를 찾을 수 없습니다: ${macroName}`);
-        if (macro.enabled === false) throw new Error(`비활성화된 매크로는 실행할 수 없습니다: ${macroName}`);
         return macro;
     }
 
@@ -359,7 +358,7 @@ export class Component implements OnInit, OnDestroy {
         this.stopMacroRunPolling();
         this.disconnectTerminal(true);
         this.setSelectedNode(node || null);
-        this.applyContainerPanel({ summary: { total: 0, running: 0, stopped: 0 }, service_groups: [] });
+        this.applyContainerPanel({ summary: { total: 0, running: 0, stopped: 0 }, service_groups: [] }, false);
         this.terminalExpanded.set(false);
         this.globalMacros.set([]);
         this.macros.set([]);
@@ -389,9 +388,22 @@ export class Component implements OnInit, OnDestroy {
         this.detailError.set('');
     }
 
-    private applyContainerPanel(data: any) {
-        this.containerStats.set(data.summary || { total: 0, running: 0, stopped: 0 });
-        this.serviceGroups.set(data.service_groups || []);
+    private applyContainerPanel(data: any, syncSelectedSummary: boolean = true) {
+        const summary = data.summary || { total: 0, running: 0, stopped: 0 };
+        const serviceGroups = data.service_groups || [];
+        this.containerStats.set(summary);
+        this.serviceGroups.set(serviceGroups);
+        if (syncSelectedSummary && this.selected()?.id) {
+            this.mergeSelectedNode({
+                id: this.selected().id,
+                runtime_summary: {
+                    service_count: serviceGroups.length,
+                    container_total: Number(summary.total || 0),
+                    container_running: Number(summary.running || 0),
+                    container_stopped: Number(summary.stopped || 0),
+                },
+            });
+        }
     }
 
     private errorDetails(details: any[] = []) {
@@ -654,7 +666,6 @@ export class Component implements OnInit, OnDestroy {
             this.loading.set(false);
             await this.service.render();
             if (selected?.id) {
-                void this.loadMacros(selected.id);
                 void this.fetchCachedDetail(selected.id, true, epoch);
             }
             return;
@@ -670,7 +681,6 @@ export class Component implements OnInit, OnDestroy {
         const epoch = this.beginSelection(node);
         await this.syncNodeRoute(node?.id || '');
         await this.service.render();
-        void this.loadMacros(node.id);
         void this.fetchCachedDetail(node.id, false, epoch);
     }
 
@@ -710,7 +720,7 @@ export class Component implements OnInit, OnDestroy {
         const node = this.selected();
         if (!node) return;
         if (node.is_local_master) {
-            void this.alert('중심 서버 정보는 이 서비스가 실행 중인 서버를 기준으로 자동 동기화됩니다.', 'info');
+            void this.alert('중심 서버 정보는 자동으로 동기화됩니다.', 'info');
             return;
         }
         const credential = node.credential || {};
@@ -1234,10 +1244,7 @@ export class Component implements OnInit, OnDestroy {
                 operation: data.operation,
             });
             this.actionModalOpen.set(true);
-            if (data.selected?.id) {
-                void this.loadMacros(data.selected.id);
-                void this.fetchCachedDetail(data.selected.id, true, epoch);
-            }
+            if (data.selected?.id) void this.fetchCachedDetail(data.selected.id, true, epoch);
         } else {
             if (data?.operation) {
                 this.actionTitle.set('서버 등록 해제 실패');
@@ -1979,6 +1986,26 @@ export class Component implements OnInit, OnDestroy {
         return this.nodes().filter((node) => !node.is_local_master).length;
     }
 
+    private nodeRuntimeSummary(node: any) {
+        return node?.runtime_summary || {};
+    }
+
+    public nodeServiceCount(node: any) {
+        return Number(this.nodeRuntimeSummary(node).service_count || 0);
+    }
+
+    public nodeRunningContainerCount(node: any) {
+        return Number(this.nodeRuntimeSummary(node).container_running || 0);
+    }
+
+    public nodeContainerCountTitle(node: any) {
+        const summary = this.nodeRuntimeSummary(node);
+        const total = Number(summary.container_total || 0);
+        const running = Number(summary.container_running || 0);
+        const stopped = Number(summary.container_stopped || Math.max(0, total - running));
+        return `전체 ${total}개 · 실행 ${running}개 · 중지 ${stopped}개`;
+    }
+
     public isSwarmConnected(node: any) {
         if (!node || node.is_local_master) return false;
         return Boolean(node.swarm_node_id || node.status === 'active');
@@ -2026,11 +2053,6 @@ export class Component implements OnInit, OnDestroy {
         return node.is_local_master || node.role === 'local_master' ? '중심 서버' : '일반 서버';
     }
 
-    public roleDescription(node: any) {
-        if (!node) return '-';
-        return node.is_local_master || node.role === 'local_master' ? '이 서비스가 실행 중인 서버' : '저장된 SSH key로 관리하는 서버';
-    }
-
     private isLikelyPrivateHost(value: string) {
         const host = String(value || '').trim();
         if (!host) return false;
@@ -2051,10 +2073,10 @@ export class Component implements OnInit, OnDestroy {
         const publicIp = String(node.public_ip || node.metadata?.public_ip || '').trim();
         const privateHost = host && this.isLikelyPrivateHost(host);
         if (privateHost && publicIp && host !== publicIp) {
-            return `사설 ${host} · 공인 ${publicIp}`;
+            return `${host} · 공인 ${publicIp}`;
         }
-        if (privateHost) return `사설 ${host}`;
-        if (publicIp) return `공인 ${publicIp}`;
+        if (privateHost) return host;
+        if (publicIp) return publicIp;
         return host || '-';
     }
 

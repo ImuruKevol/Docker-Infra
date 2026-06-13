@@ -17,6 +17,9 @@ class MacroManager:
     def delete(self, macro_id, env=None):
         return store.delete(macro_id, env=env)
 
+    def download_file(self, file_id, macro_id=None, env=None):
+        return store.download_file(file_id, macro_id=macro_id, env=env)
+
     def run(self, payload, env=None):
         return runner.run(payload, env=env)
 
