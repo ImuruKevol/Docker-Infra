@@ -433,3 +433,4 @@
 | 2026-06-12 | 005 | 서버 상세 헤더 뱃지 배치 정리 | [상세](devlog/2026-06-12/005-server-detail-header-badges.md) |
 | 2026-06-12 | 006 | 매크로 목록 압축과 서비스-컨테이너 선택 분리 | [상세](devlog/2026-06-12/006-macro-compact-list-service-container-select.md) |
 | 2026-06-13 | 001 | 매크로 실행 인자 사용 옵션 복원 | [상세](devlog/2026-06-13/001-macro-run-args-option-restore.md) |
+| 2026-06-15 | 001 | 로그인 화면 운영 문구와 키워드 카드 개선 | [상세](devlog/2026-06-15/001-access-login-copy-keyword-cards.md) |
