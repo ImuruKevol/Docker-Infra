@@ -645,12 +645,6 @@ export class AppComponent implements OnInit, OnDestroy {
         }
     }
 
-    public async handleAgentEnter(event: KeyboardEvent) {
-        if (event.shiftKey) return;
-        event.preventDefault();
-        await this.sendAgentMessage();
-    }
-
     public async sendAgentMessage(forcedMessage?: string) {
         if (!this.agentReady()) {
             this.agentWidgetOpen = true;

@@ -162,9 +162,9 @@ div(class="ai-agent-shell", [class.ai-agent-shell-open]="agentVisible() && agent
                     div
                         strong {{todo.title}}
                     span {{agentTodoStatusLabel(todo)}}
-        form(*ngIf="agentPanelMode === 'chat' && agentReady()", class="ai-agent-compose", (ngSubmit)="sendAgentMessage()")
-            textarea(name="agentInput", [(ngModel)]="agentInput", [disabled]="agentSending", (keydown.enter)="handleAgentEnter($event)", rows="2", placeholder="메시지 입력")
-            button(type="submit", class="ai-agent-send", [disabled]="agentSending || !agentInput.trim()", aria-label="전송")
+        form(*ngIf="agentPanelMode === 'chat' && agentReady()", class="ai-agent-compose")
+            textarea(name="agentInput", [(ngModel)]="agentInput", [disabled]="agentSending", rows="2", placeholder="메시지 입력")
+            button(type="button", class="ai-agent-send", [disabled]="agentSending || !agentInput.trim()", (click)="sendAgentMessage()", aria-label="요청하기", title="요청하기")
                 i(class="fa-solid fa-paper-plane")
 
 button(*ngIf="agentVisible() && !agentWidgetOpen", type="button", class="ai-agent-surface ai-agent-toggle", [class.ai-agent-toggle-services-create]="isServicesCreateRoute()", [class.ai-agent-toggle-loading]="agentStatusLoading()", [class.ai-agent-toggle-unavailable]="agentUnavailable()", (click)="toggleAgentWidget()", aria-label="AI Agent 열기")
