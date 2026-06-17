@@ -11,25 +11,53 @@ def _normalize_timeout(timeout_seconds):
     if timeout_seconds in (None, ""):
         return DEFAULT_TIMEOUT_SECONDS
     return max(1, min(int(timeout_seconds), MAX_TIMEOUT_SECONDS))
-def _trim(value):
+def _capture_limit(value):
+    if value in (None, ""):
+        return MAX_CAPTURE_CHARS
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return MAX_CAPTURE_CHARS
+
+
+def _trim(value, limit=None):
     if value is None:
         return ""
     text = str(value)
-    if len(text) <= MAX_CAPTURE_CHARS:
+    capture_limit = _capture_limit(limit)
+    if capture_limit <= 0 or len(text) <= capture_limit:
         return text
-    return text[:MAX_CAPTURE_CHARS] + "\n[truncated]"
-def _result(host, command, status, exit_code=None, stdout="", stderr="", duration_ms=0, timed_out=False):
-    return {
+    return text[:capture_limit] + "\n[truncated]"
+
+
+def _is_truncated(value, limit=None):
+    if value is None:
+        return False
+    capture_limit = _capture_limit(limit)
+    return capture_limit > 0 and len(str(value)) > capture_limit
+
+
+def _result(host, command, status, exit_code=None, stdout="", stderr="", duration_ms=0, timed_out=False, capture_limit=None):
+    stdout_truncated = _is_truncated(stdout, capture_limit)
+    stderr_truncated = _is_truncated(stderr)
+    result = {
         "host": host,
         "command": command,
         "command_display": shlex.join(command),
         "status": status,
         "exit_code": exit_code,
-        "stdout": _trim(stdout),
+        "stdout": _trim(stdout, capture_limit),
         "stderr": _trim(stderr),
         "duration_ms": duration_ms,
         "timed_out": timed_out,
     }
+    if stdout_truncated:
+        result["stdout_truncated"] = True
+        result["stdout_capture_limit"] = _capture_limit(capture_limit)
+    if stderr_truncated:
+        result["stderr_truncated"] = True
+        result["stderr_capture_limit"] = MAX_CAPTURE_CHARS
+    return result
 class SSHExecutor:
     def _target(self, host, username=None):
         if username:
@@ -266,7 +294,7 @@ class SSHExecutor:
         if lines:
             return lines[-1][:160]
         return "원인을 확인할 수 없습니다."
-    def run(self, host, command, timeout_seconds=None, username=None, port=None, key_file=None, env=None):
+    def run(self, host, command, timeout_seconds=None, username=None, port=None, key_file=None, env=None, capture_limit=None):
         timeout = _normalize_timeout(timeout_seconds)
         remote_command = shlex.join(command)
         known_hosts_file = self.known_hosts_for_run(host, port=port, env=env)
@@ -302,10 +330,11 @@ class SSHExecutor:
                 stdout=completed.stdout,
                 stderr=completed.stderr,
                 duration_ms=duration_ms,
+                capture_limit=capture_limit,
             )
         except FileNotFoundError as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
-            return _result(host, command, "missing", stderr=str(exc), duration_ms=duration_ms)
+            return _result(host, command, "missing", stderr=str(exc), duration_ms=duration_ms, capture_limit=capture_limit)
         except subprocess.TimeoutExpired as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
             return _result(
@@ -316,5 +345,6 @@ class SSHExecutor:
                 stderr=exc.stderr or f"ssh command timed out after {timeout}s",
                 duration_ms=duration_ms,
                 timed_out=True,
+                capture_limit=capture_limit,
             )
 Model = SSHExecutor()

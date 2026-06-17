@@ -205,9 +205,20 @@ class FileTree:
             }
         if scope == "container":
             normalized = self._container_path(path)
+            item_type = _text(body.get("item_type") or body.get("type")).lower()
+            name = PurePosixPath(normalized).name or "download"
+            if item_type in {"folder", "directory", "dir"}:
+                return {
+                    "path": normalized,
+                    "name": f"{name}.tar.gz",
+                    "content_type": "application/gzip",
+                    "archive": True,
+                    "content_base64": nodes.read_container_directory_archive_base64(self._node_id(context), self._container_id(context), normalized, env=env),
+                }
             return {
                 "path": normalized,
-                "name": PurePosixPath(normalized).name or "download",
+                "name": name,
+                "content_type": "application/octet-stream",
                 "content_base64": nodes.read_container_file_base64(self._node_id(context), self._container_id(context), normalized, env=env),
             }
         _, target = self._resolve_local(scope, context, path, env=env)

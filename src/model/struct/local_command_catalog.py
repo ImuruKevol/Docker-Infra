@@ -178,6 +178,27 @@ def _docker_container_file_download_command(params):
     ]
 
 
+def _docker_container_directory_download_command(params):
+    script = r"""
+set -eu
+container_id="$1"
+target="$2"
+docker exec "$container_id" sh -lc 'test -d "$1"' sh "$target" || exit 44
+tmp="$(mktemp "${TMPDIR:-/tmp}/docker-infra-container-dir.XXXXXX.tar")"
+trap 'rm -f "$tmp"' EXIT
+docker cp "$container_id:$target" - > "$tmp"
+gzip -c "$tmp" | base64 | tr -d "\n"
+""".strip()
+    return [
+        "sh",
+        "-lc",
+        script,
+        "sh",
+        _container_id_param(params),
+        _container_path_param(params),
+    ]
+
+
 def _docker_container_file_write_command(params):
     raw_content = (params or {}).get("content", b"") or b""
     if isinstance(raw_content, str):
@@ -1091,6 +1112,7 @@ COMMAND_SPECS = {
     "docker.container.file.list": {"category": "docker", "factory": _docker_container_file_list_command, "default_timeout_seconds": 20},
     "docker.container.file.read": {"category": "docker", "factory": _docker_container_file_read_command, "default_timeout_seconds": 20},
     "docker.container.file.download": {"category": "docker", "factory": _docker_container_file_download_command, "default_timeout_seconds": 30},
+    "docker.container.directory.download": {"category": "docker", "factory": _docker_container_directory_download_command, "default_timeout_seconds": 120},
     "docker.container.file.write": {"category": "docker", "factory": _docker_container_file_write_command, "destructive": True, "default_timeout_seconds": 60},
     "docker.container.file.mkdir": {"category": "docker", "factory": _docker_container_file_mkdir_command, "destructive": True, "default_timeout_seconds": 20},
     "docker.container.file.rename": {"category": "docker", "factory": _docker_container_file_rename_command, "destructive": True, "default_timeout_seconds": 20},

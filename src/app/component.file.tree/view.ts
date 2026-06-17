@@ -238,6 +238,14 @@ export class Component implements OnInit, OnChanges {
         return `${base} ${tone}`;
     }
 
+    public downloadableItem(item: any) {
+        return Boolean(this.allowRead && (item?.type === 'file' || (this.scope === 'container' && item?.type === 'folder')));
+    }
+
+    public downloadTitle(item: any) {
+        return item?.type === 'folder' ? '폴더 다운로드' : '다운로드';
+    }
+
     public async closePreview() {
         this.previewOpen = false;
         this.previewTitle = '';
@@ -457,13 +465,13 @@ export class Component implements OnInit, OnChanges {
     public async downloadItem(item: any, event?: Event) {
         event?.preventDefault();
         event?.stopPropagation();
-        if (!this.allowRead || item?.type !== 'file') return;
+        if (!this.downloadableItem(item)) return;
         this.busy = true;
         this.error = '';
         await this.render();
         try {
-            const data = await this.request('download', { path: item.path });
-            const blob = this.blobFromBase64(data.content_base64 || '');
+            const data = await this.request('download', { path: item.path, item_type: item.type });
+            const blob = this.blobFromBase64(data.content_base64 || '', data.content_type || 'application/octet-stream');
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
@@ -484,7 +492,7 @@ export class Component implements OnInit, OnChanges {
         return parts[parts.length - 1] || 'download';
     }
 
-    private blobFromBase64(value: string) {
+    private blobFromBase64(value: string, contentType: string = 'application/octet-stream') {
         const binary = atob(value || '');
         const chunks: Uint8Array[] = [];
         for (let index = 0; index < binary.length; index += 8192) {
@@ -495,7 +503,7 @@ export class Component implements OnInit, OnChanges {
             }
             chunks.push(bytes);
         }
-        return new Blob(chunks, { type: 'application/octet-stream' });
+        return new Blob(chunks, { type: contentType || 'application/octet-stream' });
     }
 
     public formatBytes(value: any) {

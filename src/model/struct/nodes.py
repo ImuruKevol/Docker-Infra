@@ -38,7 +38,7 @@ class NodeService(NodeLocalMasterMixin, NodeRegistryMixin, NodeManageMixin, Node
             raise NodeError(404, "node를 찾을 수 없습니다.", "NODE_NOT_FOUND")
         return row
 
-    def _run_ssh_command(self, node, command, timeout_seconds=None, env=None):
+    def _run_ssh_command(self, node, command, timeout_seconds=None, env=None, capture_limit=None):
         credential = node.get("credential") or {}
         key_file = credential.get("key_file") or (credential.get("metadata") or {}).get("key_file")
         username = credential.get("username")
@@ -54,6 +54,7 @@ class NodeService(NodeLocalMasterMixin, NodeRegistryMixin, NodeManageMixin, Node
             port=node.get("ssh_port"),
             key_file=key_file,
             env=env,
+            capture_limit=capture_limit,
         )
 
     def list(self, test_run_id=None, env=None):

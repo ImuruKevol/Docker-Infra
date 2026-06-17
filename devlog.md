@@ -435,3 +435,4 @@
 | 2026-06-13 | 001 | 매크로 실행 인자 사용 옵션 복원 | [상세](devlog/2026-06-13/001-macro-run-args-option-restore.md) |
 | 2026-06-15 | 001 | 로그인 화면 운영 문구와 키워드 카드 개선 | [상세](devlog/2026-06-15/001-access-login-copy-keyword-cards.md) |
 | 2026-06-17 | 001 | AI Agent Enter 요청 전송 비활성화 | [상세](devlog/2026-06-17/001-ai-agent-enter-submit-disable.md) |
+| 2026-06-17 | 002 | 컨테이너 파일 트리 폴더 다운로드 추가 | [상세](devlog/2026-06-17/002-container-directory-download.md) |

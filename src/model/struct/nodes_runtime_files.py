@@ -41,6 +41,7 @@ PROTECTED_SYSTEM_PATHS = {
 }
 PROTECTED_SYSTEM_PREFIXES = {"/dev", "/proc", "/run", "/sys"}
 FILE_LIST_LIMIT = 5000
+CONTAINER_DOWNLOAD_MAX_BASE64_CHARS = 64 * 1024 * 1024
 CONTAINER_PROTECTED_PATHS = {"/", "/dev", "/proc", "/sys"}
 CONTAINER_PROTECTED_PREFIXES = {"/dev", "/proc", "/sys"}
 CONTAINER_FILE_LIST_SCRIPT = r"""
@@ -164,10 +165,10 @@ class NodeRuntimeFilesMixin:
             raise NodeError(409, "실행 중인 컨테이너의 파일만 조회할 수 있습니다.", "CONTAINER_NOT_RUNNING", state=state)
         return node, str(target.get("id") or container_id)
 
-    def _run_container_file_command(self, node, command_id, local_params, remote_command, timeout_seconds=20, env=None):
+    def _run_container_file_command(self, node, command_id, local_params, remote_command, timeout_seconds=20, env=None, capture_limit=None):
         if self._is_local_master_node(node):
-            return self.local_executor.run(command_id, params=local_params or {}, timeout_seconds=timeout_seconds, env=env)
-        return self._run_ssh_command(node, remote_command, timeout_seconds=timeout_seconds, env=env)
+            return self.local_executor.run(command_id, params=local_params or {}, timeout_seconds=timeout_seconds, env=env, capture_limit=capture_limit)
+        return self._run_ssh_command(node, remote_command, timeout_seconds=timeout_seconds, env=env, capture_limit=capture_limit)
 
     def _container_list_command(self, container_id, path, show_hidden, limit):
         return [
@@ -188,6 +189,19 @@ class NodeRuntimeFilesMixin:
 
     def _container_download_command(self, container_id, path):
         return ["docker", "exec", container_id, "sh", "-lc", 'test -f "$1" || exit 44; base64 "$1" | tr -d "\\n"', "sh", path]
+
+    def _container_directory_download_command(self, container_id, path):
+        script = r"""
+set -eu
+container_id="$1"
+target="$2"
+docker exec "$container_id" sh -lc 'test -d "$1"' sh "$target" || exit 44
+tmp="$(mktemp "${TMPDIR:-/tmp}/docker-infra-container-dir.XXXXXX.tar")"
+trap 'rm -f "$tmp"' EXIT
+docker cp "$container_id:$target" - > "$tmp"
+gzip -c "$tmp" | base64 | tr -d "\n"
+""".strip()
+        return ["sh", "-lc", script, "sh", container_id, path]
 
     def _container_write_command(self, container_id, path, content):
         raw = content or b""
@@ -562,10 +576,43 @@ print(json.dumps({"path": base, "items": items, "total_count": total_count, "tru
             {"container_id": container_id, "path": path},
             self._container_download_command(container_id, path),
             timeout_seconds=30,
+            capture_limit=CONTAINER_DOWNLOAD_MAX_BASE64_CHARS,
             env=env,
         )
         if result["status"] != "ok":
             raise NodeError(404, "선택한 컨테이너 파일을 다운로드할 수 없습니다.", "CONTAINER_FILE_DOWNLOAD_FAILED", check=result)
+        if result.get("stdout_truncated"):
+            raise NodeError(
+                413,
+                "선택한 컨테이너 파일이 다운로드 한도보다 큽니다.",
+                "CONTAINER_FILE_DOWNLOAD_TOO_LARGE",
+                limit_base64_chars=CONTAINER_DOWNLOAD_MAX_BASE64_CHARS,
+            )
+        return "".join(str(result.get("stdout") or "").split())
+
+    def read_container_directory_archive_base64(self, node_id, container_id, path, env=None):
+        path = self._normalize_container_path(path)
+        if self._is_protected_container_path(path):
+            raise NodeError(403, "컨테이너 시스템 보호 경로는 다운로드할 수 없습니다.", "CONTAINER_SYSTEM_PATH_PROTECTED", path=path, action="download")
+        node, container_id = self._target_container(node_id, container_id, env=env)
+        result = self._run_container_file_command(
+            node,
+            "docker.container.directory.download",
+            {"container_id": container_id, "path": path},
+            self._container_directory_download_command(container_id, path),
+            timeout_seconds=120,
+            capture_limit=CONTAINER_DOWNLOAD_MAX_BASE64_CHARS,
+            env=env,
+        )
+        if result["status"] != "ok":
+            raise NodeError(404, "선택한 컨테이너 폴더를 다운로드할 수 없습니다.", "CONTAINER_DIRECTORY_DOWNLOAD_FAILED", check=result)
+        if result.get("stdout_truncated"):
+            raise NodeError(
+                413,
+                "선택한 컨테이너 폴더가 다운로드 한도보다 큽니다.",
+                "CONTAINER_DIRECTORY_DOWNLOAD_TOO_LARGE",
+                limit_base64_chars=CONTAINER_DOWNLOAD_MAX_BASE64_CHARS,
+            )
         return "".join(str(result.get("stdout") or "").split())
 
     def write_container_file_bytes(self, node_id, container_id, path, content, env=None):
