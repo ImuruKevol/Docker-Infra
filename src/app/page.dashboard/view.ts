@@ -246,6 +246,11 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
         return this.data()?.nodes || [];
     }
 
+    public nodeDetailRoute(node: any) {
+        const nodeId = String(node?.id || '').trim();
+        return nodeId ? ['/servers', nodeId] : ['/servers'];
+    }
+
     public serviceUsage() {
         return this.data()?.service_usage || { services: [], summary: {} };
     }
@@ -905,9 +910,4 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
         });
     }
 
-    public metricHistoryText() {
-        const history = this.metricHistory();
-        if (!history?.files) return '기록 파일 없음';
-        return `${history.files}개 기록 파일`;
-    }
 }

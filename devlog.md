@@ -436,3 +436,7 @@
 | 2026-06-15 | 001 | 로그인 화면 운영 문구와 키워드 카드 개선 | [상세](devlog/2026-06-15/001-access-login-copy-keyword-cards.md) |
 | 2026-06-17 | 001 | AI Agent Enter 요청 전송 비활성화 | [상세](devlog/2026-06-17/001-ai-agent-enter-submit-disable.md) |
 | 2026-06-17 | 002 | 컨테이너 파일 트리 폴더 다운로드 추가 | [상세](devlog/2026-06-17/002-container-directory-download.md) |
+| 2026-06-18 | 001 | 대시보드 서버 상세 이동과 서비스 상태 배지 정리 | [상세](devlog/2026-06-18/001-dashboard-server-detail-service-badge.md) |
+| 2026-06-18 | 002 | 대시보드 서버/서비스 목록 행 표시 방식 보정 | [상세](devlog/2026-06-18/002-dashboard-row-link-and-service-domain.md) |
+| 2026-06-18 | 003 | 대시보드 서버 목록 제목과 IP 표시 위치 보정 | [상세](devlog/2026-06-18/003-dashboard-server-title-ip-placement.md) |
+| 2026-06-18 | 004 | 대시보드 서버 목록 등록 수 표시 적용 | [상세](devlog/2026-06-18/004-dashboard-server-count-summary.md) |
