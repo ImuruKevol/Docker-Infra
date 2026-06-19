@@ -6,6 +6,7 @@ from psycopg.types.json import Jsonb
 
 connect = wiz.model("db/postgres").connect
 local_executor = wiz.model("struct/local_executor")
+compose_rules = wiz.model("struct/compose_rules")
 nodes = wiz.model("struct/nodes")
 shared = wiz.model("struct/services_shared")
 node_shared = wiz.model("struct/nodes_shared")
@@ -220,6 +221,26 @@ def _container_health(containers):
 
 
 class ServiceStatusMixin:
+    def _service_deployment_context(self, service, env=None):
+        policy = dict((service or {}).get("target_node_policy") or {})
+        metadata = dict((service or {}).get("metadata") or {})
+        placement = dict(metadata.get("placement") or {})
+        mode = policy.get("mode") or placement.get("deployment_mode")
+        network = policy.get("network") or placement.get("network")
+        node_id = _text(policy.get("node_id") or placement.get("node_id"))
+        if node_id:
+            try:
+                node = nodes.detail(node_id, env=env)
+                mode = "swarm" if _text(node.get("swarm_node_id")) else "compose"
+                network = compose_rules.default_network_name(mode)
+            except Exception:
+                pass
+        if not mode and network == compose_rules.BRIDGE_NETWORK:
+            mode = "compose"
+        deployment_mode = compose_rules.normalize_deployment_mode(mode)
+        network_name = network or compose_rules.default_network_name(deployment_mode)
+        return {"deployment_mode": deployment_mode, "network": network_name}
+
     def decorate_runtime_status(self, runtime_status, env=None, node_maps=None):
         if not isinstance(runtime_status, dict):
             return {}
@@ -240,7 +261,26 @@ class ServiceStatusMixin:
 
         return runtime
 
-    def _stack_status(self, stack_name, env=None, node_maps=None):
+    def _stack_status(self, stack_name, env=None, node_maps=None, deployment_mode="swarm"):
+        if deployment_mode == "compose":
+            return {
+                "services": [],
+                "tasks": [],
+                "summary": {
+                    "service_count": 0,
+                    "desired": 0,
+                    "running": 0,
+                    "task_count": 0,
+                    "task_running": 0,
+                    "task_errors": 0,
+                    "task_error_history": 0,
+                },
+                "checks": {
+                    "services": {"status": "skipped", "exit_code": None, "reason": "compose_deployment"},
+                    "tasks": {"status": "skipped", "exit_code": None, "reason": "compose_deployment"},
+                    "node_mapping": {"status": "skipped", "exit_code": None, "reason": "compose_deployment"},
+                },
+            }
         node_maps = node_maps or _node_lookup_maps(env=env, include_swarm=True)
         params = {"stack_name": stack_name}
         services_result = local_executor.run("service.stack.services", params=params, timeout_seconds=20, env=env)
@@ -363,12 +403,16 @@ class ServiceStatusMixin:
                 cursor.execute("SELECT * FROM service_domains WHERE service_id = %s ORDER BY created_at ASC", (service_id,))
                 domains = [_row(row) for row in cursor.fetchall()]
         stack_name = service.get("stack_name") or service.get("namespace")
-        node_maps = _node_lookup_maps(env=env, include_swarm=True)
+        deployment_context = self._service_deployment_context(service, env=env)
+        include_swarm = deployment_context["deployment_mode"] != "compose"
+        node_maps = _node_lookup_maps(env=env, include_swarm=include_swarm)
         runtime = {
             "checked_at": _now(),
             "operation_id": operation_id,
             "stack_name": stack_name,
-            "stack": self._stack_status(stack_name, env=env, node_maps=node_maps),
+            "deployment_mode": deployment_context["deployment_mode"],
+            "network": deployment_context["network"],
+            "stack": self._stack_status(stack_name, env=env, node_maps=node_maps, deployment_mode=deployment_context["deployment_mode"]),
             "containers": self._container_status(service.get("namespace"), env=env),
             "domains": self._domain_status(domains, node_maps=node_maps),
         }

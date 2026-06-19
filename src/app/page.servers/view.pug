@@ -33,7 +33,7 @@ main(class="servers-page space-y-5 px-5 py-5")
                                 th(class="w-28 px-4 py-2 text-left font-semibold") 서비스
                                 th(class="w-32 px-4 py-2 text-left font-semibold") 실행 컨테이너
                                 th(class="w-32 px-4 py-2 text-left font-semibold") 역할
-                                th(class="w-32 px-4 py-2 text-left font-semibold") 상태
+                                th(class="w-44 px-4 py-2 text-left font-semibold") 구성
                         tbody(class="divide-y divide-zinc-100 dark:divide-zinc-800")
                             tr(*ngFor="let node of pagedNodes()", role="button", tabindex="0", [attr.aria-label]="'서버 상세로 이동: ' + (node.name || '')", (click)="selectNode(node)", (keydown.enter)="selectNode(node)", (keydown.space)="$event.preventDefault(); selectNode(node)", class="cursor-pointer align-top transition hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-sky-500 dark:hover:bg-zinc-800/60", [ngClass]="isSelected(node) ? 'bg-sky-50 dark:bg-sky-950/20' : ''")
                                 td(class="px-4 py-3")
@@ -41,7 +41,9 @@ main(class="servers-page space-y-5 px-5 py-5")
                                         span(*ngIf="isNodeCollecting(node)", class="inline-flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-sky-500 shadow-[0_0_0_4px_rgba(14,165,233,0.18)]", title="정보 수집 중")
                                         p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50", [title]="node.name") {{node.name}}
                                 td(class="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300")
-                                    p(class="truncate", [title]="nodeHostLabel(node)") {{nodeHostLabel(node)}}
+                                    div(class="flex min-w-0 items-center gap-2")
+                                        span(class="truncate", [title]="nodeHostLabel(node)") {{nodeHostLabel(node)}}
+                                        i(role="img", class="fa-solid shrink-0 text-sm", [ngClass]="[nodeStatusIcon(node), nodeStatusIconClass(node)]", [title]="nodeStatusTitle(node)", [attr.aria-label]="nodeStatusTitle(node)")
                                 td(class="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300")
                                     span(class="font-semibold text-zinc-950 dark:text-zinc-50") {{nodeServiceCount(node)}}개
                                 td(class="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300")
@@ -49,7 +51,8 @@ main(class="servers-page space-y-5 px-5 py-5")
                                 td(class="px-4 py-3")
                                     span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="node.is_local_master ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300' : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300'") {{roleLabel(node)}}
                                 td(class="px-4 py-3")
-                                    span(class="inline-flex shrink-0 rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(node.status)") {{statusLabel(node.status)}}
+                                    div(class="flex flex-wrap gap-1.5")
+                                        span(class="inline-flex shrink-0 rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="swarmBadgeClass(node)") {{deploymentModeText(node)}}
                 div(*ngIf="nodes().length === 0", class="space-y-3 px-4 py-8 text-center")
                     p(class="text-sm font-medium text-zinc-600 dark:text-zinc-300") 등록된 서버가 없습니다.
                     button(type="button", (click)="openAddServer()", class="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
@@ -75,6 +78,8 @@ main(class="servers-page space-y-5 px-5 py-5")
                                         h2(class="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50") {{selected()?.name}}
                                         span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="selected()?.is_local_master ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300' : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300'") {{roleLabel(selected())}}
                                         span(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") IP {{nodeHostLabel(selected())}}
+                                        i(role="img", class="fa-solid shrink-0 text-sm", [ngClass]="[nodeStatusIcon(selected()), nodeStatusIconClass(selected())]", [title]="nodeStatusTitle(selected())", [attr.aria-label]="nodeStatusTitle(selected())")
+                                        span(class="inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="swarmBadgeClass(selected())") {{deploymentModeText(selected())}}
                                         span(*ngIf="isNodeCollecting(selected())", class="inline-flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300")
                                             span(class="h-2 w-2 animate-pulse rounded-full bg-sky-500")
                                             span 정보 수집 중
@@ -324,7 +329,7 @@ div(*ngIf="deleteModalOpen()", class="fixed inset-0 z-50 flex items-center justi
         div(class="space-y-4 px-5 py-4")
             div(class="rounded-md border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-200")
                 p(class="font-semibold") {{deleteConfirmName()}} 서버의 등록 정보를 삭제합니다.
-                p(class="mt-1 text-xs") 대상 서버의 자원 수집 agent, Swarm 연결, 관리용 SSH 공개키를 제거한 뒤 마스터의 등록 정보와 known_hosts를 정리합니다.
+                p(class="mt-1 text-xs") 대상 서버의 자원 수집 agent, 선택적 Swarm 연결, 관리용 SSH 공개키를 제거한 뒤 마스터의 등록 정보와 known_hosts를 정리합니다.
             label(class="block")
                 span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 확인용 서버 이름
                 input(type="text", [ngModel]="deleteConfirmInput()", (ngModelChange)="deleteConfirmInput.set($event)", [placeholder]="deleteConfirmName()", autocomplete="off", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")

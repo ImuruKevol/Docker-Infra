@@ -440,3 +440,7 @@
 | 2026-06-18 | 002 | 대시보드 서버/서비스 목록 행 표시 방식 보정 | [상세](devlog/2026-06-18/002-dashboard-row-link-and-service-domain.md) |
 | 2026-06-18 | 003 | 대시보드 서버 목록 제목과 IP 표시 위치 보정 | [상세](devlog/2026-06-18/003-dashboard-server-title-ip-placement.md) |
 | 2026-06-18 | 004 | 대시보드 서버 목록 등록 수 표시 적용 | [상세](devlog/2026-06-18/004-dashboard-server-count-summary.md) |
+| 2026-06-18 | 005 | Swarm 선택 연동과 Compose 배포 네트워크 분리 | [상세](devlog/2026-06-18/005-swarm-optional-compose-network.md) |
+| 2026-06-18 | 006 | Compose 원격 볼륨 삭제 보강과 Swarm/비Swarm smoke 검증 | [상세](devlog/2026-06-18/006-compose-volume-cleanup-smoke-test.md) |
+| 2026-06-18 | 007 | 에이전트 작업 중 Compose 볼륨 보존 가드 보강 | [상세](devlog/2026-06-18/007-agent-compose-volume-preservation-guard.md) |
+| 2026-06-18 | 008 | 서버 상태 아이콘과 배포 방식 문구 정리 | [상세](devlog/2026-06-18/008-server-status-icon-deployment-labels.md) |

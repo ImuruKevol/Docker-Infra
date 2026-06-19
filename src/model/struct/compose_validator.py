@@ -6,6 +6,7 @@ NAMESPACE_PATTERN = rules.NAMESPACE_PATTERN
 DEFAULT_FILENAME = rules.DEFAULT_FILENAME
 ALLOWED_FILENAMES = rules.ALLOWED_FILENAMES
 OVERLAY_NETWORK = rules.OVERLAY_NETWORK
+BRIDGE_NETWORK = rules.BRIDGE_NETWORK
 DEFAULT_UPDATE_CONFIG = rules.DEFAULT_UPDATE_CONFIG
 DEFAULT_ROLLBACK_CONFIG = rules.DEFAULT_ROLLBACK_CONFIG
 DEFAULT_RESTART_POLICY = rules.DEFAULT_RESTART_POLICY
@@ -15,6 +16,8 @@ _merge_defaults = rules.merge_defaults
 _has_health_check_override = rules.has_health_check_override
 _load_compose = rules.load_compose
 _network_names = rules.network_names
+_normalize_network_name = rules.normalize_network_name
+_network_config = rules.network_config
 _qualify_environment_refs = rules.qualify_environment_refs
 
 
@@ -46,6 +49,7 @@ class ComposeValidator:
         allow_warnings = bool(payload.get("allow_warnings"))
         filename = payload.get("filename") or DEFAULT_FILENAME
         namespace = payload.get("namespace")
+        allowed_network_name = _normalize_network_name(payload)
         has_health_check = _has_health_check_override(payload)
 
         if filename not in ALLOWED_FILENAMES:
@@ -92,24 +96,24 @@ class ComposeValidator:
                 _error("networks", "INVALID_NETWORKS", "Compose networks는 object여야 합니다.")
             )
         if isinstance(root_networks, dict):
-            for network_name in sorted(root_networks):
-                if network_name != OVERLAY_NETWORK:
+            for root_network_name in sorted(root_networks):
+                if root_network_name != allowed_network_name:
                     errors.append(
                         _error(
-                            f"networks.{network_name}",
+                            f"networks.{root_network_name}",
                             "UNSUPPORTED_NETWORK",
-                            f"{OVERLAY_NETWORK} network만 사용할 수 있습니다.",
-                            expected=OVERLAY_NETWORK,
-                            actual=network_name,
+                            f"{allowed_network_name} network만 사용할 수 있습니다.",
+                            expected=allowed_network_name,
+                            actual=root_network_name,
                         )
                     )
-                elif root_networks[network_name] is not None and not isinstance(
-                    root_networks[network_name],
+                elif root_networks[root_network_name] is not None and not isinstance(
+                    root_networks[root_network_name],
                     dict,
                 ):
                     errors.append(
                         _error(
-                            f"networks.{network_name}",
+                            f"networks.{root_network_name}",
                             "INVALID_NETWORK",
                             "Compose network 설정은 object여야 합니다.",
                         )
@@ -162,14 +166,14 @@ class ComposeValidator:
                     )
                 )
             elif not network_names:
-                service["networks"] = [OVERLAY_NETWORK]
-            elif network_names != [OVERLAY_NETWORK]:
+                service["networks"] = [allowed_network_name]
+            elif network_names != [allowed_network_name]:
                 errors.append(
                     _error(
                         f"{service_path}.networks",
-                        "FIXED_OVERLAY_NETWORK_REQUIRED",
-                        f"service network는 {OVERLAY_NETWORK}만 사용할 수 있습니다.",
-                        expected=OVERLAY_NETWORK,
+                        "FIXED_DOCKER_INFRA_NETWORK_REQUIRED",
+                        f"service network는 {allowed_network_name}만 사용할 수 있습니다.",
+                        expected=allowed_network_name,
                         actual=network_names,
                     )
                 )
@@ -210,18 +214,19 @@ class ComposeValidator:
         self._raise_if_errors(errors, warnings=warnings, allow_warnings=allow_warnings)
 
         networks = normalized.setdefault("networks", {})
-        overlay_config = networks.get(OVERLAY_NETWORK)
-        if overlay_config is None:
-            networks[OVERLAY_NETWORK] = {"external": True}
-        elif isinstance(overlay_config, dict):
-            overlay_config["external"] = True
+        network_config = networks.get(allowed_network_name)
+        if network_config is None:
+            networks[allowed_network_name] = _network_config(allowed_network_name)
+        elif isinstance(network_config, dict):
+            network_config.update(_network_config(allowed_network_name))
 
         return {
             "valid": True,
             "namespace": namespace,
             "stack_name": namespace,
             "filename": filename,
-            "network": OVERLAY_NETWORK,
+            "network": allowed_network_name,
+            "deployment_mode": "compose" if allowed_network_name == BRIDGE_NETWORK else "swarm",
             "has_health_check": has_health_check,
             "warnings": warnings,
             "normalized": normalized,

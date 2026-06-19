@@ -27,6 +27,19 @@ DOCKER_SELF_RE = re.compile(
     r"\bdocker\b[^\n;|&]*(?:\b(stop|restart|kill|rm|down)\b|\bservice\s+rm\b|\bstack\s+rm\b)[^\n;|&]*(docker[-_]?infra|season[-_]?wiz|\bwiz\b)",
     re.I,
 )
+DOCKER_COMPOSE_VOLUME_DOWN_RE = re.compile(
+    r"\b(?:docker\s+compose|docker-compose)\b(?=[^\n;|&]*\bdown\b)(?=[^\n;|&]*(?:--volumes?\b|-v\b))",
+    re.I,
+)
+DOCKER_COMPOSE_VOLUME_RM_RE = re.compile(
+    r"\b(?:docker\s+compose|docker-compose)\b(?=[^\n;|&]*\brm\b)(?=[^\n;|&]*(?:--volumes?\b|-v\b))",
+    re.I,
+)
+DOCKER_VOLUME_DELETE_RE = re.compile(r"\bdocker\s+volume\s+(?:rm|remove|prune)\b", re.I)
+DOCKER_SYSTEM_PRUNE_VOLUMES_RE = re.compile(
+    r"\bdocker\s+system\s+prune\b(?=[^\n;|&]*(?:--volumes?\b))",
+    re.I,
+)
 SYSTEMCTL_SELF_RE = re.compile(r"\bsystemctl\s+(stop|disable|mask)\s+(docker[-_]?infra|wiz|season-wiz)\b", re.I)
 OS_CRITICAL_RM_PATHS = {
     "/",
@@ -65,12 +78,18 @@ MESSAGE_FRAMING = "header"
 
 
 def public_node(node):
+    swarm_connected = bool(str(node.get("swarm_node_id") or "").strip())
+    deployment_mode = "swarm" if swarm_connected else "compose"
     return {
         "id": node.get("id"),
         "name": node.get("name"),
         "host": node.get("host"),
         "role": node.get("role"),
         "status": node.get("status"),
+        "swarm_node_id": node.get("swarm_node_id"),
+        "swarm_connected": swarm_connected,
+        "deployment_mode": deployment_mode,
+        "network": node.get("network") or ("docker_infra_overlay" if swarm_connected else "docker_infra_bridge"),
         "is_local_master": node.get("is_local_master"),
         "ssh_port": node.get("ssh_port"),
         "ssh_configured": bool((node.get("ssh") or {}).get("username") and (node.get("ssh") or {}).get("key_file")),
@@ -183,6 +202,38 @@ def critical_command_violation(command):
             reason = critical_rm_target(target)
             if reason:
                 return reason
+    reason = persistent_volume_destruction_violation(command)
+    if reason:
+        return reason
+    return ""
+
+
+def persistent_volume_destruction_allowed():
+    for key in ["ai_permission_scope", "mcp_guidance", "terminal_actions"]:
+        value = CONTEXT.get(key)
+        if not isinstance(value, dict):
+            continue
+        if (
+            value.get("allow_volume_destruction") is True
+            or value.get("allow_persistent_volume_delete") is True
+            or value.get("allow_compose_volume_delete") is True
+        ):
+            return True
+    return False
+
+
+def persistent_volume_destruction_violation(command):
+    if persistent_volume_destruction_allowed():
+        return ""
+    patterns = [
+        ("docker compose down --volumes", DOCKER_COMPOSE_VOLUME_DOWN_RE),
+        ("docker compose rm --volumes", DOCKER_COMPOSE_VOLUME_RM_RE),
+        ("docker volume rm/prune", DOCKER_VOLUME_DELETE_RE),
+        ("docker system prune --volumes", DOCKER_SYSTEM_PRUNE_VOLUMES_RE),
+    ]
+    for label, pattern in patterns:
+        if pattern.search(str(command or "")):
+            return "Persistent Docker volume deletion is blocked by Docker Infra MCP policy: %s" % label
     return ""
 
 
@@ -442,7 +493,13 @@ def tool_service_stack_status(arguments):
         raise ValueError("stack_name is required")
     services = shell_result(["docker", "stack", "services", stack_name, "--format", "{{json .}}"], timeout_seconds=20)
     tasks = shell_result(["docker", "stack", "ps", stack_name, "--no-trunc", "--format", "{{json .}}"], timeout_seconds=20)
-    return {"stack_name": stack_name, "services": services, "tasks": tasks}
+    return {
+        "stack_name": stack_name,
+        "scope": "swarm_only",
+        "note": "For non-Swarm Compose deployments, inspect containers on the selected server with server_collect, container_logs, or ssh_command.",
+        "services": services,
+        "tasks": tasks,
+    }
 
 
 def tool_dns_lookup(arguments):
@@ -751,7 +808,7 @@ TOOLS = {
         "handler": tool_container_action,
     },
     "service_stack_status": {
-        "description": "Collect docker stack services and task status from the local swarm manager.",
+        "description": "Collect docker stack services and task status from the local swarm manager. Swarm-only; for non-Swarm Compose deployments inspect containers on the selected server.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -828,7 +885,7 @@ TOOLS = {
         "handler": tool_server_collect,
     },
     "ssh_command": {
-        "description": "Run an operator-level SSH command on a registered server using the stored Docker Infra SSH key. Only Docker Infra self-destruction and OS-critical commands are blocked.",
+        "description": "Run an operator-level SSH command on a registered server using the stored Docker Infra SSH key. Docker Infra self-destruction, OS-critical commands, and persistent Docker volume deletion are blocked by policy.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -902,7 +959,7 @@ TOOL_POLICIES = {
     },
     "service_stack_status": {
         "category": "runtime",
-        "capability": "Read Docker stack services and task state from the local swarm manager.",
+        "capability": "Read Docker stack services and task state from the local swarm manager. For non-Swarm Compose deployments, use container/server inspection tools instead.",
         "side_effects": "none",
         "permission": "allowed",
         "critical_guards": [],
@@ -952,12 +1009,13 @@ TOOL_POLICIES = {
         "category": "server",
         "capability": "Run an operator-level shell command on a registered server through stored Docker Infra SSH credentials.",
         "side_effects": "depends on command; mutations are allowed unless they cross the critical guard",
-        "permission": "allowed by default; only OS-critical and Docker Infra self-destruction commands are blocked",
+        "permission": "allowed by default; OS-critical commands, Docker Infra self-destruction, and persistent Docker volume deletion are blocked unless explicitly permitted by Docker Infra context",
         "critical_guards": [
             "OS shutdown/reboot/poweroff/halt and disk format/partition/wipe commands are blocked.",
             "Recursive deletion of OS critical paths is blocked.",
             "Recursive deletion of Docker Infra protected roots is blocked.",
             "Stopping/removing Docker Infra control services, containers, or stacks is blocked.",
+            "Persistent Docker volume deletion is blocked: docker compose down --volumes, docker volume rm/prune, and docker system prune --volumes.",
         ],
         "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
     },
@@ -970,14 +1028,21 @@ def mcp_contract():
         "version": "2026-05-28.agent-full-control",
         "permission_mode": PERMISSION_MODE,
         "default_permission": "allow",
-        "guardrail": "Agents may use Docker Infra MCP for broad server control. The MCP server blocks only Docker Infra self-destruction and OS-critical operations.",
+        "guardrail": "Agents may use Docker Infra MCP for broad server control. The MCP server blocks Docker Infra self-destruction, OS-critical operations, and persistent Docker volume deletion unless Docker Infra context explicitly permits volume destruction.",
         "blocked_action_families": [
             "OS shutdown/reboot/poweroff/halt",
             "disk format, partition, wipe, or dd write operations",
             "recursive deletion of OS critical paths",
             "recursive deletion of Docker Infra protected roots",
             "stop/remove/disable Docker Infra control services, containers, or stacks",
+            "persistent Docker volume deletion: docker compose down --volumes, docker volume rm/prune, docker system prune --volumes",
         ],
+        "volume_destruction_policy": {
+            "default": "blocked",
+            "allow_context_flags": ["allow_volume_destruction", "allow_persistent_volume_delete", "allow_compose_volume_delete"],
+            "safe_compose_recreate": "Use docker compose down without --volumes or docker compose up -d --remove-orphans for repair, migration, and redeploy work.",
+            "delete_flow": "Service deletion is handled by Docker Infra service delete APIs, not ad-hoc MCP shell cleanup.",
+        },
         "protected_paths": protected_docker_infra_paths(),
         "probe_policy": "network probes are limited to registered node hosts and allowed_probe_hosts from the request context",
         "tool_count": len(TOOLS),

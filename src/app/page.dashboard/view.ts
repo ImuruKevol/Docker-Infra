@@ -251,6 +251,39 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
         return nodeId ? ['/servers', nodeId] : ['/servers'];
     }
 
+    public nodeDeploymentText(node: any) {
+        return node?.swarm_connected || node?.swarm_node_id ? '클러스터' : '독립 서버';
+    }
+
+    public nodeDeploymentClass(node: any) {
+        if (node?.swarm_connected || node?.swarm_node_id) {
+            return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
+    private nodeStatusTone(node: any) {
+        const status = String(node?.status || '').toLowerCase();
+        if (['unreachable', 'failed', 'error', 'canceled'].includes(status)) return 'danger';
+        if (['pending', 'degraded', 'warning', 'unknown', 'skipped'].includes(status) || !status) return 'warning';
+        return 'ok';
+    }
+
+    public nodeStatusIcon(node: any) {
+        return this.nodeStatusTone(node) === 'ok' ? 'fa-circle-check' : 'fa-triangle-exclamation';
+    }
+
+    public nodeStatusIconClass(node: any) {
+        const tone = this.nodeStatusTone(node);
+        if (tone === 'danger') return 'text-rose-600 dark:text-rose-300';
+        if (tone === 'warning') return 'text-amber-600 dark:text-amber-300';
+        return 'text-emerald-600 dark:text-emerald-300';
+    }
+
+    public nodeStatusTitle(node: any) {
+        return `서버 상태: ${this.statusLabel(String(node?.status || 'unknown').toLowerCase())}`;
+    }
+
     public serviceUsage() {
         return this.data()?.service_usage || { services: [], summary: {} };
     }
@@ -536,22 +569,27 @@ export class Component implements OnInit, AfterViewInit, OnDestroy {
 
     public statusLabel(status: string) {
         const labels: any = {
-            ok: 'OK',
-            degraded: 'Degraded',
-            active: 'Active',
-            pending: 'Pending',
-            running: 'Running',
+            ok: '정상',
+            degraded: '확인 필요',
+            active: '정상',
+            ready: '준비됨',
+            inactive: '정상',
+            pending: '확인 필요',
+            running: '실행 중',
+            unreachable: '접속 불가',
+            warning: '확인 필요',
             deployed: '운영 중',
-            succeeded: 'Succeeded',
-            failed: 'Failed',
-            canceled: 'Canceled',
-            draft: 'Draft',
+            succeeded: '완료',
+            failed: '실패',
+            canceled: '취소됨',
+            draft: '초안',
+            unknown: '알 수 없음',
         };
         return labels[status] || status || '-';
     }
 
     public statusClass(status: string) {
-        if (['ok', 'active', 'succeeded', 'deployed'].includes(status)) {
+        if (['ok', 'active', 'ready', 'inactive', 'succeeded', 'deployed'].includes(status)) {
             return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
         }
         if (['running', 'pending', 'degraded'].includes(status)) {

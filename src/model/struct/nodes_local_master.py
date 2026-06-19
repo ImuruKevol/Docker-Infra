@@ -115,7 +115,7 @@ class NodeLocalMasterMixin:
             "private_host": advertise_address,
             "public_ip": public_ip,
         }
-        status = "active" if swarm.get("ControlAvailable") else _node_status_from_swarm(swarm)
+        status = _node_status_from_swarm(swarm)
         cursor.execute(
             """
             UPDATE nodes

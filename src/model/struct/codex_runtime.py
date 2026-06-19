@@ -19,6 +19,7 @@ from urllib import request as urlrequest
 
 nodes_model = wiz.model("struct/nodes")
 placement_selector = wiz.model("struct/services_placement")
+compose_rules = wiz.model("struct/compose_rules")
 operations = wiz.model("struct/operations")
 
 
@@ -2849,6 +2850,7 @@ class CodexRuntime:
             for item in nodes_model.list(env=env) or []:
                 node = nodes_model.detail(item["id"], env=env)
                 credential = node.get("credential") or {}
+                deployment_mode = "swarm" if str(node.get("swarm_node_id") or "").strip() else "compose"
                 rows.append(
                     {
                         "id": node.get("id"),
@@ -2856,6 +2858,10 @@ class CodexRuntime:
                         "host": node.get("host"),
                         "role": node.get("role"),
                         "status": node.get("status"),
+                        "swarm_node_id": node.get("swarm_node_id"),
+                        "swarm_connected": deployment_mode == "swarm",
+                        "deployment_mode": deployment_mode,
+                        "network": compose_rules.default_network_name(deployment_mode),
                         "is_local_master": node.get("is_local_master"),
                         "ssh_port": node.get("ssh_port"),
                         "ssh": {
@@ -2892,7 +2898,10 @@ class CodexRuntime:
             "allowed_probe_hosts": self._allowed_probe_hosts(request_context, rows),
             "terminal_actions": request_context.get("terminal_actions") or {},
             "runtime_values": {
-                "overlay_network": "docker_infra_overlay",
+                "overlay_network": compose_rules.OVERLAY_NETWORK,
+                "bridge_network": compose_rules.BRIDGE_NETWORK,
+                "network_selection": "Use docker_infra_overlay only for Swarm-connected targets; use docker_infra_bridge for non-Swarm Compose targets.",
+                "volume_destruction_policy": "For repair, migration, release, rollback, and redeploy work, never use docker compose down --volumes, docker volume rm/prune, or docker system prune --volumes. Service deletion is the only Docker Infra flow that removes Compose named volumes.",
                 "service_compose_filename": "docker-compose.yaml",
                 "service_root_hint": str(PROJECT_ROOT / ".runtime" / "dev" / "services"),
             },
@@ -2943,6 +2952,7 @@ class CodexRuntime:
             "Use the docker_infra MCP tools enabled for this request. "
             f"Enabled docker_infra MCP tools: {enabled_label}.\n"
             "Docker Infra MCP permission mode is agent full control except critical destruction: do not delete Docker Infra itself, stop/remove its control services or containers, shut down/reboot the OS, wipe disks, or recursively delete OS-critical paths.\n"
+            "Persistent Docker volumes are protected during agent work: do not run docker compose down --volumes, docker volume rm/prune, or docker system prune --volumes for repair, migration, release, rollback, or redeploy tasks.\n"
             "The request context embedded below is compacted; do not assume omitted runtime logs are unavailable. "
             "Call docker_infra.infra_context for Docker Infra's registered servers, DDNS endpoints, runtime values, detailed MCP contract, and request summary when needed.\n"
             "If another MCP tool is unavailable or not exposed in this session, do not report that as an operator-facing error; "

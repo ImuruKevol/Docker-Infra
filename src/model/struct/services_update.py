@@ -8,6 +8,7 @@ from psycopg.types.json import Jsonb
 
 connect = wiz.model("db/postgres").connect
 validator = wiz.model("struct/compose_validator")
+compose_rules = wiz.model("struct/compose_rules")
 preflight_model = wiz.model("struct/services_preflight")
 webserver = wiz.model("struct/webserver")
 ddns_model = wiz.model("struct/domains_ddns")
@@ -28,6 +29,30 @@ def _history_id():
 
 
 class ServiceUpdateMixin:
+    def _service_deployment_validation_context(self, service, env=None):
+        policy = dict((service or {}).get("target_node_policy") or {})
+        metadata = dict((service or {}).get("metadata") or {})
+        placement = dict(metadata.get("placement") or {})
+        mode = policy.get("mode") or placement.get("deployment_mode")
+        network = policy.get("network") or placement.get("network")
+        node_id = str(policy.get("node_id") or placement.get("node_id") or "").strip()
+        if node_id:
+            try:
+                with connect(env=env) as connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT swarm_node_id FROM nodes WHERE id = %s LIMIT 1", (node_id,))
+                        row = cursor.fetchone()
+                        if row is not None:
+                            mode = "swarm" if str(row.get("swarm_node_id") or "").strip() else "compose"
+                            network = compose_rules.default_network_name(mode)
+            except Exception:
+                pass
+        if not mode and network == compose_rules.BRIDGE_NETWORK:
+            mode = "compose"
+        deployment_mode = compose_rules.normalize_deployment_mode(mode)
+        network_name = network or compose_rules.default_network_name(deployment_mode)
+        return {"deployment_mode": deployment_mode, "network_name": network_name}
+
     def _domain_payload(self, payload, domain, port, env=None):
         metadata = dict(payload.get("domain_metadata") or {})
         metadata["source"] = "service_update"
@@ -166,7 +191,13 @@ class ServiceUpdateMixin:
                 service = self._service_row(cursor, service_id)
 
         namespace = service["namespace"]
-        validation = validator.validate({"namespace": namespace, "filename": "docker-compose.yaml", "content": content})
+        deployment_context = self._service_deployment_validation_context(service, env=env)
+        validation = validator.validate({
+            "namespace": namespace,
+            "filename": "docker-compose.yaml",
+            "content": content,
+            **deployment_context,
+        })
         preflight = preflight_model.check({**payload, "service_id": service_id}, content, namespace, validation=validation, env=env)
         if preflight.get("ok") is not True:
             raise ServiceError(409, "서비스 수정 전에 해결해야 할 항목이 있습니다.", "SERVICE_PREFLIGHT_BLOCKED", preflight=preflight)
@@ -267,7 +298,13 @@ class ServiceUpdateMixin:
                 service = self._service_row(cursor, service_id)
 
         namespace = service["namespace"]
-        validation = validator.validate({"namespace": namespace, "filename": "docker-compose.yaml", "content": content})
+        deployment_context = self._service_deployment_validation_context(service, env=env)
+        validation = validator.validate({
+            "namespace": namespace,
+            "filename": "docker-compose.yaml",
+            "content": content,
+            **deployment_context,
+        })
         preflight = preflight_model.check({**payload, "service_id": service_id}, content, namespace, validation=validation, env=env)
         if preflight.get("ok") is not True:
             raise ServiceError(409, "Compose 원문을 저장하기 전에 해결해야 할 항목이 있습니다.", "SERVICE_PREFLIGHT_BLOCKED", preflight=preflight)

@@ -18,7 +18,18 @@ def _dict_items(items):
 class ServiceCompose:
     ComposeValidationError = validator.ComposeValidationError
 
-    def default_compose(self, namespace, service_name="web", image="nginx:alpine", port=80, env_vars=None, volumes=None):
+    def default_compose(
+        self,
+        namespace,
+        service_name="web",
+        image="nginx:alpine",
+        port=80,
+        env_vars=None,
+        volumes=None,
+        deployment_mode=None,
+        network_name=None,
+        swarm_enabled=None,
+    ):
         service_name = service_name or "web"
         port = _safe_int(port, 80)
         service = {
@@ -69,6 +80,9 @@ class ServiceCompose:
             "namespace": namespace,
             "filename": "docker-compose.yaml",
             "compose": compose,
+            "deployment_mode": deployment_mode,
+            "network_name": network_name,
+            "swarm_enabled": swarm_enabled,
         })
         return yaml.safe_dump(result["normalized"], sort_keys=False, allow_unicode=False)
 
@@ -87,6 +101,9 @@ class ServiceCompose:
             "namespace": payload.get("namespace"),
             "filename": payload.get("filename") or "docker-compose.yaml",
             "content": payload.get("content"),
+            "deployment_mode": payload.get("deployment_mode"),
+            "network_name": payload.get("network_name"),
+            "swarm_enabled": payload.get("swarm_enabled"),
             "allow_warnings": True,
             "warning_codes": ["FORBIDDEN_CONTAINER_NAME"],
         })

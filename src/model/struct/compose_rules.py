@@ -8,6 +8,9 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9_]+$")
 DEFAULT_FILENAME = "docker-compose.yaml"
 ALLOWED_FILENAMES = {"docker-compose.yaml", "docker-compose.yml"}
 OVERLAY_NETWORK = "docker_infra_overlay"
+BRIDGE_NETWORK = "docker_infra_bridge"
+ALLOWED_NETWORKS = {OVERLAY_NETWORK, BRIDGE_NETWORK}
+NETWORK_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 SERVICE_HOST_ENV_TOKENS = {
     "addr",
     "address",
@@ -159,6 +162,56 @@ def network_names(value):
     return None
 
 
+def normalize_deployment_mode(value=None, swarm_enabled=None):
+    text = str(value or "").strip().lower()
+    if swarm_enabled is False:
+        return "compose"
+    if text in {"compose", "bridge", "standalone", "local"}:
+        return "compose"
+    return "swarm"
+
+
+def default_network_name(deployment_mode=None, swarm_enabled=None):
+    mode = normalize_deployment_mode(deployment_mode, swarm_enabled=swarm_enabled)
+    return BRIDGE_NETWORK if mode == "compose" else OVERLAY_NETWORK
+
+
+def normalize_network_name(payload=None):
+    payload = payload or {}
+    requested = str(payload.get("network_name") or payload.get("network") or "").strip()
+    if requested:
+        if NETWORK_PATTERN.fullmatch(requested) is None:
+            raise ComposeValidationError(
+                400,
+                "Compose validation failed.",
+                "COMPOSE_VALIDATION_FAILED",
+                details=[error("network_name", "INVALID_NETWORK_NAME", "network_name 형식이 올바르지 않습니다.")],
+            )
+        if requested not in ALLOWED_NETWORKS:
+            raise ComposeValidationError(
+                400,
+                "Compose validation failed.",
+                "COMPOSE_VALIDATION_FAILED",
+                details=[
+                    error(
+                        "network_name",
+                        "UNSUPPORTED_DOCKER_INFRA_NETWORK",
+                        "Docker Infra 관리 네트워크만 사용할 수 있습니다.",
+                        allowed=sorted(ALLOWED_NETWORKS),
+                    )
+                ],
+            )
+        return requested
+    return default_network_name(payload.get("deployment_mode"), swarm_enabled=payload.get("swarm_enabled"))
+
+
+def network_config(network_name):
+    network_name = str(network_name or "").strip() or OVERLAY_NETWORK
+    if network_name == BRIDGE_NETWORK:
+        return {"external": True}
+    return {"external": True}
+
+
 def is_internal_ref_env_key(key):
     normalized = re.sub(r"[^a-z0-9]+", "_", str(key or "").strip().lower()).strip("_")
     if not normalized:
@@ -255,6 +308,9 @@ class ComposeRules:
     DEFAULT_FILENAME = DEFAULT_FILENAME
     ALLOWED_FILENAMES = ALLOWED_FILENAMES
     OVERLAY_NETWORK = OVERLAY_NETWORK
+    BRIDGE_NETWORK = BRIDGE_NETWORK
+    ALLOWED_NETWORKS = ALLOWED_NETWORKS
+    NETWORK_PATTERN = NETWORK_PATTERN
     DEFAULT_UPDATE_CONFIG = DEFAULT_UPDATE_CONFIG
     DEFAULT_ROLLBACK_CONFIG = DEFAULT_ROLLBACK_CONFIG
     DEFAULT_RESTART_POLICY = DEFAULT_RESTART_POLICY
@@ -265,6 +321,10 @@ class ComposeRules:
     has_health_check_override = staticmethod(has_health_check_override)
     load_compose = staticmethod(load_compose)
     network_names = staticmethod(network_names)
+    normalize_deployment_mode = staticmethod(normalize_deployment_mode)
+    default_network_name = staticmethod(default_network_name)
+    normalize_network_name = staticmethod(normalize_network_name)
+    network_config = staticmethod(network_config)
     is_internal_ref_env_key = staticmethod(is_internal_ref_env_key)
     qualify_internal_service_ref = staticmethod(qualify_internal_service_ref)
     qualify_environment_refs = staticmethod(qualify_environment_refs)

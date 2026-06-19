@@ -1110,7 +1110,7 @@ export class Component implements OnInit, OnDestroy {
     public async ensureLocalMaster() {
         const confirmed = await this.service.modal.show({
             title: '중심 서버 확인',
-            message: '현재 Docker Infra가 실행 중인 서버의 Docker/Swarm 상태를 다시 확인합니다.',
+            message: '현재 Docker Infra가 실행 중인 서버의 Docker 및 선택적 Swarm 상태를 다시 확인합니다.',
             cancel: '취소',
             action: '확인',
             actionBtn: 'primary',
@@ -1311,7 +1311,7 @@ export class Component implements OnInit, OnDestroy {
             this.lastOperation.set(data.operation || null);
             this.actionTitle.set('Swarm 연결 결과');
             this.actionResult.set({
-                checks: { operation: data.operation?.status || 'unknown', swarm: data.selected?.status === 'active' ? 'ok' : 'warning' },
+                checks: { operation: data.operation?.status || 'unknown', swarm: this.isSwarmConnected(data.selected) ? 'ok' : 'warning' },
                 operation: data.operation
             });
             this.actionModalOpen.set(true);
@@ -2007,12 +2007,48 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public isSwarmConnected(node: any) {
-        if (!node || node.is_local_master) return false;
-        return Boolean(node.swarm_node_id || node.status === 'active');
+        return Boolean(node?.swarm_connected || node?.swarm_node_id);
     }
 
     public showJoinSwarmButton(node: any) {
         return Boolean(node && !node.is_local_master && !this.isSwarmConnected(node));
+    }
+
+    public deploymentModeText(node: any) {
+        return this.isSwarmConnected(node) ? '클러스터' : '독립 서버';
+    }
+
+    public swarmBadgeText(node: any) {
+        return this.deploymentModeText(node);
+    }
+
+    public swarmBadgeClass(node: any) {
+        if (this.isSwarmConnected(node)) {
+            return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
+    private nodeStatusTone(node: any) {
+        const status = String(node?.status || '').toLowerCase();
+        if (['unreachable', 'failed', 'error', 'canceled'].includes(status)) return 'danger';
+        if (['pending', 'degraded', 'warning', 'unknown', 'skipped'].includes(status) || !status) return 'warning';
+        return 'ok';
+    }
+
+    public nodeStatusIcon(node: any) {
+        return this.nodeStatusTone(node) === 'ok' ? 'fa-circle-check' : 'fa-triangle-exclamation';
+    }
+
+    public nodeStatusIconClass(node: any) {
+        const tone = this.nodeStatusTone(node);
+        if (tone === 'danger') return 'text-rose-600 dark:text-rose-300';
+        if (tone === 'warning') return 'text-amber-600 dark:text-amber-300';
+        return 'text-emerald-600 dark:text-emerald-300';
+    }
+
+    public nodeStatusTitle(node: any) {
+        return `서버 상태: ${this.statusLabel(String(node?.status || 'unknown').toLowerCase())}`;
     }
 
     public monitoringAgent(node: any = this.selected()) {
@@ -2032,6 +2068,8 @@ export class Component implements OnInit, OnDestroy {
         const labels: any = {
             active: '정상',
             ready: '준비됨',
+            degraded: '확인 필요',
+            inactive: '정상',
             running: '실행 중',
             reachable: '접속 가능',
             pending: '확인 필요',
@@ -2084,7 +2122,7 @@ export class Component implements OnInit, OnDestroy {
         if (['running'].includes(status)) {
             return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
         }
-        if (['active', 'ready', 'ok', 'succeeded'].includes(status)) {
+        if (['active', 'ready', 'inactive', 'ok', 'succeeded'].includes(status)) {
             return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
         }
         if (['reachable', 'pending', 'warning', 'unknown', 'canceled', 'skipped'].includes(status)) {
@@ -2281,7 +2319,7 @@ export class Component implements OnInit, OnDestroy {
             command: '명령 실행',
             containers: '컨테이너 새로고침',
             swarm: 'Swarm 상태',
-            network: 'Overlay 네트워크',
+            network: '서비스 네트워크',
             remote_cleanup: '삭제 대상 서버 정리',
             swarm_remove: 'Swarm 노드 제거',
             known_hosts: 'known_hosts 정리',

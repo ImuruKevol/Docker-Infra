@@ -32,13 +32,15 @@ class TemplateAIContract:
             "forbidden": [
                 "services.*.container_name",
                 "services.*.hostname",
-                "root networks other than %s" % compose_rules.OVERLAY_NETWORK,
-                "service networks other than %s" % compose_rules.OVERLAY_NETWORK,
+                "root networks other than Docker Infra managed service networks",
+                "service networks other than Docker Infra managed service networks",
             ],
             "network": {
-                "name": compose_rules.OVERLAY_NETWORK,
-                "root": {"external": True},
-                "service_usage": "omit networks or use only %s" % compose_rules.OVERLAY_NETWORK,
+                "swarm": {"name": compose_rules.OVERLAY_NETWORK, "root": {"external": True}},
+                "compose": {"name": compose_rules.BRIDGE_NETWORK, "root": {"external": True}},
+                "selection": "Use %s for Swarm-connected targets and %s for non-Swarm Compose targets; omit networks if unsure and Docker Infra will inject the correct managed network."
+                % (compose_rules.OVERLAY_NETWORK, compose_rules.BRIDGE_NETWORK),
+                "service_usage": "omit networks or use only the selected Docker Infra managed network",
             },
             "deploy_defaults": {
                 "replicas": 1,
@@ -118,7 +120,9 @@ class TemplateAIContract:
                     "stop/remove Docker Infra control services, containers, or stacks",
                     "shutdown/reboot/wipe/format the OS",
                     "recursive deletion of OS critical paths",
+                    "persistent Docker volume deletion such as docker compose down --volumes or docker volume rm/prune",
                 ],
+                "volume_policy": "Template, repair, migration, release, rollback, and redeploy work must preserve named volumes; use service deletion flow for volume cleanup.",
                 "tool_unavailable_policy": "Do not mention unavailable MCP tools in user-facing text; use the provided contract and context.",
             },
             "standard": {

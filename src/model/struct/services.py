@@ -12,6 +12,7 @@ connect = wiz.model("db/postgres").connect
 config = wiz.config("docker_infra")
 setup = wiz.model("struct/setup")
 validator = wiz.model("struct/compose_validator")
+compose_rules = wiz.model("struct/compose_rules")
 shared = wiz.model("struct/services_shared")
 service_compose = wiz.model("struct/services_compose")
 placement_selector = wiz.model("struct/services_placement")
@@ -72,7 +73,18 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
     def service_dir(self, namespace):
         return self.service_root() / namespace
 
-    def default_compose(self, namespace, service_name="web", image="nginx:alpine", port=80, env_vars=None, volumes=None):
+    def default_compose(
+        self,
+        namespace,
+        service_name="web",
+        image="nginx:alpine",
+        port=80,
+        env_vars=None,
+        volumes=None,
+        deployment_mode=None,
+        network_name=None,
+        swarm_enabled=None,
+    ):
         return service_compose.default_compose(
             namespace,
             service_name=service_name,
@@ -80,7 +92,31 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
             port=port,
             env_vars=env_vars,
             volumes=volumes,
+            deployment_mode=deployment_mode,
+            network_name=network_name,
+            swarm_enabled=swarm_enabled,
         )
+
+    def _node_by_id(self, node_id, env=None):
+        node_id = str(node_id or "").strip()
+        if not node_id:
+            return None
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT * FROM nodes WHERE id = %s LIMIT 1", (node_id,))
+                row = cursor.fetchone()
+                return dict(row) if row is not None else None
+
+    def _deployment_context_for_node(self, node_id, payload=None, env=None):
+        payload = payload or {}
+        node = self._node_by_id(node_id, env=env)
+        requested_mode = payload.get("deployment_mode") or payload.get("deploy_mode")
+        if node is not None:
+            deployment_mode = "swarm" if str(node.get("swarm_node_id") or "").strip() else "compose"
+        else:
+            deployment_mode = compose_rules.normalize_deployment_mode(requested_mode)
+        network_name = compose_rules.default_network_name(deployment_mode)
+        return {"node": node, "deployment_mode": deployment_mode, "network": network_name}
 
     def _detect_port(self, normalized_compose, fallback=80):
         services = (normalized_compose or {}).get("services") or {}
@@ -131,6 +167,10 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
         if not domains and domain:
             domains = [{"domain": domain, "port": port, "ssl_mode": ssl_mode, "metadata": domain_metadata}]
 
+        deployment_context = self._deployment_context_for_node(node_id, payload=payload, env=env)
+        deployment_mode = (validation or {}).get("deployment_mode") or deployment_context["deployment_mode"]
+        network_name = (validation or {}).get("network") or deployment_context["network"]
+
         if not content:
             content = self.default_compose(
                 namespace,
@@ -139,16 +179,22 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
                 port=port,
                 env_vars=env_vars,
                 volumes=volumes,
+                deployment_mode=deployment_mode,
+                network_name=network_name,
             )
 
         validation = validation or validator.validate({
             "namespace": namespace,
             "filename": filename,
             "content": content,
+            "deployment_mode": deployment_mode,
+            "network_name": network_name,
             "health_check": payload.get("health_check"),
             "allow_warnings": payload.get("allow_warnings"),
             "warning_codes": payload.get("warning_codes"),
         })
+        deployment_mode = validation.get("deployment_mode") or deployment_mode
+        network_name = validation.get("network") or network_name
         normalized_content = yaml.safe_dump(validation["normalized"], sort_keys=False, allow_unicode=False)
 
         service_dir = self.service_dir(namespace)
@@ -182,6 +228,8 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
                         "mode": placement_mode,
                         "node_id": node_id,
                         "auto_selected": placement_mode == "auto" and bool(node_id),
+                        "deployment_mode": deployment_mode,
+                        "network": network_name,
                         "recommendation": placement_recommendation,
                     },
                 }
@@ -203,7 +251,8 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
                         str(file_path),
                         validation["stack_name"],
                         Jsonb({
-                            "mode": "swarm",
+                            "mode": deployment_mode,
+                            "network": network_name,
                             "replicas": 1,
                             "placement": placement_mode,
                             "node_id": node_id,
@@ -286,10 +335,13 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
         if not namespace:
             namespace = f"service_{uuid.uuid4().hex[:8]}"
 
+        deployment_context = self._deployment_context_for_node(payload.get("node_id"), payload=payload, env=env)
         validation = validator.validate({
             "namespace": namespace,
             "filename": filename,
             "content": content,
+            "deployment_mode": deployment_context["deployment_mode"],
+            "network_name": deployment_context["network"],
             "allow_warnings": payload.get("allow_warnings"),
             "warning_codes": sorted(self.IMPORT_WARNING_CODES),
         })
@@ -305,6 +357,9 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
                 "proxy_type": "nginx",
                 "ssl_mode": payload.get("ssl_mode") or "none",
                 "test_run_id": payload.get("test_run_id"),
+                "node_id": payload.get("node_id"),
+                "deployment_mode": validation.get("deployment_mode") or deployment_context["deployment_mode"],
+                "network_name": validation.get("network") or deployment_context["network"],
                 "source": payload.get("source") or "server_compose_import",
                 "source_ref": payload.get("source_ref") or {"node_id": payload.get("node_id"), "path": payload.get("source_path")},
                 "allow_warnings": payload.get("allow_warnings"),

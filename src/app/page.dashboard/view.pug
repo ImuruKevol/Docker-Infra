@@ -74,6 +74,7 @@ main(class="space-y-6 px-5 py-5")
                             div(class="flex min-w-0 items-center gap-2")
                                 p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{node.name}}
                                 span(*ngIf="node.host", class="shrink-0 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{node.host}}
+                                i(role="img", class="fa-solid shrink-0 text-sm", [ngClass]="[nodeStatusIcon(node), nodeStatusIconClass(node)]", [title]="nodeStatusTitle(node)", [attr.aria-label]="nodeStatusTitle(node)")
                             div(class="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold")
                                 span(class="rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300") CPU {{nodeMetricPercent(node, 'cpu')}}
                                 span(class="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300") MEM {{nodeMetricPercent(node, 'memory')}}
@@ -83,7 +84,7 @@ main(class="space-y-6 px-5 py-5")
                                     i(class="fa-solid fa-triangle-exclamation")
                                     | {{warning.message}}
                         div(class="flex shrink-0 flex-col items-start gap-1 xl:items-end")
-                            span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="statusClass(node.status)") {{statusLabel(node.status)}}
+                            span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="nodeDeploymentClass(node)") {{nodeDeploymentText(node)}}
                             span(class="text-[11px] text-zinc-500 dark:text-zinc-400") {{formatDate(nodeMetric(node).reported_at)}}
                     div(*ngIf="!isCardLoading('servers') && !cardError('servers') && nodes().length === 0", class="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400") No servers
 

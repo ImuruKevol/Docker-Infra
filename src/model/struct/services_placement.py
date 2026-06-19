@@ -4,6 +4,7 @@ import json
 
 connect = wiz.model("db/postgres").connect
 local_executor = wiz.model("struct/local_executor")
+compose_rules = wiz.model("struct/compose_rules")
 
 
 def _as_float(value, fallback=85.0):
@@ -58,12 +59,16 @@ def _container_summary(containers):
 
 
 def _node_summary(row):
+    deployment_mode = "swarm" if str(row.get("swarm_node_id") or "").strip() else "compose"
     return {
         "id": str(row.get("id") or ""),
         "name": str(row.get("name") or ""),
         "host": str(row.get("host") or ""),
         "status": str(row.get("status") or ""),
         "swarm_node_id": str(row.get("swarm_node_id") or ""),
+        "swarm_connected": bool(str(row.get("swarm_node_id") or "").strip()),
+        "deployment_mode": deployment_mode,
+        "network": compose_rules.default_network_name(deployment_mode),
         "swarm_hostname": str(row.get("swarm_hostname") or ""),
         "swarm_status": str(row.get("swarm_status") or ""),
         "swarm_availability": str(row.get("swarm_availability") or ""),
@@ -132,6 +137,7 @@ class ServicesPlacement:
                         n.status,
                         n.swarm_node_id,
                         n.is_local_master,
+                        n.metadata,
                         n.created_at,
                         m.cpu_percent,
                         m.memory,
@@ -162,10 +168,15 @@ class ServicesPlacement:
         age = _age_minutes(row.get("reported_at"))
         stale_penalty = 18.0 if age is None else min(18.0, age / 30.0)
         status = str(row.get("status") or "").lower()
-        status_penalty = 0.0 if status in {"active", "reachable", "ready"} else 20.0
-        swarm_penalty = 0.0 if str(row.get("swarm_node_id") or "").strip() else 35.0
-        live_swarm_penalty = 0.0 if row.get("swarm_ready") else 80.0
-        hostname_penalty = 55.0 if row.get("swarm_hostname_mismatch") else 0.0
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        last_check = metadata.get("last_check") if isinstance(metadata.get("last_check"), dict) else {}
+        docker_check = last_check.get("docker") if isinstance(last_check.get("docker"), dict) else {}
+        docker_check_status = str(docker_check.get("status") or "").lower()
+        docker_unavailable = docker_check_status and docker_check_status != "ok"
+        status_penalty = 0.0 if status in {"active", "ready", "running", "inactive"} and not docker_unavailable else 20.0
+        swarm_connected = bool(str(row.get("swarm_node_id") or "").strip())
+        live_swarm_penalty = 25.0 if swarm_connected and not row.get("swarm_ready") else 0.0
+        hostname_penalty = 55.0 if swarm_connected and row.get("swarm_hostname_mismatch") else 0.0
         score = (
             cpu_percent * 0.30
             + memory_percent * 0.25
@@ -173,10 +184,12 @@ class ServicesPlacement:
             + container_pressure * 0.15
             + stale_penalty
             + status_penalty
-            + swarm_penalty
             + live_swarm_penalty
             + hostname_penalty
         )
+        selectable = status not in {"unreachable", "failed", "deleted", "error"} and not docker_unavailable
+        if swarm_connected:
+            selectable = selectable and bool(row.get("swarm_ready")) and not bool(row.get("swarm_hostname_mismatch"))
         return {
             "node": _node_summary(row),
             "score": round(score, 2),
@@ -191,12 +204,7 @@ class ServicesPlacement:
             "swarm_availability": str(row.get("swarm_availability") or ""),
             "swarm_hostname": str(row.get("swarm_hostname") or ""),
             "swarm_hostname_mismatch": bool(row.get("swarm_hostname_mismatch")),
-            "selectable": (
-                bool(row.get("swarm_node_id"))
-                and status not in {"unreachable", "failed", "deleted"}
-                and bool(row.get("swarm_ready"))
-                and not bool(row.get("swarm_hostname_mismatch"))
-            ),
+            "selectable": selectable,
         }
 
     def recommend(self, payload=None, env=None):

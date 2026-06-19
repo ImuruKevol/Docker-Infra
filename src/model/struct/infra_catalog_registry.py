@@ -12,6 +12,7 @@ ddns_model = wiz.model("struct/domains_ddns")
 backup_system = wiz.model("struct/backup_system")
 metric_history = wiz.model("struct/nodes_metric_history")
 webserver = wiz.model("struct/webserver")
+compose_rules = wiz.model("struct/compose_rules")
 
 
 OPERATION_LABELS = {
@@ -77,6 +78,15 @@ def _optional_count(cursor, table):
 
 def _dict(value):
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _attach_node_deployment(node):
+    swarm_connected = bool(str((node or {}).get("swarm_node_id") or "").strip())
+    deployment_mode = "swarm" if swarm_connected else "compose"
+    node["swarm_connected"] = swarm_connected
+    node["deployment_mode"] = deployment_mode
+    node["network"] = compose_rules.default_network_name(deployment_mode)
+    return node
 
 
 def _int(value, fallback=0):
@@ -684,6 +694,8 @@ class InfraCatalog:
                         n.role,
                         n.host,
                         n.status,
+                        n.swarm_node_id,
+                        n.metadata,
                         n.is_local_master,
                         n.updated_at,
                         m.cpu_percent AS latest_cpu_percent,
@@ -704,6 +716,7 @@ class InfraCatalog:
                     """,
                 )
                 for node in nodes:
+                    _attach_node_deployment(node)
                     node["latest_metric"] = {
                         "cpu_percent": node.pop("latest_cpu_percent", None),
                         "memory": node.pop("latest_memory", None) or {},
@@ -912,6 +925,8 @@ class InfraCatalog:
                         n.role,
                         n.host,
                         n.status,
+                        n.swarm_node_id,
+                        n.metadata,
                         n.is_local_master,
                         n.updated_at,
                         m.cpu_percent AS latest_cpu_percent,
@@ -932,6 +947,7 @@ class InfraCatalog:
                     """,
                 )
                 for node in nodes:
+                    _attach_node_deployment(node)
                     node["latest_metric"] = {
                         "cpu_percent": node.pop("latest_cpu_percent", None),
                         "memory": node.pop("latest_memory", None) or {},
@@ -942,12 +958,12 @@ class InfraCatalog:
                 chart_nodes = _rows(
                     cursor,
                     """
-                    SELECT id, name, role, host, status, is_local_master
+                    SELECT id, name, role, host, status, swarm_node_id, metadata, is_local_master
                     FROM nodes
                     ORDER BY is_local_master DESC, created_at DESC
                     """,
                 )
-                chart_nodes_by_id = {str(node["id"]): node for node in chart_nodes}
+                chart_nodes_by_id = {str(node["id"]): _attach_node_deployment(node) for node in chart_nodes}
                 node_ids = [node["id"] for node in chart_nodes if node.get("id")]
                 node_resource_charts = metric_history.dashboard_node_charts(
                     node_ids,

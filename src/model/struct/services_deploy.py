@@ -1,3 +1,5 @@
+import base64
+import shlex
 from pathlib import Path
 import subprocess
 import threading
@@ -220,7 +222,11 @@ class ServiceDeployMixin:
 
         state_text = " ".join(task.get("current_state", "").lower() for task in tasks)
         has_pull_wait = any(token in state_text for token in ["preparing", "assigned", "accepted", "new", "pending"])
-        if desired <= 0:
+        if desired <= 0 and container_total > 0 and container_running < container_total:
+            message = f"컨테이너 실행 대기 중입니다. {container_running}/{container_total}"
+        elif desired <= 0 and container_total > 0:
+            message = fallback_message or "컨테이너 실행 상태를 확인했습니다."
+        elif desired <= 0:
             message = "Docker 작업을 아직 확인하지 못했습니다."
         elif running < desired and has_pull_wait:
             message = f"이미지 pull 또는 Docker 작업 준비 중입니다. Docker 작업 {running}/{desired}"
@@ -249,15 +255,27 @@ class ServiceDeployMixin:
         running = int(stack.get("running") or 0)
         task_errors = int(stack.get("task_errors") or 0)
         task_error_history = int(stack.get("task_error_history") or 0)
+        container_total = int(containers.get("total") or 0)
+        container_running = int(containers.get("running") or 0)
         if task_errors > 0:
             return False, f"Docker 작업 오류 {task_errors}개가 감지되었습니다."
         if desired <= 0:
-            return False, "실행 대상 Docker 작업을 아직 확인하지 못했습니다."
+            if container_total <= 0:
+                return False, "실행 대상 Docker 작업을 아직 확인하지 못했습니다."
+            if container_running <= 0:
+                return False, "컨테이너가 아직 실행 상태가 아닙니다."
+            if container_running < container_total:
+                return False, f"컨테이너 실행 대기 중입니다. {container_running}/{container_total}"
+            if int(health.get("unhealthy") or 0) > 0:
+                return False, f"상태 점검 실패 컨테이너 {health.get('unhealthy')}개가 있습니다."
+            if int(health.get("starting") or 0) > 0:
+                return False, f"컨테이너 상태 점검이 진행 중입니다. starting {health.get('starting')}개"
+            return True, "컨테이너 실행 상태를 확인했습니다."
         if running <= 0 and task_error_history > 0:
             return False, f"Docker 작업 오류 이력 {task_error_history}개로 새 작업이 실행되지 못했습니다."
         if running < desired:
             return False, f"Docker 작업 실행 대기 중입니다. {running}/{desired}"
-        if int(containers.get("total") or 0) > 0 and int(containers.get("running") or 0) <= 0:
+        if container_total > 0 and container_running <= 0:
             return False, "컨테이너가 아직 실행 상태가 아닙니다."
         if int(health.get("unhealthy") or 0) > 0:
             return False, f"상태 점검 실패 컨테이너 {health.get('unhealthy')}개가 있습니다."
@@ -606,6 +624,232 @@ class ServiceDeployMixin:
             return self._deploy_failure(operation_id, wait.get("message") or "기존 Docker stack 종료를 확인할 수 없습니다.", wait, env=env)
         return {"remove": result, "wait": wait}
 
+    def _service_deployment_mode(self, service, node=None):
+        policy = dict((service or {}).get("target_node_policy") or {})
+        metadata = dict((service or {}).get("metadata") or {})
+        placement = dict(metadata.get("placement") or {})
+        if node is not None:
+            return "swarm" if str(node.get("swarm_node_id") or "").strip() else "compose"
+        mode = policy.get("mode") or placement.get("deployment_mode")
+        network = policy.get("network") or placement.get("network")
+        if not mode and network == compose_rules.BRIDGE_NETWORK:
+            mode = "compose"
+        return compose_rules.normalize_deployment_mode(mode)
+
+    def _deployment_network_name(self, deployment_mode):
+        return compose_rules.default_network_name(deployment_mode)
+
+    def _apply_deployment_network(self, compose_path, network_name):
+        path = Path(compose_path).expanduser()
+        compose = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        services = compose.get("services") or {}
+        changed = False
+        networks = compose.get("networks")
+        if not isinstance(networks, dict):
+            networks = {}
+            compose["networks"] = networks
+            changed = True
+        for managed in [compose_rules.OVERLAY_NETWORK, compose_rules.BRIDGE_NETWORK]:
+            if managed != network_name and managed in networks:
+                networks.pop(managed, None)
+                changed = True
+        next_config = compose_rules.network_config(network_name)
+        if networks.get(network_name) != next_config:
+            networks[network_name] = next_config
+            changed = True
+        for service in services.values():
+            if not isinstance(service, dict):
+                continue
+            current_networks = service.get("networks")
+            if isinstance(current_networks, dict):
+                service_network_config = current_networks.get(network_name)
+                if service_network_config is None:
+                    service_network_config = current_networks.get(compose_rules.OVERLAY_NETWORK)
+                if service_network_config is None:
+                    service_network_config = current_networks.get(compose_rules.BRIDGE_NETWORK)
+                next_networks = {network_name: service_network_config}
+                if current_networks != next_networks:
+                    service["networks"] = next_networks
+                    changed = True
+            elif current_networks != [network_name]:
+                service["networks"] = [network_name]
+                changed = True
+        if changed:
+            path.write_text(yaml.safe_dump(compose, sort_keys=False, allow_unicode=False), encoding="utf-8")
+        return {"changed": changed, "network": network_name}
+
+    def _remote_network_ensure_script(self, network_name):
+        quoted = shlex.quote(network_name)
+        return (
+            "set -eu\n"
+            f"NETWORK={quoted}\n"
+            'if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then\n'
+            '  docker network create --driver bridge "$NETWORK"\n'
+            "fi\n"
+        )
+
+    def _ensure_deployment_network(self, placement, operation_id, env=None):
+        mode = placement.get("mode") or "swarm"
+        network_name = placement.get("network") or self._deployment_network_name(mode)
+        node = placement.get("raw_node") or {}
+        if mode == "swarm":
+            inspect = local_executor.run(
+                "swarm.network.inspect",
+                params={"network_name": network_name},
+                timeout_seconds=15,
+                env=env,
+            )
+            if inspect.get("status") == "ok":
+                return {"inspect": inspect, "network": network_name, "mode": mode, "created": False}
+            ensure = local_executor.run(
+                "swarm.network.ensure",
+                params={"network_name": network_name},
+                timeout_seconds=30,
+                env=env,
+            )
+            self._append_result(operation_id, ensure, "service network", env=env)
+            if ensure.get("status") != "ok":
+                return self._deploy_failure(operation_id, "서비스 네트워크를 준비할 수 없습니다.", ensure, env=env)
+            return {"inspect": inspect, "ensure": ensure, "network": network_name, "mode": mode, "created": True}
+
+        if node.get("is_local_master"):
+            inspect = local_executor.run(
+                "docker.network.inspect",
+                params={"network_name": network_name},
+                timeout_seconds=15,
+                env=env,
+            )
+            if inspect.get("status") == "ok":
+                return {"inspect": inspect, "network": network_name, "mode": mode, "created": False}
+            ensure = local_executor.run(
+                "docker.network.ensure",
+                params={"network_name": network_name, "driver": "bridge"},
+                timeout_seconds=30,
+                env=env,
+            )
+            self._append_result(operation_id, ensure, "service network", env=env)
+            if ensure.get("status") != "ok":
+                return self._deploy_failure(operation_id, "서비스 네트워크를 준비할 수 없습니다.", ensure, env=env)
+            return {"inspect": inspect, "ensure": ensure, "network": network_name, "mode": mode, "created": True}
+
+        node_detail = nodes.detail(node.get("id"), env=env)
+        result = nodes._run_ssh_command(
+            node_detail,
+            ["sh", "-lc", self._remote_network_ensure_script(network_name)],
+            timeout_seconds=45,
+            env=env,
+            capture_limit=12000,
+        )
+        self._append_result(operation_id, result, "service network", env=env)
+        if result.get("status") != "ok":
+            return self._deploy_failure(operation_id, "원격 서버의 서비스 네트워크를 준비할 수 없습니다.", result, env=env)
+        return {"ensure": result, "network": network_name, "mode": mode, "node": self._deployment_node_summary(node)}
+
+    def _remote_compose_up(self, node, compose_path, stack_name, network_name, operation_id, force_recreate=False, timeout_seconds=300, env=None):
+        node_detail = nodes.detail(node.get("id"), env=env)
+        compose_bytes = Path(compose_path).expanduser().read_bytes()
+        compose_payload = base64.b64encode(compose_bytes).decode("ascii")
+        script = (
+            "set -eu\n"
+            f"STACK={shlex.quote(stack_name)}\n"
+            f"NETWORK={shlex.quote(network_name)}\n"
+            'DIR="$HOME/.docker-infra/services/$STACK"\n'
+            'FILE="$DIR/docker-compose.yaml"\n'
+            'mkdir -p "$DIR"\n'
+            'cat > "$FILE.b64" <<\'__DOCKER_INFRA_COMPOSE__\'\n'
+            f"{compose_payload}\n"
+            "__DOCKER_INFRA_COMPOSE__\n"
+            'base64 -d "$FILE.b64" > "$FILE"\n'
+            'rm -f "$FILE.b64"\n'
+            'if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then\n'
+            '  docker network create --driver bridge "$NETWORK"\n'
+            "fi\n"
+        )
+        if force_recreate:
+            script += 'docker compose -p "$STACK" -f "$FILE" down || true\n'
+        script += 'docker compose -p "$STACK" -f "$FILE" up -d --remove-orphans\n'
+        return nodes._run_ssh_command(
+            node_detail,
+            ["sh", "-lc", script],
+            timeout_seconds=timeout_seconds,
+            env=env,
+            capture_limit=20000,
+        )
+
+    def _compose_up(self, placement, compose_path, stack_name, operation_id, payload=None, env=None):
+        payload = payload or {}
+        node = placement.get("raw_node") or {}
+        network_name = placement.get("network") or compose_rules.BRIDGE_NETWORK
+        if node.get("is_local_master"):
+            if payload.get("force_recreate") is True:
+                down = local_executor.run(
+                    "service.compose.down",
+                    params={"compose_path": str(compose_path), "stack_name": stack_name},
+                    timeout_seconds=payload.get("timeout_seconds") or 120,
+                    env=env,
+                )
+                self._append_result(operation_id, down, "compose down", env=env)
+            return local_executor.run(
+                "service.compose.up",
+                params={"compose_path": str(compose_path), "stack_name": stack_name},
+                timeout_seconds=payload.get("timeout_seconds") or 300,
+                env=env,
+            )
+        return self._remote_compose_up(
+            node,
+            compose_path,
+            stack_name,
+            network_name,
+            operation_id,
+            force_recreate=payload.get("force_recreate") is True,
+            timeout_seconds=payload.get("timeout_seconds") or 300,
+            env=env,
+        )
+
+    def _sync_domain_proxy_targets_for_node(self, service_id, node, env=None):
+        node = node or {}
+        metadata = dict(node.get("metadata") or {})
+        local_master = bool(node.get("is_local_master"))
+        proxy_host = "127.0.0.1" if local_master else str(
+            metadata.get("node_access_host")
+            or metadata.get("private_host")
+            or metadata.get("internal_host")
+            or node.get("private_host")
+            or node.get("host")
+            or ""
+        ).strip()
+        if not proxy_host:
+            proxy_host = "127.0.0.1"
+        updates = []
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT * FROM service_domains WHERE service_id = %s ORDER BY created_at ASC", (service_id,))
+                for row in cursor.fetchall():
+                    domain = dict(row)
+                    domain_metadata = dict(domain.get("metadata") or {})
+                    domain_metadata.update({
+                        "proxy_host": proxy_host,
+                        "proxy_host_source": "loopback" if local_master else "registered_private_host",
+                        "proxy_topology": "local-master" if local_master else "remote-node",
+                        "proxy_node_name": node.get("name") or node.get("host") or "",
+                        "proxy_node_is_local_master": local_master,
+                        "proxy_swarm_node_name": "",
+                        "proxy_swarm_node_id": str(node.get("swarm_node_id") or ""),
+                        "proxy_swarm_addr": "",
+                        "proxy_node_id": str(node.get("id") or ""),
+                        "proxy_registered_node_name": node.get("name") or "",
+                        "proxy_registered_node_host": node.get("host") or "",
+                        "proxy_registered_node_private_host": proxy_host,
+                        "proxy_registered_node_public_ip": metadata.get("public_ip") or metadata.get("public_host") or "",
+                        "proxy_node_registered": bool(node.get("id")),
+                    })
+                    cursor.execute(
+                        "UPDATE service_domains SET metadata = %s, updated_at = now() WHERE id = %s",
+                        (Jsonb(domain_metadata), domain["id"]),
+                    )
+                    updates.append({"domain": domain.get("domain"), "proxy_host": proxy_host, "node_id": str(node.get("id") or "")})
+        return {"updated": updates, "skipped": not updates, "mode": "compose"}
+
     def _deployment_node(self, service, env=None):
         policy = dict(service.get("target_node_policy") or {})
         metadata = dict(service.get("metadata") or {})
@@ -648,17 +892,41 @@ class ServiceDeployMixin:
     def _deployment_node_summary(self, node):
         if not node:
             return {}
+        deployment_mode = "swarm" if str(node.get("swarm_node_id") or "").strip() else "compose"
+        metadata = dict(node.get("metadata") or {})
         return {
             "id": str(node.get("id") or ""),
             "name": str(node.get("name") or ""),
             "host": str(node.get("host") or ""),
+            "private_host": str(metadata.get("node_access_host") or metadata.get("private_host") or metadata.get("internal_host") or node.get("private_host") or node.get("host") or ""),
             "swarm_node_id": str(node.get("swarm_node_id") or ""),
+            "swarm_connected": bool(str(node.get("swarm_node_id") or "").strip()),
+            "deployment_mode": deployment_mode,
+            "network": self._deployment_network_name(deployment_mode),
             "is_local_master": bool(node.get("is_local_master")),
         }
 
     def _apply_stack_placement(self, compose_path, service, operation_id, env=None):
         node = self._deployment_node(service, env=env)
         swarm_node_id = str((node or {}).get("swarm_node_id") or "").strip()
+        if node is not None and not swarm_node_id:
+            node_summary = self._deployment_node_summary(node)
+            operations.append_output(
+                operation_id,
+                f"compose placement: {node_summary.get('name') or node_summary.get('host') or node_summary.get('id')}",
+                stream="system",
+                metadata={"step": "compose placement", "node": node_summary, "changed": False},
+                env=env,
+            )
+            return {
+                "applied": True,
+                "mode": "compose",
+                "network": self._deployment_network_name("compose"),
+                "node": node_summary,
+                "raw_node": node,
+                "changed": False,
+                "reason": "swarm_not_connected",
+            }
         if not swarm_node_id:
             return {"applied": False, "reason": "node_unavailable"}
         node_summary = self._deployment_node_summary(node)
@@ -699,7 +967,15 @@ class ServiceDeployMixin:
             metadata={"step": "stack placement", "node": node_summary, "constraint": constraint, "changed": changed},
             env=env,
         )
-        return {"applied": True, "node": node_summary, "constraint": constraint, "changed": changed}
+        return {
+            "applied": True,
+            "mode": "swarm",
+            "network": self._deployment_network_name("swarm"),
+            "node": node_summary,
+            "raw_node": node,
+            "constraint": constraint,
+            "changed": changed,
+        }
 
     def deploy(self, payload, env=None):
         payload = dict(payload or {})
@@ -719,28 +995,11 @@ class ServiceDeployMixin:
         operation_id = operation["id"]
         operations.append_output(
             operation_id,
-            "Docker stack 배포를 시작합니다. 이미지 pull 중에는 docker ps에 컨테이너가 보이지 않을 수 있어 Docker 작업 상태를 함께 추적합니다.",
+            "Docker 서비스 배포를 시작합니다. 이미지 pull 중에는 docker ps에 컨테이너가 보이지 않을 수 있어 Docker 작업 상태를 함께 추적합니다.",
             stream="system",
             metadata={"step": "deploy start", "stack_name": stack_name},
             env=env,
         )
-
-        inspect = local_executor.run(
-            "swarm.network.inspect",
-            params={"network_name": compose_rules.OVERLAY_NETWORK},
-            timeout_seconds=15,
-            env=env,
-        )
-        if inspect.get("status") != "ok":
-            ensure = local_executor.run(
-                "swarm.network.ensure",
-                params={"network_name": compose_rules.OVERLAY_NETWORK},
-                timeout_seconds=30,
-                env=env,
-            )
-            self._append_result(operation_id, ensure, "overlay network", env=env)
-            if ensure.get("status") != "ok":
-                return self._deploy_failure(operation_id, "서비스 네트워크를 준비할 수 없습니다.", ensure, env=env)
 
         placement = self._apply_stack_placement(compose_path, service, operation_id, env=env)
         if not placement.get("applied") or not placement.get("node"):
@@ -750,6 +1009,16 @@ class ServiceDeployMixin:
                 {"status": "error", "message": "deployment node unavailable", "placement": placement},
                 env=env,
             )
+        network_adjustment = self._apply_deployment_network(compose_path, placement.get("network") or self._deployment_network_name(placement.get("mode")))
+        if network_adjustment.get("changed"):
+            operations.append_output(
+                operation_id,
+                f"service network normalized: {network_adjustment.get('network')}",
+                stream="system",
+                metadata={"step": "service network normalize", "network": network_adjustment},
+                env=env,
+            )
+        network_setup = self._ensure_deployment_network(placement, operation_id, env=env)
         update_order_adjustments = self._ensure_host_port_update_order(compose_path)
         if update_order_adjustments:
             operations.append_output(
@@ -800,16 +1069,20 @@ class ServiceDeployMixin:
             backup_registry_login = self._login_backup_registry_for_deploy(compose_path, operation_id, env=env)
 
         stack_recreate = None
-        if payload.get("force_recreate") is True:
+        if payload.get("force_recreate") is True and placement.get("mode") != "compose":
             stack_recreate = self._remove_stack_before_deploy(stack_name, operation_id, env=env)
 
-        deploy = local_executor.run(
-            "service.stack.deploy",
-            params={"compose_path": str(compose_path), "stack_name": stack_name},
-            timeout_seconds=payload.get("timeout_seconds") or 300,
-            env=env,
-        )
-        self._append_result(operation_id, deploy, "stack deploy", env=env)
+        if placement.get("mode") == "compose":
+            deploy = self._compose_up(placement, compose_path, stack_name, operation_id, payload=payload, env=env)
+            self._append_result(operation_id, deploy, "compose up", env=env)
+        else:
+            deploy = local_executor.run(
+                "service.stack.deploy",
+                params={"compose_path": str(compose_path), "stack_name": stack_name},
+                timeout_seconds=payload.get("timeout_seconds") or 300,
+                env=env,
+            )
+            self._append_result(operation_id, deploy, "stack deploy", env=env)
         if deploy.get("status") != "ok":
             return self._deploy_failure(operation_id, "서비스 배포에 실패했습니다.", deploy, env=env)
 
@@ -829,7 +1102,10 @@ class ServiceDeployMixin:
         if runtime_wait.get("status") != "ok":
             return self._deploy_failure(operation_id, "컨테이너가 실행 상태가 아니어서 nginx와 SSL 적용을 중단했습니다.", runtime_wait, env=env)
 
-        proxy_targets = deploy_targets.sync_domain_proxy_targets(service_id, stack_name, env=env)
+        if placement.get("mode") == "compose":
+            proxy_targets = self._sync_domain_proxy_targets_for_node(service_id, placement.get("raw_node") or {}, env=env)
+        else:
+            proxy_targets = deploy_targets.sync_domain_proxy_targets(service_id, stack_name, env=env)
         if proxy_targets.get("updated") or proxy_targets.get("skipped") is not True:
             operations.append_output(
                 operation_id,
@@ -859,6 +1135,7 @@ class ServiceDeployMixin:
             "nginx": nginx,
             "deploy_adjustments": deploy_adjustments,
             "placement": placement,
+            "network": network_setup,
             "backup_registry_setup": backup_registry_setup,
             "backup_registry_login": backup_registry_login,
             "stack_recreate": stack_recreate,
@@ -944,6 +1221,8 @@ class ServiceDeployMixin:
                 "stack_name": stack_name,
                 "runtime_status": runtime_status,
                 "ai_verification": ai_verification,
+                "network": network_setup,
+                "placement": placement,
                 "backup_registry_setup": backup_registry_setup,
                 "backup_registry_login": backup_registry_login,
                 "stack_recreate": stack_recreate,

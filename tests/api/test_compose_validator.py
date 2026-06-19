@@ -58,6 +58,39 @@ services:
         self.assertTrue(validation["valid"])
         self.assertEqual(validation["warnings"], [])
 
+    def test_compose_mode_uses_bridge_network(self):
+        rules_spec = importlib.util.spec_from_file_location("compose_rules_contract_bridge", RULES_MODEL)
+        rules_module = importlib.util.module_from_spec(rules_spec)
+        rules_spec.loader.exec_module(rules_module)
+
+        class FakeWiz:
+            def model(self, name):
+                if name == "struct/compose_rules":
+                    return rules_module.Model
+                raise AssertionError(f"unexpected model: {name}")
+
+        validator_spec = importlib.util.spec_from_file_location("compose_validator_contract_bridge", VALIDATOR_MODEL)
+        validator_module = importlib.util.module_from_spec(validator_spec)
+        validator_module.wiz = FakeWiz()
+        validator_spec.loader.exec_module(validator_module)
+
+        validation = validator_module.Model.validate({
+            "namespace": "demo_app",
+            "filename": "docker-compose.yaml",
+            "deployment_mode": "compose",
+            "content": """
+services:
+  web:
+    image: nginx:1.27
+""",
+        })
+
+        service = validation["normalized"]["services"]["web"]
+        self.assertEqual(validation["deployment_mode"], "compose")
+        self.assertEqual(validation["network"], "docker_infra_bridge")
+        self.assertEqual(service["networks"], ["docker_infra_bridge"])
+        self.assertTrue(validation["normalized"]["networks"]["docker_infra_bridge"]["external"])
+
     def test_internal_service_hosts_are_qualified_on_shared_overlay(self):
         rules_spec = importlib.util.spec_from_file_location("compose_rules_contract", RULES_MODEL)
         rules_module = importlib.util.module_from_spec(rules_spec)

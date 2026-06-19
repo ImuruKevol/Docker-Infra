@@ -4,6 +4,7 @@ import re
 
 
 DEFAULT_OVERLAY_NETWORK = "docker_infra_overlay"
+DEFAULT_BRIDGE_NETWORK = "docker_infra_bridge"
 NODE_ROLES = {"worker"}
 REPORTER_TOKEN_TYPE = "reporter_token"
 
@@ -361,15 +362,15 @@ def swarm_from_docker_info(stdout):
 
 
 def node_status_from_swarm(swarm):
-    if swarm.get("LocalNodeState") == "active":
-        return "active"
-    if swarm.get("LocalNodeState"):
-        return swarm.get("LocalNodeState")
-    return "reachable"
+    state = str(swarm.get("LocalNodeState") or "").strip().lower()
+    if state in {"error", "locked"}:
+        return "warning"
+    return "ready"
 
 
 class NodesShared:
     DEFAULT_OVERLAY_NETWORK = DEFAULT_OVERLAY_NETWORK
+    DEFAULT_BRIDGE_NETWORK = DEFAULT_BRIDGE_NETWORK
     NODE_ROLES = NODE_ROLES
     REPORTER_TOKEN_TYPE = REPORTER_TOKEN_TYPE
     NodeError = NodeError

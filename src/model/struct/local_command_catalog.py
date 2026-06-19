@@ -47,6 +47,20 @@ def _overlay_network_command(params):
     return ["docker", "network", "create", "--driver", "overlay", "--attachable", network_name]
 
 
+def _docker_network_ensure_command(params):
+    network_name = (params or {}).get("network_name") or "docker_infra_bridge"
+    driver = str((params or {}).get("driver") or "bridge").strip().lower()
+    if NETWORK_NAME_RE.match(network_name) is None:
+        raise LocalCommandError(400, "network_name 형식이 올바르지 않습니다.", "INVALID_NETWORK_NAME")
+    if driver not in {"bridge", "overlay"}:
+        raise LocalCommandError(400, "지원하지 않는 Docker network driver입니다.", "INVALID_NETWORK_DRIVER")
+    command = ["docker", "network", "create", "--driver", driver]
+    if driver == "overlay":
+        command.append("--attachable")
+    command.append(network_name)
+    return command
+
+
 def _inspect_network_command(params):
     network_name = (params or {}).get("network_name") or "docker_infra_overlay"
     if NETWORK_NAME_RE.match(network_name) is None:
@@ -771,6 +785,21 @@ def _service_stack_deploy_command(params):
     return ["docker", "stack", "deploy", "--with-registry-auth", "--prune", "-c", compose_path, stack_name]
 
 
+def _service_compose_up_command(params):
+    compose_path = _path_param(params, "compose_path")
+    stack_name = _stack_name_param(params)
+    return ["docker", "compose", "-p", stack_name, "-f", compose_path, "up", "-d", "--remove-orphans"]
+
+
+def _service_compose_down_command(params):
+    compose_path = _path_param(params, "compose_path")
+    stack_name = _stack_name_param(params)
+    command = ["docker", "compose", "-p", stack_name, "-f", compose_path, "down"]
+    if (params or {}).get("remove_volumes") is True:
+        command.append("--volumes")
+    return command
+
+
 def _service_stack_remove_command(params):
     stack_name = _stack_name_param(params)
     return ["docker", "stack", "rm", stack_name]
@@ -1103,6 +1132,8 @@ COMMAND_SPECS = {
     "docker.images.storage": {"category": "docker", "argv": ["python3", "-c", DOCKER_IMAGE_STORAGE_SCRIPT]},
     "docker.images.delete_estimate": {"category": "docker", "factory": _docker_image_delete_estimate_command, "default_timeout_seconds": 45},
     "docker.prune.estimate": {"category": "docker", "factory": _docker_prune_estimate_command, "default_timeout_seconds": 20},
+    "docker.network.inspect": {"category": "docker", "factory": _inspect_network_command},
+    "docker.network.ensure": {"category": "docker", "factory": _docker_network_ensure_command, "destructive": True},
     "docker.image.prune": {"category": "docker", "factory": _docker_image_prune_command, "destructive": True, "default_timeout_seconds": 300},
     "docker.image.load": {"category": "docker", "factory": _docker_image_load_command, "destructive": True, "default_timeout_seconds": 1800},
     "docker.container.start": {"category": "docker", "factory": _docker_container_start_command, "destructive": True},
@@ -1120,6 +1151,8 @@ COMMAND_SPECS = {
     "docker.container.file.move": {"category": "docker", "factory": _docker_container_file_move_command, "destructive": True, "default_timeout_seconds": 30},
     "docker.image.remove": {"category": "docker", "factory": _docker_image_remove_command, "destructive": True},
     "service.stack.deploy": {"category": "service", "factory": _service_stack_deploy_command, "destructive": True, "default_timeout_seconds": 300},
+    "service.compose.up": {"category": "service", "factory": _service_compose_up_command, "destructive": True, "default_timeout_seconds": 300},
+    "service.compose.down": {"category": "service", "factory": _service_compose_down_command, "destructive": True, "default_timeout_seconds": 120},
     "service.stack.remove": {"category": "service", "factory": _service_stack_remove_command, "destructive": True, "default_timeout_seconds": 120},
     "service.stack.volumes.remove": {"category": "service", "factory": _service_stack_volumes_remove_command, "destructive": True, "default_timeout_seconds": 90},
     "service.stack.services": {"category": "service", "factory": _service_stack_services_command, "default_timeout_seconds": 20},

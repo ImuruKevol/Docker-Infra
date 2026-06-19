@@ -109,16 +109,34 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         contract = json.loads(by_id[5]["result"]["contents"][0]["text"])
         self.assertEqual(contract["permission_mode"], "agent_full_control_except_critical_destruction")
         self.assertIn("ssh_command", [tool["name"] for tool in contract["tools"]])
+        self.assertEqual(contract["volume_destruction_policy"]["default"], "blocked")
+        self.assertIn("docker compose down --volumes", json.dumps(contract, ensure_ascii=False))
 
-    def test_docker_infra_mcp_critical_command_policy_is_narrow(self):
+    def test_docker_infra_mcp_blocks_persistent_volume_deletion_by_default(self):
         spec = importlib.util.spec_from_file_location("docker_infra_mcp_policy_test", DOCKER_INFRA_MCP)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        module.CONTEXT = {}
         self.assertEqual(module.critical_command_violation("docker restart app_container"), "")
+        self.assertEqual(module.critical_command_violation("docker compose -p app -f docker-compose.yaml down"), "")
         self.assertIn("OS critical command", module.critical_command_violation("reboot"))
         self.assertIn(
             "Docker Infra protected path",
             module.critical_command_violation("rm -rf /root/docker-infra/project/main/src"),
+        )
+        for command in [
+            "docker compose -p app -f docker-compose.yaml down --volumes",
+            "docker-compose -p app down -v",
+            "docker volume rm app_data",
+            "docker volume prune -f",
+            "docker system prune --volumes -f",
+        ]:
+            with self.subTest(command=command):
+                self.assertIn("Persistent Docker volume deletion", module.critical_command_violation(command))
+        module.CONTEXT = {"ai_permission_scope": {"allow_volume_destruction": True}}
+        self.assertEqual(
+            module.critical_command_violation("docker compose -p app -f docker-compose.yaml down --volumes"),
+            "",
         )
 
     def test_service_create_preflight_contract_is_wired(self):
@@ -718,12 +736,41 @@ services:
         self.assertIn("public async deleteSelectedService", view)
         self.assertIn("서비스 삭제", template)
         self.assertIn("ServiceDeleteMixin", services)
-        for token in ["def delete", "_managed_nginx_delete_path", "_remove_volumes", "_remove_dns_records", "delete_service_dns_records", "SERVICE_DNS_RECORD_REMOVE_FAILED", "service.stack.remove", "service.stack.volumes.remove", "proxy.nginx.configtest", "proxy.nginx.reload", "DDNS unregister warning"]:
+        for token in ["def delete", "_managed_nginx_delete_path", "_remove_volumes", "_remove_dns_records", "delete_service_dns_records", "SERVICE_DNS_RECORD_REMOVE_FAILED", "service.stack.remove", "service.stack.volumes.remove", "service.compose.down", "compose_down_removed_volumes", "--volumes", "com.docker.compose.project", "proxy.nginx.configtest", "proxy.nginx.reload", "DDNS unregister warning"]:
             self.assertIn(token, delete_model)
         self.assertIn("service.stack.remove", commands)
         self.assertIn("service.stack.volumes.remove", commands)
+        self.assertIn("service.compose.down", commands)
+        self.assertIn('"remove_volumes"', commands)
         self.assertIn("service.stack.remove", config)
         self.assertIn("service.stack.volumes.remove", config)
+        self.assertIn("service.compose.down", config)
+
+    def test_compose_volume_removal_is_limited_to_service_delete(self):
+        deploy = DEPLOY_MODEL.read_text(encoding="utf-8")
+        delete_model = (ROOT / "src" / "model" / "struct" / "services_delete.py").read_text(encoding="utf-8")
+        migration = (ROOT / "src" / "model" / "struct" / "services_migration.py").read_text(encoding="utf-8")
+        release = RELEASE_MODEL.read_text(encoding="utf-8")
+        rollback = ROLLBACK_MODEL.read_text(encoding="utf-8")
+        mcp = DOCKER_INFRA_MCP.read_text(encoding="utf-8")
+        runtime = CODEX_RUNTIME_MODEL.read_text(encoding="utf-8")
+        assistant = AI_ASSISTANT_MODEL.read_text(encoding="utf-8")
+
+        self.assertIn('"remove_volumes": True', delete_model)
+        self.assertIn("docker compose -p \"$STACK\" -f \"$FILE\" down --volumes", delete_model)
+        self.assertIn("service.compose.down", deploy)
+        self.assertNotIn('"remove_volumes": True', deploy)
+        self.assertIn('docker compose -p "$STACK" -f "$FILE" down || true', deploy)
+        self.assertNotIn("down --volumes", deploy)
+        self.assertIn('"force_recreate": True', migration)
+        self.assertNotIn("remove_volumes", migration)
+        self.assertNotIn("service.compose.down", release)
+        self.assertNotIn("service.compose.down", rollback)
+        for token in ["persistent_volume_destruction_violation", "allow_volume_destruction", "docker compose down --volumes", "docker volume rm/prune"]:
+            self.assertIn(token, mcp)
+        for token in ["volume_destruction_policy", "docker compose down --volumes", "docker volume rm/prune"]:
+            self.assertIn(token, runtime)
+        self.assertIn("Do not run docker compose down --volumes", assistant)
 
     def test_service_delete_uses_ddns_unregister_and_skips_legacy_dns(self):
         delete_model = (ROOT / "src" / "model" / "struct" / "services_delete.py").read_text(encoding="utf-8")

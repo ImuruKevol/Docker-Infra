@@ -1,11 +1,13 @@
 import shutil
 import re
+import shlex
 from pathlib import Path
 
 
 connect = wiz.model("db/postgres").connect
 local_executor = wiz.model("struct/local_executor")
 operations = wiz.model("struct/operations")
+nodes = wiz.model("struct").nodes
 webserver = wiz.model("struct/webserver")
 domains_model = wiz.model("struct/domains")
 ddns_model = wiz.model("struct/domains_ddns")
@@ -45,7 +47,76 @@ class ServiceDeleteMixin:
                 cursor.execute("SELECT * FROM service_domains WHERE service_id = %s ORDER BY domain ASC", (service_id,))
                 return [dict(row) for row in cursor.fetchall()]
 
+    def _deployment_node(self, service, env=None):
+        policy = dict(service.get("target_node_policy") or {})
+        metadata = dict(service.get("metadata") or {})
+        placement = dict(metadata.get("placement") or {})
+        node_id = str(policy.get("node_id") or placement.get("node_id") or "").strip()
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                if node_id:
+                    cursor.execute("SELECT * FROM nodes WHERE id = %s LIMIT 1", (node_id,))
+                    row = cursor.fetchone()
+                    if row is not None:
+                        return dict(row)
+                cursor.execute("SELECT * FROM nodes WHERE is_local_master = true ORDER BY created_at ASC LIMIT 1")
+                row = cursor.fetchone()
+                return dict(row) if row is not None else None
+
+    def _deployment_mode(self, service, node=None):
+        if node is not None:
+            return "swarm" if str(node.get("swarm_node_id") or "").strip() else "compose"
+        policy = dict(service.get("target_node_policy") or {})
+        return "compose" if str(policy.get("mode") or "").strip().lower() == "compose" else "swarm"
+
+    def _remove_compose(self, service, operation_id, env=None):
+        stack_name = service.get("stack_name") or service.get("namespace")
+        node = self._deployment_node(service, env=env)
+        if not stack_name or not node:
+            return None
+        if node.get("is_local_master"):
+            result = local_executor.run(
+                "service.compose.down",
+                params={"compose_path": service.get("compose_path"), "stack_name": stack_name, "remove_volumes": True},
+                timeout_seconds=120,
+                env=env,
+            )
+        else:
+            node_detail = nodes.detail(node.get("id"), env=env)
+            script = (
+                "set -eu\n"
+                f"STACK={shlex.quote(stack_name)}\n"
+                'FILE="$HOME/.docker-infra/services/$STACK/docker-compose.yaml"\n'
+                'if [ -f "$FILE" ]; then\n'
+                '  docker compose -p "$STACK" -f "$FILE" down --volumes\n'
+                "else\n"
+                '  ids="$(docker ps -aq --filter "label=com.docker.compose.project=$STACK" 2>/dev/null || true)"\n'
+                '  [ -z "$ids" ] || docker rm -f $ids\n'
+                "fi\n"
+                'tmp="$(mktemp)"\n'
+                'trap \'rm -f "$tmp" "${tmp}.uniq"\' EXIT\n'
+                'docker volume ls -q --filter "label=com.docker.compose.project=$STACK" 2>/dev/null >> "$tmp" || true\n'
+                'docker volume ls -q 2>/dev/null | awk -v prefix="${STACK}_" \'index($0, prefix) == 1 {print $0}\' >> "$tmp" || true\n'
+                'sort -u "$tmp" | awk \'NF\' > "${tmp}.uniq"\n'
+                'mv "${tmp}.uniq" "$tmp"\n'
+                'if [ -s "$tmp" ]; then\n'
+                '  while IFS= read -r volume; do\n'
+                '    [ -n "$volume" ] || continue\n'
+                '    docker volume inspect "$volume" >/dev/null 2>&1 || continue\n'
+                '    docker volume rm -f "$volume"\n'
+                '  done < "$tmp"\n'
+                "fi\n"
+            )
+            result = nodes._run_ssh_command(node_detail, ["sh", "-lc", script], timeout_seconds=120, env=env, capture_limit=12000)
+        operations.append_output(operation_id, result.get("stdout") or result.get("stderr") or result.get("status"), stream="stdout" if result.get("status") == "ok" else "stderr", metadata={"step": "compose down", "result": result}, env=env)
+        if result.get("status") != "ok":
+            raise ServiceError(409, "Docker Compose 서비스를 삭제할 수 없습니다.", "SERVICE_COMPOSE_REMOVE_FAILED", check=result)
+        return result
+
     def _remove_stack(self, service, operation_id, env=None):
+        node = self._deployment_node(service, env=env)
+        if self._deployment_mode(service, node=node) == "compose":
+            return self._remove_compose(service, operation_id, env=env)
         stack_name = service.get("stack_name") or service.get("namespace")
         if not stack_name:
             return None
@@ -56,6 +127,9 @@ class ServiceDeleteMixin:
         return result
 
     def _remove_volumes(self, service, operation_id, env=None):
+        node = self._deployment_node(service, env=env)
+        if self._deployment_mode(service, node=node) == "compose":
+            return {"status": "skipped", "reason": "compose_down_removed_volumes"}
         stack_name = service.get("stack_name") or service.get("namespace")
         if not stack_name:
             return None
