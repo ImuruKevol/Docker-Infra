@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import yaml
 from psycopg.types.json import Jsonb
@@ -6,6 +7,7 @@ from psycopg.types.json import Jsonb
 
 connect = wiz.model("db/postgres").connect
 actions_mixin = wiz.model("struct/service_image_backup_actions")
+nodes = wiz.model("struct/nodes")
 shared = wiz.model("struct/services_shared")
 ServiceError = shared.ServiceError
 _row = shared.row
@@ -55,6 +57,29 @@ def extract_images(compose):
             continue
         images.append({"compose_service": str(service_name), **parse_image_ref(image_ref)})
     return images
+
+
+def _is_running_container(item):
+    state = str((item or {}).get("state") or "").strip().lower()
+    status = str((item or {}).get("status") or "").strip().lower()
+    return state == "running" or status.startswith("up ")
+
+
+def _compose_service_name(service, item):
+    runtime = str((item or {}).get("runtime_service_name") or "").strip()
+    namespace = str((service or {}).get("namespace") or "").strip()
+    stack_name = str((service or {}).get("stack_name") or "").strip()
+    for prefix in [namespace, stack_name]:
+        for separator in ("_", "-"):
+            marker = f"{prefix}{separator}" if prefix else ""
+            if marker and runtime.startswith(marker):
+                return runtime[len(marker):]
+    if runtime and "_" not in runtime:
+        return runtime
+    labels = (item or {}).get("labels") or {}
+    if isinstance(labels, dict) and labels.get("com.docker.compose.service"):
+        return str(labels.get("com.docker.compose.service") or "").strip()
+    return runtime
 
 
 class ServiceImageBackups(actions_mixin):
@@ -159,6 +184,142 @@ class ServiceImageBackups(actions_mixin):
                         ),
                     )
                     rows.append(_row(cursor.fetchone()))
+        return rows
+
+    def _runtime_snapshot_services(self, env=None):
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT s.*, v.id AS latest_compose_version_id
+                    FROM services s
+                    LEFT JOIN LATERAL (
+                        SELECT id
+                        FROM compose_versions
+                        WHERE service_id = s.id
+                        ORDER BY version DESC, created_at DESC
+                        LIMIT 1
+                    ) v ON true
+                    WHERE COALESCE(s.status, '') <> 'deleted'
+                      AND COALESCE(s.compose_path, '') <> ''
+                    ORDER BY s.created_at ASC
+                    """
+                )
+                return [_row(row) for row in cursor.fetchall()]
+
+    def _compose_image_map(self, service):
+        compose_path = Path(str(service.get("compose_path") or "")).expanduser()
+        if not compose_path.is_file():
+            return {}
+        try:
+            images = extract_images(compose_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return {item["compose_service"]: item for item in images if item.get("compose_service")}
+
+    def _insert_runtime_snapshot_target(self, service, image, node, container, source, env=None):
+        metadata = {
+            "service_name": service.get("name") or service.get("namespace"),
+            "service_namespace": service.get("namespace"),
+            "namespace": service.get("namespace"),
+            "backup_kind": "container_snapshot_target",
+            "snapshot_target_node_id": str(node.get("id") or ""),
+            "snapshot_target_node_name": node.get("name") or node.get("host") or "",
+            "snapshot_target_container_id": str(container.get("id") or ""),
+            "snapshot_target_container_name": container.get("name") or "",
+            "snapshot_target_container_image": container.get("image") or "",
+            "snapshot_request_source": source,
+        }
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO service_image_backups(
+                        service_id, compose_version_id, compose_service, image_ref, registry,
+                        repository, tag, digest, backup_ref, backup_status, source, test_run_id, metadata
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULL, 'recorded', %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (
+                        service["id"],
+                        service.get("latest_compose_version_id"),
+                        image["compose_service"],
+                        image["image_ref"],
+                        image.get("registry"),
+                        image.get("repository"),
+                        image.get("tag"),
+                        image.get("digest"),
+                        source,
+                        service.get("test_run_id"),
+                        Jsonb(metadata),
+                    ),
+                )
+                return _row(cursor.fetchone())
+
+    def record_runtime_snapshot_targets(self, limit, source="backup_policy_snapshot", env=None):
+        self.ensure_schema(env=env)
+        try:
+            limit = int(limit or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        if limit <= 0:
+            return []
+
+        services = self._runtime_snapshot_services(env=env)
+        if not services:
+            return []
+        services_by_id = {str(item.get("id")): item for item in services if item.get("id")}
+        services_by_namespace = {str(item.get("namespace")): item for item in services if item.get("namespace")}
+        image_maps = {str(service.get("id")): self._compose_image_map(service) for service in services}
+        rows = []
+        seen = set()
+        node_rows = nodes.list(env=env)
+        node_errors = []
+        for node_ref in node_rows:
+            if len(rows) >= limit:
+                break
+            try:
+                panel = nodes.live_containers(node_ref["id"], persist=False, env=env)
+            except Exception as exc:
+                node_errors.append({
+                    "node_id": str(node_ref.get("id") or ""),
+                    "node_name": node_ref.get("name") or node_ref.get("host") or "",
+                    "message": getattr(exc, "message", str(exc)),
+                    "error_code": getattr(exc, "error_code", "NODE_CONTAINERS_REFRESH_FAILED"),
+                })
+                continue
+            for group in (panel.get("groups") or {}).get("service_groups") or []:
+                service_ref = group.get("service") or {}
+                service = services_by_id.get(str(service_ref.get("id") or "")) or services_by_namespace.get(str(service_ref.get("namespace") or ""))
+                if service is None:
+                    continue
+                for container in group.get("containers") or []:
+                    if len(rows) >= limit:
+                        break
+                    if not _is_running_container(container) or not container.get("id"):
+                        continue
+                    compose_service = _compose_service_name(service, container)
+                    if not compose_service:
+                        continue
+                    key = (str(service["id"]), str(node_ref.get("id") or ""), str(container["id"]))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    image = (image_maps.get(str(service["id"])) or {}).get(compose_service)
+                    if image is None:
+                        image_ref = str(container.get("image") or "").strip()
+                        if not image_ref:
+                            continue
+                        image = {"compose_service": compose_service, **parse_image_ref(image_ref)}
+                    rows.append(self._insert_runtime_snapshot_target(service, image, node_ref, container, source, env=env))
+        if not rows and node_rows and len(node_errors) == len(node_rows):
+            raise ServiceError(
+                409,
+                "등록 서버의 컨테이너 목록을 확인할 수 없습니다.",
+                "SERVICE_SNAPSHOT_TARGET_REFRESH_FAILED",
+                node_errors=node_errors,
+            )
         return rows
 
     def list_for_service(self, service_id, env=None):

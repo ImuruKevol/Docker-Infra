@@ -46,12 +46,9 @@ main(class="space-y-5 px-5 py-5")
                             span(*ngIf="harborBusy() || harborOverviewBusy()", class="inline-flex h-8 items-center gap-2 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400")
                                 i(class="fa-solid fa-spinner fa-spin")
                                 span 동기화 중
-                            button(*ngIf="harbor().enabled", type="button", (click)="openCreateProjectModal()", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                i(class="fa-solid fa-folder-plus")
-                                span 프로젝트 생성
                     div(*ngIf="!harbor().enabled", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400") 서비스 백업 시스템이 꺼져 있습니다. 시스템 설정에서 백업 시스템을 시작해주세요.
                     div(*ngIf="harbor().enabled && harborError()", class="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200") {{harborError()}}
-                    div(*ngIf="harbor().enabled", class="space-y-3")
+                    div(*ngIf="harbor().enabled", class="grid grid-cols-1 gap-3 xl:grid-cols-[320px_minmax(0,1fr)]")
                         aside(class="overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800")
                             div(class="grid grid-cols-2 gap-2 border-b border-zinc-100 px-3 py-3 dark:border-zinc-800")
                                 div(class="rounded-md bg-zinc-50 px-3 py-2 dark:bg-zinc-950")
@@ -76,25 +73,23 @@ main(class="space-y-5 px-5 py-5")
                                 wiz-portal-season-pagination([current]="harborProjectPagination().current", [start]="harborProjectPagination().start", [end]="harborProjectPagination().end", [maxlength]="10", (pageMove)="moveHarborProjectPage($event)")
 
                         section(class="min-w-0")
-                            div(*ngIf="!selectedProject()", class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400") 백업 저장소 프로젝트 보드에서 항목을 선택하세요.
+                            div(*ngIf="!selectedProject()", class="space-y-3 px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400")
+                                p 백업 저장소 프로젝트 보드에서 항목을 선택하세요.
+                                button(type="button", (click)="openCreateProjectModal()", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                    i(class="fa-solid fa-folder-plus")
+                                    span 프로젝트 생성
                             div(*ngIf="selectedProject()", class="space-y-3 p-3")
                                 div(class="grid grid-cols-1 gap-3 2xl:grid-cols-[minmax(0,1fr)_520px]")
                                     div(class="min-w-0")
                                         h3(class="truncate text-[15px] font-semibold text-zinc-950 dark:text-zinc-50", [title]="selectedProject()") {{selectedProject()}}
                                         p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 선택 프로젝트의 저장소와 태그 상태입니다.
-                                    div(class="grid grid-cols-2 gap-2 md:grid-cols-4")
-                                        div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                                            p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 저장소
-                                            p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{projectSummary().repository_count || 0}}
-                                        div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                                            p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 이미지
-                                            p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{projectSummary().artifact_count || 0}}
-                                        div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                                            p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") Pull
-                                            p(class="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50") {{projectSummary().pull_count || 0}}
-                                        div(class="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                                            p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 계정
-                                            p(class="mt-1 truncate text-[13px] font-semibold text-zinc-950 dark:text-zinc-50", [title]="harbor().username || '-'") {{harbor().username || '-'}}
+                                    div(class="flex flex-wrap items-center gap-2 2xl:justify-end")
+                                        button(type="button", (click)="openCreateProjectModal()", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                            i(class="fa-solid fa-folder-plus")
+                                            span 프로젝트 생성
+                                        button(type="button", (click)="deleteHarborProject()", [disabled]="harborBusy()", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
+                                            i(class="fa-solid fa-folder-minus")
+                                            span 프로젝트 삭제
                                 div(class="grid grid-cols-1 gap-3 2xl:grid-cols-[minmax(360px,0.95fr)_minmax(420px,1.05fr)]")
                                     section(class="min-w-0 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800")
                                         div(class="flex flex-col gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
@@ -105,9 +100,6 @@ main(class="space-y-5 px-5 py-5")
                                                 button(type="button", (click)="deleteSelectedHarborRepositories()", [disabled]="harborBusy() || selectedHarborRepositoryCount() === 0", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                                                     i(class="fa-solid fa-trash")
                                                     span 선택 삭제 ({{selectedHarborRepositoryCount()}})
-                                                button(type="button", (click)="deleteHarborProject()", [disabled]="harborBusy()", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
-                                                    i(class="fa-solid fa-folder-minus")
-                                                    span 프로젝트 삭제
                                         div(class="max-h-[520px] overflow-auto")
                                             table(class="min-w-[680px] w-full divide-y divide-zinc-100 text-[13px] dark:divide-zinc-800")
                                                 thead(class="sticky top-0 bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400")
@@ -208,7 +200,7 @@ main(class="space-y-5 px-5 py-5")
                             button(type="button", (click)="runImagePrune()", [disabled]="!selectedNodeId() || localBusy() || localPruneBusy() || localPruneEstimateBusy()", class="inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border border-amber-300 px-3 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-900/70 dark:text-amber-300 dark:hover:bg-amber-950/30")
                                 i(class="fa-solid fa-broom")
                                 span 미사용 정리
-                    div(class="space-y-3")
+                    div(class="grid grid-cols-1 gap-3 xl:grid-cols-[320px_minmax(0,1fr)]")
                         aside(class="overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800")
                             div(class="grid grid-cols-2 gap-2 border-b border-zinc-100 px-3 py-3 dark:border-zinc-800")
                                 div(class="rounded-md bg-zinc-50 px-3 py-2 dark:bg-zinc-950")
@@ -224,7 +216,7 @@ main(class="space-y-5 px-5 py-5")
                                         div(class="min-w-0")
                                             p(class="truncate text-[13px] font-semibold text-zinc-950 dark:text-zinc-50", [title]="node.name") {{node.name}}
                                             p(class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400", [title]="node.host") {{node.host}}
-                                        span(class="shrink-0 whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="statusClass(node.is_local_master ? 'enabled' : 'configured')") {{node.is_local_master ? 'master' : 'node'}}
+                                        span(class="shrink-0 whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="statusClass(node.is_local_master ? 'enabled' : (node.swarm_node_id ? 'configured' : 'warning'))") {{node.is_local_master ? 'master' : (node.swarm_node_id ? 'cluster' : '독립')}}
                                     p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 이미지 {{nodeImageCount(node)}}개
                             div(*ngIf="localNodePagination().total > 0", class="flex flex-col gap-3 border-t border-zinc-200 px-3 py-3 dark:border-zinc-800 md:flex-row md:items-center md:justify-between")
                                 p(class="text-xs font-medium text-zinc-500 dark:text-zinc-400") 페이지당 20개

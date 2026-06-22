@@ -1,3 +1,4 @@
+import importlib.util
 import unittest
 from pathlib import Path
 import time
@@ -59,9 +60,12 @@ class ImagesStaticContractTest(unittest.TestCase):
         self.assertIn("harbor_overview", images_model)
         self.assertIn("create_harbor_project", images_model)
         self.assertIn("delete_harbor_repository", images_model)
+        self.assertIn("harbor.delete_artifact(project_name, repository_name, digest", images_model)
+        self.assertIn("harbor.delete_repository(project_name, repository_name", images_model)
         self.assertIn("delete_local_image", images_local_model)
         self.assertIn("_remove_image_with_fallbacks", images_local_model)
         self.assertIn('f"{repository}:{tag}@{digest_value}"', images_shared_model)
+        self.assertIn("def parse_int", images_shared_model)
         self.assertIn("class FileTree", file_tree_model)
         self.assertIn("def upload", file_tree_model)
         self.assertIn("def mutate", file_tree_model)
@@ -89,6 +93,18 @@ class ImagesStaticContractTest(unittest.TestCase):
         self.assertIn("백업 저장소", images_ts)
         self.assertNotIn("span Harbor", images_view)
         self.assertNotIn("Harbor 프로젝트", images_view)
+
+    def test_docker_image_parser_accepts_na_container_count(self):
+        spec = importlib.util.spec_from_file_location("images_shared_under_test", IMAGES_SHARED_MODEL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        rows = module.parse_docker_image_lines(
+            '{"Repository":"nginx","Tag":"latest","Digest":"<none>","ID":"sha256:123","Containers":"N/A","Size":"10MB"}\n'
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["containers_count"], 0)
 
 
 class ImagesLiveFlowTest(unittest.TestCase):

@@ -68,6 +68,16 @@ def parse_size_bytes(value):
     return int(amount * scale)
 
 
+def parse_int(value, default=0):
+    try:
+        text = str(value if value is not None else "").strip()
+        if text in {"", "N/A", "<none>"}:
+            return default
+        return int(text)
+    except (TypeError, ValueError):
+        return default
+
+
 def encode_repository_name(repository_name):
     raw = str(repository_name or "").strip().strip("/")
     return quote(quote(raw, safe=""), safe="")
@@ -105,7 +115,7 @@ def parse_docker_image_lines(stdout):
                 "created_since": created_since,
                 "size": size,
                 "size_bytes": parse_size_bytes(size),
-                "containers_count": int(payload.get("Containers") or 0),
+                "containers_count": parse_int(payload.get("Containers")),
                 "remove_ref": remove_ref,
                 "raw": payload,
             }
@@ -144,6 +154,7 @@ class ImagesShared:
     parse_docker_image_lines = staticmethod(parse_docker_image_lines)
     parse_docker_container_inspect_lines = staticmethod(parse_docker_container_inspect_lines)
     parse_size_bytes = staticmethod(parse_size_bytes)
+    parse_int = staticmethod(parse_int)
     encode_repository_name = staticmethod(encode_repository_name)
 
 

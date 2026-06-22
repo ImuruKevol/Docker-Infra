@@ -3,6 +3,9 @@ import datetime
 from psycopg.types.json import Jsonb
 
 
+cron = wiz.model("struct/backup_system_cron")
+
+
 class BackupSystemPolicyMixin:
     def save_policy(self, payload=None, env=None):
         payload = payload or {}
@@ -15,7 +18,14 @@ class BackupSystemPolicyMixin:
                 else:
                     metadata = dict(row["metadata"] or {})
                 current = self._backup_policy(metadata.get("backup_policy"))
-                metadata["backup_policy"] = self._backup_policy(payload, base=current)
+                policy = self._backup_policy(payload, base=current)
+                try:
+                    cron_plan = cron.prepare(policy, current=metadata.get("backup_cron"), env=env)
+                    cron_result = cron.sync(policy, cron_plan, env=env)
+                except cron.CronError as exc:
+                    raise self.BackupSystemError(exc.status_code, exc.message, exc.error_code, **exc.extra)
+                metadata["backup_policy"] = policy
+                metadata["backup_cron"] = {**(cron_plan.get("metadata") or {}), **(cron_result or {})}
                 cursor.execute(
                     """
                     UPDATE backup_system_settings
@@ -45,6 +55,7 @@ class BackupSystemPolicyMixin:
                     "failed": int(result.get("failed") or 0),
                     "skipped": int(result.get("skipped") or 0),
                     "snapshots": int(result.get("snapshots") or 0),
+                    "cleanup": result.get("cleanup") or None,
                 }
                 metadata["backup_policy"] = policy
                 cursor.execute(

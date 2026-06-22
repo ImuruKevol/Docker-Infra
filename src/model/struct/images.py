@@ -25,7 +25,15 @@ class Images(local_mixin):
     def load(self, env=None):
         node_items = []
         for node in nodes.list(env=env):
-            node_items.append({"id": node["id"], "name": node["name"], "host": node["host"], "status": node["status"], "is_local_master": node["is_local_master"]})
+            node_items.append({
+                "id": node["id"],
+                "name": node["name"],
+                "host": node["host"],
+                "status": node["status"],
+                "role": node.get("role"),
+                "swarm_node_id": node.get("swarm_node_id"),
+                "is_local_master": node["is_local_master"],
+            })
         harbor_status = harbor.status(env=env)
         cached = self._cached_summary(env=env)
         selected_node_id = next((item["id"] for item in node_items if item["is_local_master"]), node_items[0]["id"] if node_items else "")
@@ -121,6 +129,36 @@ class Images(local_mixin):
         project_name = str((payload or {}).get("project_name") or "").strip()
         if not project_name:
             raise ImageError(400, "project_name이 필요합니다.", "HARBOR_PROJECT_REQUIRED")
+        deleted_repositories = []
+        deleted_artifacts = 0
+        for repository in harbor.list_repositories(project_name, env=env):
+            repository_name = str(repository.get("name") or "").strip()
+            if not repository_name:
+                continue
+            seen_digests = set()
+            try:
+                artifacts = harbor.list_artifacts(project_name, repository_name, env=env)
+            except ImageError as exc:
+                if exc.status_code != 404:
+                    raise
+                artifacts = []
+            for artifact in artifacts:
+                digest = str((artifact or {}).get("digest") or "").strip()
+                if not digest or digest in seen_digests:
+                    continue
+                seen_digests.add(digest)
+                try:
+                    harbor.delete_artifact(project_name, repository_name, digest, env=env)
+                    deleted_artifacts += 1
+                except ImageError as exc:
+                    if exc.status_code != 404:
+                        raise
+            try:
+                harbor.delete_repository(project_name, repository_name, env=env)
+                deleted_repositories.append(repository_name)
+            except ImageError as exc:
+                if exc.status_code != 404:
+                    raise
         harbor.delete_project(project_name, env=env)
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -130,7 +168,12 @@ class Images(local_mixin):
             target_type="harbor_project",
             target_id=project_name,
             payload={"project_name": project_name},
-            result={"deleted": True},
+            result={
+                "deleted": True,
+                "deleted_repositories": deleted_repositories,
+                "deleted_repository_count": len(deleted_repositories),
+                "deleted_artifact_count": deleted_artifacts,
+            },
             env=env,
         )
         return self.harbor_overview(env=env)

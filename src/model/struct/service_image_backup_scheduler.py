@@ -2,14 +2,12 @@ import calendar
 import datetime
 import threading
 
-
-connect = wiz.model("db/postgres").connect
 backup_system = wiz.model("struct/backup_system")
 image_backups = wiz.model("struct/service_image_backups")
+cleanup = wiz.model("struct/service_image_backup_cleanup")
 operations = wiz.model("struct/operations")
 shared = wiz.model("struct/services_shared")
 ServiceError = shared.ServiceError
-_row = shared.row
 
 
 def _parse_time(value):
@@ -42,6 +40,21 @@ def _failure_detail(exc):
         "error_code": getattr(exc, "error_code", "SERVICE_IMAGE_BACKUP_FAILED"),
         **(getattr(exc, "extra", {}) or {}),
     }
+
+
+def _snapshot_label(item):
+    metadata = item.get("metadata") or {}
+    service_label = (
+        metadata.get("service_name")
+        or metadata.get("service_namespace")
+        or metadata.get("namespace")
+        or item.get("service_name")
+        or item.get("service_id")
+    )
+    compose_label = item.get("compose_service") or metadata.get("snapshot_target_container_name") or "container"
+    if service_label and compose_label and str(service_label) != str(compose_label):
+        return f"{service_label} / {compose_label}"
+    return str(service_label or compose_label or "container")
 
 
 def _scheduled_at(policy, now):
@@ -101,42 +114,36 @@ class ServiceImageBackupScheduler:
             return "이번 예약 백업은 이미 실행되었습니다."
         return None
 
-    def _candidates(self, limit, env=None):
-        image_backups.ensure_schema(env=env)
-        with connect(env=env) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT b.*
-                    FROM service_image_backups b
-                    JOIN services s ON s.id = b.service_id
-                    WHERE b.backup_ref IS NULL
-                      AND b.backup_status IN ('recorded', 'backup_failed')
-                    ORDER BY b.created_at ASC
-                    LIMIT %s
-                    """,
-                    (limit,),
-                )
-                return [_row(row) for row in cursor.fetchall()]
-
     def _snapshot_candidates(self, limit, env=None):
         if limit <= 0:
             return []
-        image_backups.ensure_schema(env=env)
-        with connect(env=env) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT DISTINCT ON (b.service_id, b.compose_service) b.*
-                    FROM service_image_backups b
-                    JOIN services s ON s.id = b.service_id
-                    WHERE b.source <> 'container_snapshot'
-                    ORDER BY b.service_id, b.compose_service, b.created_at DESC
-                    LIMIT %s
-                    """,
-                    (limit,),
-                )
-                return [_row(row) for row in cursor.fetchall()]
+        return image_backups.record_runtime_snapshot_targets(limit, source="backup_policy_snapshot", env=env)
+
+    def _run_retention_cleanup(self, operation_id, policy, env=None):
+        keep = int(policy.get("retention_keep_per_service") or 10)
+        payload = {
+            "retention_keep_per_service": keep,
+            "cleanup_unused_days": int(policy.get("cleanup_unused_days") or 30),
+        }
+        self._append_progress(
+            operation_id,
+            f"보존 정책 정리를 시작합니다. 서비스별 최근 {keep}개만 유지합니다.",
+            metadata={"step": "cleanup_start", **payload},
+            env=env,
+        )
+        result = cleanup.cleanup(payload, env=env)
+        summary = result.get("summary") or {}
+        deleted = int(summary.get("deleted_count") or 0)
+        failed = int(summary.get("failed_count") or 0)
+        stream = "stderr" if failed else "system"
+        self._append_progress(
+            operation_id,
+            f"보존 정책 정리 완료: Harbor 이미지 {deleted}개 삭제, 실패 {failed}개.",
+            stream=stream,
+            metadata={"step": "cleanup_done", "summary": summary},
+            env=env,
+        )
+        return result
 
     def run(self, payload=None, env=None):
         payload = payload or {}
@@ -155,16 +162,8 @@ class ServiceImageBackupScheduler:
             return self._finish_skipped(operation, {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 1, "message": message, "policy": policy, "backup_system": status}, env=env)
 
         limit = int(policy.get("max_items_per_run") or 3)
-        snapshot_enabled = bool(policy.get("snapshot_enabled"))
-        if force:
-            if "include_snapshots" in payload:
-                snapshot_enabled = _as_bool(payload.get("include_snapshots"), snapshot_enabled)
-            elif "snapshot_enabled" in payload:
-                snapshot_enabled = _as_bool(payload.get("snapshot_enabled"), snapshot_enabled)
-            else:
-                snapshot_enabled = True
+        snapshot_enabled = True
         snapshot_pause = _as_bool(payload.get("snapshot_pause"), policy.get("snapshot_pause", True))
-        candidates = self._candidates(limit, env=env)
         if operation is None:
             operation = operations.create(
                 "service.image.backup.policy",
@@ -174,45 +173,44 @@ class ServiceImageBackupScheduler:
                 metadata={"policy": policy},
                 env=env,
             )
-        self._append_progress(operation["id"], f"수동 백업을 시작합니다. 이미지 {len(candidates)}개, 스냅샷 {'포함' if snapshot_enabled else '제외'}.", metadata={"step": "start", "image_count": len(candidates), "snapshot_enabled": snapshot_enabled}, env=env)
+        self._append_progress(operation["id"], f"수동 백업을 시작합니다. 등록 서비스 컨테이너 스냅샷을 최대 {limit}개 생성합니다.", metadata={"step": "start", "snapshot_enabled": snapshot_enabled, "limit": limit}, env=env)
         result = {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 0, "failures": [], "policy": policy, "snapshots": 0}
-        for item in candidates:
-            result["processed"] += 1
-            try:
-                self._append_progress(operation["id"], f"{item.get('compose_service') or 'image'} 이미지 백업을 시작합니다.", metadata={"step": "image", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
-                image_backups.backup_to_harbor(item["service_id"], item["id"], env=env)
-                self._append_progress(operation["id"], f"{item.get('compose_service') or 'image'} 이미지 백업을 완료했습니다.", metadata={"step": "image", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
-                result["succeeded"] += 1
-            except Exception as exc:
-                if not _is_service_error_like(exc):
-                    raise
-                detail = _failure_detail(exc)
-                self._append_progress(operation["id"], f"{item.get('compose_service') or 'image'} 이미지 백업 실패: {detail['message']}", stream="stderr", metadata={"step": "image", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
-                result["failed"] += 1
-                result["failures"].append({"backup_id": item["id"], **detail})
-
-        snapshot_limit = limit if force else max(0, limit - result["processed"])
-        if snapshot_enabled and snapshot_limit > 0:
-            snapshot_candidates = self._snapshot_candidates(snapshot_limit, env=env)
-            self._append_progress(operation["id"], f"스냅샷 대상 {len(snapshot_candidates)}개를 확인했습니다.", metadata={"step": "snapshot_targets", "count": len(snapshot_candidates)}, env=env)
+        if snapshot_enabled:
+            snapshot_candidates = self._snapshot_candidates(limit, env=env)
+            self._append_progress(operation["id"], f"등록 서비스 기준 스냅샷 대상 {len(snapshot_candidates)}개를 확인했습니다.", metadata={"step": "snapshot_targets", "count": len(snapshot_candidates)}, env=env)
             for item in snapshot_candidates:
                 result["processed"] += 1
                 result["snapshots"] += 1
+                label = _snapshot_label(item)
                 try:
-                    self._append_progress(operation["id"], f"{item.get('compose_service') or 'container'} 스냅샷 백업을 시작합니다.", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
+                    self._append_progress(operation["id"], f"{label} 스냅샷 백업을 시작합니다.", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service"), "label": label}, env=env)
                     image_backups.snapshot_to_harbor(item["service_id"], item["id"], pause=snapshot_pause, env=env)
-                    self._append_progress(operation["id"], f"{item.get('compose_service') or 'container'} 스냅샷 백업을 완료했습니다.", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
+                    self._append_progress(operation["id"], f"{label} 스냅샷 백업을 완료했습니다.", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service"), "label": label}, env=env)
                     result["succeeded"] += 1
                 except Exception as exc:
                     if not _is_service_error_like(exc):
                         raise
                     detail = _failure_detail(exc)
-                    self._append_progress(operation["id"], f"{item.get('compose_service') or 'container'} 스냅샷 백업 실패: {detail['message']}", stream="stderr", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service")}, env=env)
+                    self._append_progress(operation["id"], f"{label} 스냅샷 백업 실패: {detail['message']}", stream="stderr", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service"), "label": label}, env=env)
                     result["failed"] += 1
                     result["failures"].append({"backup_id": item["id"], **detail})
 
-        status_name = "succeeded" if result["failed"] == 0 else "failed"
-        message = "처리할 이미지 백업이 없습니다." if result["processed"] == 0 else None
+        cleanup_failed = False
+        if result["succeeded"] > 0:
+            try:
+                cleanup_result = self._run_retention_cleanup(operation["id"], policy, env=env)
+                result["cleanup"] = cleanup_result.get("summary") or {}
+                cleanup_failed = int(result["cleanup"].get("failed_count") or 0) > 0
+            except Exception as exc:
+                if not _is_service_error_like(exc):
+                    raise
+                detail = _failure_detail(exc)
+                cleanup_failed = True
+                result["cleanup"] = detail
+                self._append_progress(operation["id"], f"보존 정책 정리 실패: {detail['message']}", stream="stderr", metadata={"step": "cleanup_failed", "error_code": detail["error_code"]}, env=env)
+
+        status_name = "succeeded" if result["failed"] == 0 and not cleanup_failed else "failed"
+        message = "실행 중인 등록 서비스 컨테이너가 없습니다." if result["processed"] == 0 else None
         self._append_progress(operation["id"], message or f"수동 백업 처리 완료: 성공 {result['succeeded']}개, 실패 {result['failed']}개.", stream="stderr" if result["failed"] else "system", metadata={"step": "done"}, env=env)
         operation = operations.transition(operation["id"], status_name, message=message, result_payload=result, env=env)
         result["operation"] = operation

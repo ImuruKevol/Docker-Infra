@@ -4488,6 +4488,62 @@ export class Component implements OnInit, OnDestroy {
         return Number(this.versionBackupSummary(version)?.backup_succeeded_count || 0);
     }
 
+    public versionDeletedBackupCount(version: any) {
+        return Number(this.versionBackupSummary(version)?.deleted_count || 0);
+    }
+
+    public versionBackupEntries(version: any) {
+        return (version?.image_backup_entries || []).slice(0, 6);
+    }
+
+    public versionBackupEntryTitle(item: any) {
+        const metadata = item?.metadata || {};
+        const source = metadata.snapshot_request_source || item?.source || '';
+        const sourceLabel = source === 'backup_policy_snapshot'
+            ? '자동 백업'
+            : source === 'manual_release_snapshot'
+                ? '릴리즈 스냅샷'
+                : source === 'manual_snapshot'
+                    ? '수동 스냅샷'
+                    : item?.source === 'container_snapshot'
+                        ? '스냅샷 백업'
+                        : '이미지 백업';
+        const compose = item?.compose_service ? ` - ${item.compose_service}` : '';
+        return `${sourceLabel}${compose}`;
+    }
+
+    public versionBackupEntryMeta(item: any) {
+        const status = item?.backup_status === 'deleted' ? '보존 만료' : this.statusLabel(item?.backup_status);
+        const date = this.formatDate(item?.created_at || item?.updated_at);
+        return [status, date].filter(Boolean).join(' · ');
+    }
+
+    public versionBackupEntryClass(item: any) {
+        const status = String(item?.backup_status || '');
+        if (status === 'backup_succeeded') return 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-200';
+        if (status === 'deleted') return 'border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400';
+        if (status === 'backup_failed') return 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-200';
+        return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+    }
+
+    public versionRestoreBlocked(version: any) {
+        if (Number(this.versionBackupSummary(version)?.restore_blocked_count || 0) > 0) return true;
+        const rows = version?.image_backup_entries || [];
+        const byService: any = {};
+        for (const row of rows) {
+            const key = row?.compose_service || row?.id || 'service';
+            byService[key] = byService[key] || { deleted: false, succeeded: false };
+            if (row?.backup_status === 'deleted') byService[key].deleted = true;
+            if (row?.backup_status === 'backup_succeeded' && row?.backup_ref) byService[key].succeeded = true;
+        }
+        return Object.values(byService).some((item: any) => item.deleted && !item.succeeded);
+    }
+
+    public versionRestoreBlockText(version: any) {
+        if (!this.versionRestoreBlocked(version)) return '';
+        return '보존 정책으로 백업 이미지가 삭제되어 이 버전은 복원할 수 없습니다.';
+    }
+
     public imageDisplayName(item: any) {
         const value = item?.backup_ref || item?.image_ref || '-';
         return String(value).replace(/^docker\.io\//, '');

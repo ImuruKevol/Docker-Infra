@@ -98,7 +98,7 @@ main(class="space-y-5 px-5 py-5")
                 div(class="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800")
                     div
                         h2(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 서비스 백업 시스템
-                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 이 장비의 내부 백업 저장소로 서비스 이미지 이력을 보관합니다.
+                        p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 이 장비의 내부 백업 저장소로 서비스 상태 스냅샷을 보관합니다.
                     span(class="inline-flex rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="backupSystem.status === 'running' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300' : backupSystem.status === 'failed' ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300' : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300'") {{backupStatusLabel()}}
                 div(class="space-y-4 p-4")
                     div(*ngIf="!backupSystem.installed", class="space-y-4")
@@ -128,9 +128,6 @@ main(class="space-y-5 px-5 py-5")
                             button(type="button", (click)="refreshBackupSystem()", [disabled]="backupBusy()", class="inline-flex h-10 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
                                 i(class="fa-solid", [ngClass]="backupBusy() ? 'fa-spinner fa-spin' : 'fa-heart-pulse'")
                                 span 상태 확인
-                            button(type="button", (click)="applyBackupRegistryNodes()", [disabled]="backupNodeRegistryBusy()", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                i(class="fa-solid", [ngClass]="backupNodeRegistryBusy() ? 'fa-spinner fa-spin' : 'fa-network-wired'")
-                                span 노드 설정 적용
                             button(type="button", (click)="runBackupAction('start')", [disabled]="backupBusy() || backupSystem.status === 'running'", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                 i(class="fa-solid fa-play")
                                 span 시작
@@ -143,77 +140,74 @@ main(class="space-y-5 px-5 py-5")
                             button(type="button", (click)="runBackupAction('disable')", [disabled]="backupBusy() || backupSystem.status === 'disabled'", class="inline-flex h-10 items-center gap-2 rounded-md border border-amber-300 px-3 text-sm font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60 dark:border-amber-900/70 dark:text-amber-300 dark:hover:bg-amber-950/30")
                                 i(class="fa-solid fa-power-off")
                                 span 비활성화
-                        div(class="overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800")
-                            div(class="grid gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950/60 lg:grid-cols-[1fr_auto]")
+                        div(class="space-y-4 border-t border-zinc-200 pt-4 dark:border-zinc-800")
+                            div(class="grid gap-3 lg:grid-cols-[1fr_auto]")
                                 div(class="flex items-start gap-3")
                                     div(class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white text-zinc-700 shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800")
                                         i(class="fa-solid fa-calendar-check")
                                     div
-                                        h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 서비스 이미지 자동 백업
+                                        h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 서비스 상태 자동 백업
                                         p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{backupScheduleSummary()}}
                                 div(class="flex flex-wrap items-center gap-2 lg:justify-end")
                                     span(class="inline-flex rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300") 마지막 실행 {{backupPolicyLastRunLabel()}}
                                     span(*ngIf="backupPolicy.enabled", class="inline-flex rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300") 사용 중
                                     span(*ngIf="!backupPolicy.enabled", class="inline-flex rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-semibold text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400") 꺼짐
-                            div(class="p-4")
-                                label(class="flex min-h-12 items-center justify-between gap-4 rounded-md border px-3 py-2 transition-colors", [ngClass]="backupPolicy.enabled ? 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/70 dark:bg-emerald-950/30' : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900'")
-                                    span(class="flex items-center gap-3")
-                                        span(class="flex h-8 w-8 items-center justify-center rounded-md bg-white text-zinc-700 shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-950 dark:text-zinc-200 dark:ring-zinc-800")
-                                            i(class="fa-solid", [ngClass]="backupPolicy.enabled ? 'fa-toggle-on text-emerald-600 dark:text-emerald-300' : 'fa-toggle-off text-zinc-400'")
-                                        span
-                                            span(class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100") 자동 백업 사용
-                                            span(class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400") {{backupRetentionSummary()}}
-                                    input(type="checkbox", [(ngModel)]="backupPolicy.enabled", class="h-4 w-4 shrink-0 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
-                                div(*ngIf="backupPolicy.enabled", class="mt-4 space-y-4")
-                                    div(class="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]")
-                                        div(class="rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900")
-                                            div(class="mb-3 flex items-center justify-between gap-3")
-                                                p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 실행 일정
-                                                span(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{backupScheduleSummary()}}
-                                            div(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-800 dark:bg-zinc-950")
-                                                button(*ngFor="let item of backupScheduleTypes()", type="button", (click)="setBackupScheduleType(item.key)", class="inline-flex h-8 items-center gap-2 rounded px-3 text-xs font-semibold transition-colors", [ngClass]="backupPolicy.schedule_type === item.key ? 'bg-white text-zinc-950 shadow-sm dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'")
-                                                    i(class="fa-solid", [ngClass]="item.icon")
-                                                    span {{item.label}}
-                                            div(*ngIf="backupPolicy.schedule_type === 'weekly'", class="mt-3")
-                                                span(class="mb-2 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 실행 요일
-                                                div(class="grid grid-cols-7 gap-1.5")
-                                                    button(*ngFor="let day of weekdayOptions()", type="button", (click)="setBackupWeekday(day.value)", class="h-9 rounded-md border text-xs font-semibold transition-colors", [ngClass]="backupPolicy.schedule_weekday == day.value ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'") {{day.label}}
-                                            div(class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2")
-                                                label(*ngIf="backupPolicy.schedule_type === 'monthly'", class="block")
-                                                    span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 실행 날짜
-                                                    div(class="flex h-10 items-center overflow-hidden rounded-md border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950")
-                                                        input(type="number", min="1", max="31", [(ngModel)]="backupPolicy.schedule_month_day", class="h-full w-full bg-transparent px-3 text-sm text-zinc-900 focus:outline-none dark:text-zinc-100")
-                                                        span(class="border-l border-zinc-200 px-3 text-xs font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 일
-                                                label(class="block")
-                                                    span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 실행 시간
-                                                    input(type="time", [(ngModel)]="backupPolicy.schedule_time", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                                        div(class="rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900")
-                                            p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 보관 방식
-                                            p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{backupRetentionSummary()}}
-                                            label(class="mt-3 block")
-                                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서비스별 보존 개수
+                            label(class="flex min-h-12 items-center justify-between gap-4 rounded-md border px-3 py-2 transition-colors", [ngClass]="backupPolicy.enabled ? 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/70 dark:bg-emerald-950/30' : 'border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/60'")
+                                span(class="flex items-center gap-3")
+                                    span(class="flex h-8 w-8 items-center justify-center rounded-md bg-white text-zinc-700 shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-950 dark:text-zinc-200 dark:ring-zinc-800")
+                                        i(class="fa-solid", [ngClass]="backupPolicy.enabled ? 'fa-toggle-on text-emerald-600 dark:text-emerald-300' : 'fa-toggle-off text-zinc-400'")
+                                    span
+                                        span(class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100") 자동 백업 사용
+                                        span(class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400") {{backupRetentionSummary()}}
+                                input(type="checkbox", [(ngModel)]="backupPolicy.enabled", class="h-4 w-4 shrink-0 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
+                            fieldset([disabled]="!backupPolicy.enabled", class="m-0 space-y-4 border-0 p-0 transition", [ngClass]="backupPolicy.enabled ? '' : 'opacity-50 grayscale'")
+                                div(class="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]")
+                                    div(class="rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900")
+                                        div(class="mb-3 flex items-center justify-between gap-3")
+                                            p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 실행 일정
+                                            span(class="text-xs font-semibold text-zinc-500 dark:text-zinc-400") {{backupScheduleSummary()}}
+                                        div(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-800 dark:bg-zinc-950")
+                                            button(*ngFor="let item of backupScheduleTypes()", type="button", (click)="setBackupScheduleType(item.key)", class="inline-flex h-8 items-center gap-2 rounded px-3 text-xs font-semibold transition-colors", [ngClass]="backupPolicy.schedule_type === item.key ? 'bg-white text-zinc-950 shadow-sm dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'")
+                                                i(class="fa-solid", [ngClass]="item.icon")
+                                                span {{item.label}}
+                                        div(*ngIf="backupPolicy.schedule_type === 'weekly'", class="mt-3")
+                                            span(class="mb-2 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 실행 요일
+                                            div(class="grid grid-cols-7 gap-1.5")
+                                                button(*ngFor="let day of weekdayOptions()", type="button", (click)="setBackupWeekday(day.value)", class="h-9 rounded-md border text-xs font-semibold transition-colors", [ngClass]="backupPolicy.schedule_weekday == day.value ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950' : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'") {{day.label}}
+                                        div(class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2")
+                                            label(*ngIf="backupPolicy.schedule_type === 'monthly'", class="block")
+                                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 실행 날짜
                                                 div(class="flex h-10 items-center overflow-hidden rounded-md border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950")
-                                                    input(type="number", min="1", max="200", [(ngModel)]="backupPolicy.retention_keep_per_service", class="h-full w-full bg-transparent px-3 text-sm text-zinc-900 focus:outline-none dark:text-zinc-100")
-                                                    span(class="border-l border-zinc-200 px-3 text-xs font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 개
-                                            label(class="mt-3 flex min-h-10 items-center gap-3 rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800")
-                                                input(type="checkbox", [(ngModel)]="backupPolicy.snapshot_enabled", class="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-500 dark:border-zinc-700")
-                                                span(class="text-sm font-semibold text-zinc-900 dark:text-zinc-100") 컨테이너 상태까지 보관
-                                div(*ngIf="!backupPolicy.enabled", class="mt-4 rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 py-3 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") 자동 백업을 켜기 전에는 추가 설정을 표시하지 않습니다.
-                            div(class="border-t border-zinc-200 px-4 py-3 dark:border-zinc-800")
-                                div(class="flex flex-wrap items-center justify-end gap-2")
-                                    button(type="button", (click)="saveBackupPolicy()", [disabled]="savingBackupPolicy()", class="inline-flex h-10 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
-                                        i(class="fa-solid", [ngClass]="savingBackupPolicy() ? 'fa-spinner fa-spin' : 'fa-floppy-disk'")
-                                        span 자동 백업 저장
-                                    button(type="button", (click)="runBackupPolicyNow()", [disabled]="runningBackupPolicy() || backupSystem.status !== 'running'", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
-                                        i(class="fa-solid", [ngClass]="runningBackupPolicy() ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'")
-                                        span {{runningBackupPolicy() ? '백업 진행 중' : '지금 백업 실행'}}
-                                div(*ngIf="backupPolicyProgressVisible()", class="mt-3 overflow-hidden rounded-md border border-zinc-200 bg-zinc-950 dark:border-zinc-800")
-                                    div(class="flex items-center justify-between border-b border-zinc-800 px-3 py-2")
-                                        div(class="flex items-center gap-2 text-zinc-100")
-                                            i(class="fa-solid", [ngClass]="backupPolicyProgressIcon()")
-                                            span(class="text-xs font-semibold") 수동 백업 진행
-                                        span(class="text-xs font-semibold", [ngClass]="backupPolicyProgressDone() ? (backupPolicyOperation?.status === 'succeeded' ? 'text-emerald-300' : 'text-rose-300') : 'text-zinc-400'") {{backupPolicyProgressStatusLabel()}}
-                                    pre(class="max-h-72 min-h-32 overflow-auto whitespace-pre-wrap px-3 py-3 font-mono text-xs leading-5 text-zinc-100") {{backupPolicyProgressOutput()}}
+                                                    input(type="number", min="1", max="31", [(ngModel)]="backupPolicy.schedule_month_day", class="h-full w-full bg-transparent px-3 text-sm text-zinc-900 focus:outline-none dark:text-zinc-100")
+                                                    span(class="border-l border-zinc-200 px-3 text-xs font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 일
+                                            label(class="block")
+                                                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 실행 시간
+                                                input(type="time", [(ngModel)]="backupPolicy.schedule_time", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-900 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                                    div(class="rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900")
+                                        p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 보관 방식
+                                        p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{backupRetentionSummary()}}
+                                        label(class="mt-3 block")
+                                            span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 서비스별 보존 개수
+                                            div(class="flex h-10 items-center overflow-hidden rounded-md border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950")
+                                                input(type="number", min="1", max="200", [(ngModel)]="backupPolicy.retention_keep_per_service", class="h-full w-full bg-transparent px-3 text-sm text-zinc-900 focus:outline-none dark:text-zinc-100")
+                                                span(class="border-l border-zinc-200 px-3 text-xs font-semibold text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 개
+                                        div(class="mt-3 flex min-h-10 items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/60")
+                                            i(class="fa-solid fa-camera-retro text-zinc-500 dark:text-zinc-400")
+                                            span(class="text-sm font-semibold text-zinc-900 dark:text-zinc-100") 컨테이너 상태 스냅샷
+                            div(class="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800")
+                                button(type="button", (click)="saveBackupPolicy()", [disabled]="savingBackupPolicy()", class="inline-flex h-10 items-center gap-2 rounded-md bg-zinc-950 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200")
+                                    i(class="fa-solid", [ngClass]="savingBackupPolicy() ? 'fa-spinner fa-spin' : 'fa-floppy-disk'")
+                                    span 자동 백업 저장
+                                button(type="button", (click)="runBackupPolicyNow()", [disabled]="runningBackupPolicy() || backupSystem.status !== 'running'", class="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                    i(class="fa-solid", [ngClass]="runningBackupPolicy() ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'")
+                                    span {{runningBackupPolicy() ? '백업 진행 중' : '지금 백업 실행'}}
+                            div(*ngIf="backupPolicyProgressVisible()", class="mt-3 overflow-hidden rounded-md border border-zinc-200 bg-zinc-950 dark:border-zinc-800")
+                                div(class="flex items-center justify-between border-b border-zinc-800 px-3 py-2")
+                                    div(class="flex items-center gap-2 text-zinc-100")
+                                        i(class="fa-solid", [ngClass]="backupPolicyProgressIcon()")
+                                        span(class="text-xs font-semibold") 수동 백업 진행
+                                    span(class="text-xs font-semibold", [ngClass]="backupPolicyProgressDone() ? (backupPolicyOperation?.status === 'succeeded' ? 'text-emerald-300' : 'text-rose-300') : 'text-zinc-400'") {{backupPolicyProgressStatusLabel()}}
+                                pre(class="max-h-72 min-h-32 overflow-auto whitespace-pre-wrap px-3 py-3 font-mono text-xs leading-5 text-zinc-100") {{backupPolicyProgressOutput()}}
                         div(class="rounded-md border border-rose-200 bg-rose-50 p-3 dark:border-rose-900/70 dark:bg-rose-950/30")
                             div(class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between")
                                 div

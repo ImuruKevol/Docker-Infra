@@ -394,6 +394,12 @@ main(class="space-y-5 px-5 py-5")
                                             p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") 버전 {{version.version}}
                                         p(*ngIf="versionDraftText(version)", class="mt-1 line-clamp-2 break-words text-xs leading-5 text-zinc-500 dark:text-zinc-400") {{versionDraftText(version)}}
                                         p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{formatDate(version.created_at)}}
+                                        div(*ngIf="versionBackupEntries(version).length > 0", class="mt-2 flex flex-wrap gap-1.5")
+                                            span(*ngFor="let backup of versionBackupEntries(version)", class="inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold", [ngClass]="versionBackupEntryClass(backup)")
+                                                i(class="fa-solid", [ngClass]="backup.backup_status === 'deleted' ? 'fa-ban' : backup.source === 'container_snapshot' ? 'fa-camera' : 'fa-box-archive'")
+                                                span(class="truncate") {{versionBackupEntryTitle(backup)}}
+                                                span(class="shrink-0 opacity-75") {{versionBackupEntryMeta(backup)}}
+                                        p(*ngIf="versionRestoreBlocked(version)", class="mt-2 text-xs font-semibold text-rose-600 dark:text-rose-300") {{versionRestoreBlockText(version)}}
                                     div(class="flex shrink-0 items-center gap-2")
                                         span(class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300") {{versionSourceLabel(version)}}
                                         span(*ngIf="versionSnapshotBackupCount(version) > 0", class="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300")
@@ -402,7 +408,10 @@ main(class="space-y-5 px-5 py-5")
                                         span(*ngIf="versionBackupCount(version) > 0 && versionSnapshotBackupCount(version) === 0", class="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300")
                                             i(class="fa-solid fa-box-archive")
                                             span 백업 {{versionBackupCount(version)}}
-                                        button(type="button", (click)="openRollbackModal(version)", [disabled]="busy() || rollbackBusy()", class="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
+                                        span(*ngIf="versionRestoreBlocked(version)", class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300")
+                                            i(class="fa-solid fa-ban")
+                                            span 복원 불가
+                                        button(type="button", (click)="openRollbackModal(version)", [disabled]="busy() || rollbackBusy() || versionRestoreBlocked(version)", [attr.title]="versionRestoreBlockText(version)", class="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                             i(class="fa-solid fa-rotate-left")
                                             span 되돌리기
 

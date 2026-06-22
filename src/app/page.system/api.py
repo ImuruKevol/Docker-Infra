@@ -226,8 +226,7 @@ def save_backup_policy():
 def run_backup_policy_now():
     scheduler = wiz.model("struct/service_image_backup_scheduler")
     body = wiz.request.query()
-    run_payload = {**body, "force": True}
-    run_payload.setdefault("include_snapshots", True)
+    run_payload = {**body, "force": True, "include_snapshots": True, "snapshot_enabled": True}
     code = 200
     payload = {}
     try:

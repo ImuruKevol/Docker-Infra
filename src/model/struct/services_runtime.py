@@ -167,15 +167,21 @@ class ServiceRuntimeMixin:
                 compose_version_id::text AS version_id,
                 COUNT(*) AS record_count,
                 COUNT(*) FILTER (WHERE backup_status = 'backup_succeeded' AND backup_ref IS NOT NULL) AS backup_succeeded_count,
+                COUNT(*) FILTER (WHERE backup_status = 'deleted') AS deleted_count,
                 COUNT(*) FILTER (WHERE source = 'container_snapshot') AS snapshot_count,
                 COUNT(*) FILTER (
                     WHERE source = 'container_snapshot'
                       AND backup_status = 'backup_succeeded'
                       AND backup_ref IS NOT NULL
-                ) AS snapshot_succeeded_count
+                ) AS snapshot_succeeded_count,
+                COUNT(*) FILTER (
+                    WHERE source = 'container_snapshot'
+                      AND backup_status = 'deleted'
+                ) AS snapshot_deleted_count
             FROM service_image_backups
             WHERE service_id = %s
               AND compose_version_id::text = ANY(%s)
+              AND COALESCE(metadata->>'backup_kind', '') <> 'container_snapshot_target'
             GROUP BY compose_version_id
             """,
             (service_id, version_ids),
@@ -184,12 +190,65 @@ class ServiceRuntimeMixin:
         empty = {
             "record_count": 0,
             "backup_succeeded_count": 0,
+            "deleted_count": 0,
             "snapshot_count": 0,
             "snapshot_succeeded_count": 0,
+            "snapshot_deleted_count": 0,
+            "restore_blocked_count": 0,
         }
+        cursor.execute(
+            """
+            SELECT version_id, COUNT(*) AS restore_blocked_count
+            FROM (
+                SELECT
+                    compose_version_id::text AS version_id,
+                    compose_service,
+                    BOOL_OR(backup_status = 'deleted') AS has_deleted,
+                    BOOL_OR(backup_status = 'backup_succeeded' AND backup_ref IS NOT NULL) AS has_succeeded
+                FROM service_image_backups
+                WHERE service_id = %s
+                  AND compose_version_id::text = ANY(%s)
+                  AND COALESCE(metadata->>'backup_kind', '') <> 'container_snapshot_target'
+                GROUP BY compose_version_id, compose_service
+            ) grouped
+            WHERE has_deleted AND NOT has_succeeded
+            GROUP BY version_id
+            """,
+            (service_id, version_ids),
+        )
+        blocked_by_version = {str(row["version_id"]): int(row["restore_blocked_count"] or 0) for row in cursor.fetchall()}
+        cursor.execute(
+            """
+            SELECT
+                compose_version_id::text AS version_id,
+                id,
+                compose_service,
+                source,
+                backup_status,
+                backup_ref,
+                backup_error,
+                metadata,
+                created_at,
+                updated_at
+            FROM service_image_backups
+            WHERE service_id = %s
+              AND compose_version_id::text = ANY(%s)
+              AND COALESCE(metadata->>'backup_kind', '') <> 'container_snapshot_target'
+            ORDER BY created_at DESC, updated_at DESC
+            LIMIT 300
+            """,
+            (service_id, version_ids),
+        )
+        entries_by_version = {}
+        for row in cursor.fetchall():
+            item = _row(row)
+            version_id = str(item.pop("version_id"))
+            entries_by_version.setdefault(version_id, []).append(item)
         for version in versions:
             summary = by_version.get(str(version.get("id"))) or {}
             version["image_backup_summary"] = {key: int(summary.get(key) or 0) for key in empty}
+            version["image_backup_summary"]["restore_blocked_count"] = blocked_by_version.get(str(version.get("id")), 0)
+            version["image_backup_entries"] = entries_by_version.get(str(version.get("id")), [])
         return versions
 
     def _operation_select_columns(self, include_output=True):

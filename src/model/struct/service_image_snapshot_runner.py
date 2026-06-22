@@ -25,6 +25,14 @@ def _output(result):
     return "\n".join(part for part in [result.get("stdout"), result.get("stderr")] if part)
 
 
+def _container_id_matches(actual, requested):
+    actual = str(actual or "").strip()
+    requested = str(requested or "").strip()
+    if not actual or not requested:
+        return False
+    return actual == requested or actual.startswith(requested) or requested.startswith(actual)
+
+
 def _local_run(argv, timeout=900):
     try:
         done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
@@ -50,23 +58,50 @@ class ServiceImageSnapshotRunner:
     def _compose_service_name(self, item):
         runtime = str(item.get("runtime_service_name") or "")
         namespace = str(item.get("service_namespace") or "")
-        prefix = f"{namespace}_"
-        if namespace and runtime.startswith(prefix):
-            return runtime[len(prefix):]
+        for separator in ("_", "-"):
+            prefix = f"{namespace}{separator}" if namespace else ""
+            if prefix and runtime.startswith(prefix):
+                return runtime[len(prefix):]
         return runtime
 
+    def _find_container_on_node(self, node_id, service, backup, target_container_id=None, env=None):
+        panel = nodes.live_containers(node_id, persist=False, env=env)
+        fallback = None
+        items = []
+        for group in (panel.get("groups") or {}).get("service_groups") or []:
+            service_ref = group.get("service") or {}
+            if service_ref.get("id") == service["id"] or service_ref.get("namespace") == service.get("namespace"):
+                items.extend(group.get("containers") or [])
+        if not items:
+            items = panel.get("items") or []
+        for item in items:
+            item = {**item, "service_namespace": item.get("service_namespace") or service.get("namespace")}
+            registered = item.get("registered_service") or {}
+            same_service = registered.get("id") == service["id"] or item.get("service_namespace") == service.get("namespace")
+            same_compose = self._compose_service_name(item) == backup.get("compose_service")
+            if not same_service or not same_compose or not item.get("id"):
+                continue
+            if target_container_id and _container_id_matches(item.get("id"), target_container_id):
+                return item
+            if fallback is None:
+                fallback = item
+        return fallback
+
     def _target_container(self, service, backup, env=None):
+        metadata = backup.get("metadata") or {}
+        target_node_id = str(metadata.get("snapshot_target_node_id") or "").strip()
+        target_container_id = str(metadata.get("snapshot_target_container_id") or "").strip()
+        if target_node_id:
+            container = self._find_container_on_node(target_node_id, service, backup, target_container_id=target_container_id, env=env)
+            if container is not None:
+                return {"node": nodes.detail(target_node_id, env=env), "container": container}
         for node_ref in nodes.list(env=env):
             try:
-                panel = nodes.live_containers(node_ref["id"], persist=False, env=env)
+                container = self._find_container_on_node(node_ref["id"], service, backup, target_container_id=target_container_id, env=env)
             except Exception:
                 continue
-            for item in panel.get("items") or []:
-                registered = item.get("registered_service") or {}
-                same_service = registered.get("id") == service["id"] or item.get("service_namespace") == service.get("namespace")
-                same_compose = self._compose_service_name(item) == backup.get("compose_service")
-                if same_service and same_compose and item.get("id"):
-                    return {"node": nodes.detail(node_ref["id"], env=env), "container": item}
+            if container is not None:
+                return {"node": nodes.detail(node_ref["id"], env=env), "container": container}
         raise ServiceError(404, "스냅샷을 만들 실행 중인 서비스 컨테이너를 찾을 수 없습니다.", "SERVICE_SNAPSHOT_CONTAINER_NOT_FOUND")
 
     def _registry_for_node(self, node, config, env=None):
@@ -93,7 +128,11 @@ class ServiceImageSnapshotRunner:
         config = self._config(env=env)
         registry = self._registry_for_node(node, config, env=env)
         service_name = _clean(backup.get("compose_service"))
-        return f"{registry}/{_clean(service.get('namespace'))}/snapshot-{service_name}:{_timestamp()}"
+        metadata = backup.get("metadata") or {}
+        node_part = _clean(node.get("name") or node.get("host") or node.get("id"))[:32]
+        container_part = _clean(str(metadata.get("snapshot_target_container_id") or ""))[:12]
+        tag = "-".join(part for part in [_timestamp(), node_part, container_part] if part)
+        return f"{registry}/{_clean(service.get('namespace'))}/snapshot-{service_name}:{tag}"
 
     def execute(self, service, backup, pause=True, env=None):
         target = self._target_container(service, backup, env=env)

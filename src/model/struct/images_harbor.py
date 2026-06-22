@@ -55,6 +55,22 @@ def _request_json(config, path, query=None, method="GET", payload=None):
         raise ImageError(502, str(exc.reason), "HARBOR_REQUEST_FAILED")
 
 
+def _request_paged_json(config, path, query=None):
+    query = dict(query or {})
+    page = int(query.pop("page", 1) or 1)
+    page_size = int(query.pop("page_size", PAGE_SIZE) or PAGE_SIZE)
+    items = []
+    while True:
+        status, payload = _request_json(config, path, {**query, "page": page, "page_size": page_size})
+        if status != 200:
+            return status, payload
+        page_items = payload if isinstance(payload, list) else []
+        items.extend(page_items)
+        if len(page_items) < page_size:
+            return status, items
+        page += 1
+
+
 class HarborImages:
     ImageError = ImageError
 
@@ -70,7 +86,7 @@ class HarborImages:
 
     def list_projects(self, env=None):
         config = _config(env=env)
-        status, payload = _request_json(config, "/api/v2.0/projects", {"page": 1, "page_size": PAGE_SIZE})
+        status, payload = _request_paged_json(config, "/api/v2.0/projects", {"page": 1, "page_size": PAGE_SIZE})
         if status != 200:
             raise ImageError(status, "Harbor 프로젝트 목록을 불러올 수 없습니다.", "HARBOR_PROJECTS_FAILED")
         items = []
@@ -90,7 +106,7 @@ class HarborImages:
 
     def list_repositories(self, project_name, env=None):
         config = _config(env=env)
-        status, payload = _request_json(
+        status, payload = _request_paged_json(
             config,
             f"/api/v2.0/projects/{urlparse.quote(str(project_name or '').strip(), safe='')}/repositories",
             {"page": 1, "page_size": PAGE_SIZE},
@@ -135,7 +151,7 @@ class HarborImages:
 
     def list_artifacts(self, project_name, repository_name, env=None):
         config = _config(env=env)
-        status, payload = _request_json(
+        status, payload = _request_paged_json(
             config,
             f"/api/v2.0/projects/{urlparse.quote(str(project_name or '').strip(), safe='')}/repositories/{encode_repository_name(repository_name)}/artifacts",
             {"page": 1, "page_size": PAGE_SIZE, "with_tag": "true", "with_label": "false", "with_scan_overview": "false"},

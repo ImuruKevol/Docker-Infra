@@ -1,0 +1,8 @@
+{
+    "id": "api-system-backup-tick",
+    "title": "System Backup Tick",
+    "route": "/api/system/backup/tick",
+    "category": "system",
+    "viewuri": "",
+    "controller": "base"
+}

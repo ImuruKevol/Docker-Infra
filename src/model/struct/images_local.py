@@ -517,14 +517,20 @@ class ImagesLocalMixin:
     def _run_node_command(self, node, remove_ref="", env=None):
         if self._is_local_master_node(node):
             command_id = "docker.image.remove" if remove_ref else "docker.images"
-            return local_executor.run(command_id, params={"image_ref": remove_ref} if remove_ref else {}, timeout_seconds=20, env=env)
+            return local_executor.run(
+                command_id,
+                params={"image_ref": remove_ref} if remove_ref else {},
+                timeout_seconds=20 if remove_ref else 45,
+                env=env,
+                capture_limit=None if remove_ref else 0,
+            )
         command = ["docker", "image", "rm", "-f", remove_ref] if remove_ref else DEFAULT_DOCKER_IMAGE_COMMAND
-        return nodes._run_ssh_command(node, command, timeout_seconds=20, env=env)
+        return nodes._run_ssh_command(node, command, timeout_seconds=20 if remove_ref else 45, env=env, capture_limit=None if remove_ref else 0)
 
     def _run_usage_command(self, node, env=None):
         if self._is_local_master_node(node):
-            return local_executor.run("docker.images.usage", timeout_seconds=20, env=env)
-        return nodes._run_ssh_command(node, DOCKER_IMAGE_USAGE_COMMAND, timeout_seconds=20, env=env)
+            return local_executor.run("docker.images.usage", timeout_seconds=45, env=env, capture_limit=0)
+        return nodes._run_ssh_command(node, DOCKER_IMAGE_USAGE_COMMAND, timeout_seconds=45, env=env, capture_limit=0)
 
     def _run_storage_command(self, node, env=None):
         if self._is_local_master_node(node):

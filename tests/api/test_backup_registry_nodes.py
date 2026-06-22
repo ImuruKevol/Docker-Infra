@@ -38,8 +38,6 @@ class BackupRegistryNodeStaticContractTest(unittest.TestCase):
         snapshot = (ROOT / "src" / "model" / "struct" / "service_image_snapshot_runner.py").read_text(encoding="utf-8")
         deploy = (ROOT / "src" / "model" / "struct" / "services_deploy.py").read_text(encoding="utf-8")
         system_api = (ROOT / "src" / "app" / "page.system" / "api.py").read_text(encoding="utf-8")
-        view = (ROOT / "src" / "app" / "page.system" / "view.pug").read_text(encoding="utf-8")
-        view_ts = (ROOT / "src" / "app" / "page.system" / "view.ts").read_text(encoding="utf-8")
         config = (ROOT / "config" / "docker_infra.py").read_text(encoding="utf-8")
 
         self.assertIn('wiz.model("struct/nodes_backup_registry")', nodes)
@@ -57,8 +55,6 @@ class BackupRegistryNodeStaticContractTest(unittest.TestCase):
         self.assertIn("_ensure_manager_backup_registry_for_deploy(operation_id", deploy)
         self.assertGreaterEqual(deploy.count("_ensure_backup_system_running_for_deploy(operation_id"), 2)
         self.assertIn("def apply_backup_registry_nodes():", system_api)
-        self.assertIn("applyBackupRegistryNodes()", view)
-        self.assertIn("apply_backup_registry_nodes", view_ts)
 
 
 if __name__ == "__main__":

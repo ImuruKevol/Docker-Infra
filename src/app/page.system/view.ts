@@ -19,7 +19,6 @@ export class Component implements OnInit, OnDestroy {
     public runningBackupPolicy = signal<boolean>(false);
     public cleanupBusy = signal<boolean>(false);
     public backupBusy = signal<boolean>(false);
-    public backupNodeRegistryBusy = signal<boolean>(false);
     public refreshingAiProvider = signal<string>('');
     public testingAgent = signal<string>('');
     public refreshingCodexStatus = signal<boolean>(false);
@@ -69,7 +68,6 @@ export class Component implements OnInit, OnDestroy {
     public codexUpdateOperationPolling: boolean = false;
     public agentInstallOperationPolling: boolean = false;
     public backupHealth: any = null;
-    public backupNodeRegistryResult: any = null;
     public cleanupPlan: any = null;
     public uploading: any = { favicon: false, logo: false };
     public assetVersion: number = Date.now();
@@ -1001,26 +999,6 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
-    public async applyBackupRegistryNodes() {
-        if (this.backupNodeRegistryBusy()) return;
-        const ok = await this.confirm('등록된 서버의 Docker daemon 설정을 갱신합니다. 설정 변경이 필요한 서버는 Docker가 재시작됩니다.', '노드 설정 적용', 'warning');
-        if (!ok) return;
-        this.backupNodeRegistryBusy.set(true);
-        await this.service.render();
-        const { code, data } = await wiz.call('apply_backup_registry_nodes', {});
-        this.backupNodeRegistryBusy.set(false);
-        if (code === 200) {
-            this.backupNodeRegistryResult = data;
-            const summary = data.operation?.result_payload?.summary || {};
-            const message = `노드 백업 설정 결과: 성공 ${summary.ok || 0}개, 건너뜀 ${summary.skipped || 0}개, 실패 ${summary.failed || 0}개`;
-            await this.alert(message, summary.failed ? 'warning' : 'success');
-            await this.service.render();
-            return;
-        }
-        await this.alert(data?.message || '노드 백업 설정을 적용할 수 없습니다.');
-        await this.service.render();
-    }
-
     private pollBackupOperation(operationId: string) {
         if (!operationId) return;
         this.stopBackupInstallPoll();
@@ -1144,6 +1122,8 @@ export class Component implements OnInit, OnDestroy {
             schedule_time: this.backupPolicy.schedule_time || '02:00',
             window_start: '00:00',
             window_end: '00:00',
+            method: 'container_snapshot',
+            snapshot_enabled: true,
             snapshot_pause: true,
         };
         const { code, data } = await wiz.call('save_backup_policy', payload);
@@ -1161,14 +1141,14 @@ export class Component implements OnInit, OnDestroy {
 
     public async runBackupPolicyNow() {
         if (this.runningBackupPolicy()) return;
-        const ok = await this.confirm('지금 백업 가능한 서비스 이미지와 실행 중인 컨테이너 스냅샷을 내부 백업 시스템에 저장합니다.\n\n스냅샷 대상 컨테이너는 파일 상태 저장을 위해 잠깐 일시 정지될 수 있습니다. 진행할까요?', '지금 백업', 'warning');
+        const ok = await this.confirm('지금 실행 중인 컨테이너 상태 스냅샷을 내부 백업 시스템에 저장합니다.\n\n스냅샷 대상 컨테이너는 파일 상태 저장을 위해 잠깐 일시 정지될 수 있습니다. 진행할까요?', '지금 백업', 'warning');
         if (!ok) return;
         this.stopBackupPolicyPoll();
         this.runningBackupPolicy.set(true);
         this.backupPolicyOperation = null;
         this.backupPolicyLog = '수동 백업 요청을 시작합니다.\n';
         await this.service.render();
-        const { code, data } = await wiz.call('run_backup_policy_now', { include_snapshots: true, snapshot_pause: true, background: true });
+        const { code, data } = await wiz.call('run_backup_policy_now', { snapshot_pause: true, background: true });
         if (code === 200) {
             this.backupSystem = data.backup_system || this.backupSystem;
             this.backupPolicyOperation = data.operation || data.result?.operation || null;
@@ -1184,7 +1164,7 @@ export class Component implements OnInit, OnDestroy {
             return;
         }
         this.runningBackupPolicy.set(false);
-        await this.alert(data?.message || '서비스 이미지 백업을 실행할 수 없습니다.');
+        await this.alert(data?.message || '서비스 상태 백업을 실행할 수 없습니다.');
         await this.service.render();
     }
 
@@ -1824,8 +1804,7 @@ export class Component implements OnInit, OnDestroy {
 
     public backupRetentionSummary() {
         const keep = Number(this.backupPolicy?.retention_keep_per_service || 1);
-        const snapshot = this.backupPolicy?.snapshot_enabled ? '컨테이너 상태 포함' : '이미지만 백업';
-        return `서비스별 최근 ${keep}개 보존 · ${snapshot}`;
+        return `서비스별 최근 ${keep}개 보존 · 컨테이너 상태 스냅샷`;
     }
 
     private backupWeekdayLabel(value: any) {
@@ -1840,8 +1819,8 @@ export class Component implements OnInit, OnDestroy {
         const succeeded = Number(result.succeeded || 0);
         const failed = Number(result.failed || 0);
         const snapshots = Number(result.snapshots || 0);
-        if (processed === 0) return '백업할 서비스 이미지가 없습니다.';
-        return `서비스 이미지 백업 ${processed}건 중 ${succeeded}건 완료, ${failed}건 실패 · 스냅샷 ${snapshots}건`;
+        if (processed === 0) return '백업할 서비스 상태 스냅샷이 없습니다.';
+        return `서비스 상태 백업 ${processed}건 중 ${succeeded}건 완료, ${failed}건 실패 · 스냅샷 ${snapshots}건`;
     }
 
     public cleanupSummaryLabel() {
@@ -1965,8 +1944,8 @@ export class Component implements OnInit, OnDestroy {
             max_items_per_run: 3,
             retention_keep_per_service: 10,
             cleanup_unused_days: 30,
-            method: 'image_ref',
-            snapshot_enabled: false,
+            method: 'container_snapshot',
+            snapshot_enabled: true,
             snapshot_pause: true,
             last_run_at: null,
             last_result: null
@@ -1974,7 +1953,13 @@ export class Component implements OnInit, OnDestroy {
     }
 
     private syncBackupPolicy() {
-        this.backupPolicy = { ...this.defaultBackupPolicy(), ...(this.backupSystem?.backup_policy || {}) };
+        this.backupPolicy = {
+            ...this.defaultBackupPolicy(),
+            ...(this.backupSystem?.backup_policy || {}),
+            method: 'container_snapshot',
+            snapshot_enabled: true,
+            snapshot_pause: true
+        };
     }
 
     private emptyAssetSelection() {

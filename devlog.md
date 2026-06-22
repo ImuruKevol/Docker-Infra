@@ -444,3 +444,11 @@
 | 2026-06-18 | 006 | Compose 원격 볼륨 삭제 보강과 Swarm/비Swarm smoke 검증 | [상세](devlog/2026-06-18/006-compose-volume-cleanup-smoke-test.md) |
 | 2026-06-18 | 007 | 에이전트 작업 중 Compose 볼륨 보존 가드 보강 | [상세](devlog/2026-06-18/007-agent-compose-volume-preservation-guard.md) |
 | 2026-06-18 | 008 | 서버 상태 아이콘과 배포 방식 문구 정리 | [상세](devlog/2026-06-18/008-server-status-icon-deployment-labels.md) |
+| 2026-06-22 | 001 | 이미지 관리 좌우 레이아웃과 Harbor 프로젝트 삭제 보강 | [상세](devlog/2026-06-22/001-images-layout-harbor-delete-local-load.md) |
+| 2026-06-22 | 002 | 시스템 백업 UI와 스냅샷 기본 정책 정리 | [상세](devlog/2026-06-22/002-system-backup-snapshot-ux.md) |
+| 2026-06-22 | 003 | 이미지 관리 독립 서버 목록 로드와 Harbor 헤더 액션 정리 | [상세](devlog/2026-06-22/003-images-independent-server-and-harbor-actions.md) |
+| 2026-06-22 | 004 | 자동 백업 정책 저장 시 crontab 등록 연결 | [상세](devlog/2026-06-22/004-backup-policy-crontab-sync.md) |
+| 2026-06-22 | 005 | 자동 백업 실행 대상 등록 서비스 스냅샷으로 전환 | [상세](devlog/2026-06-22/005-backup-policy-runtime-service-snapshots.md) |
+| 2026-06-22 | 006 | 백업 진행 서비스명 표시와 보존 정책 자동 정리 | [상세](devlog/2026-06-22/006-backup-progress-retention-volume-design.md) |
+| 2026-06-22 | 007 | 서비스 버전 이력 백업 내역 연동과 만료 복원 차단 | [상세](devlog/2026-06-22/007-service-version-backup-history-restore-guard.md) |
+| 2026-06-22 | 008 | named volume 백업 설계 Agent 연동과 ORAS 공급 정책 보강 | [상세](devlog/2026-06-22/008-volume-backup-agent-oras-design.md) |

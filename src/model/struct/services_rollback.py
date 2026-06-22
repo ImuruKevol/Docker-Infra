@@ -132,6 +132,7 @@ class ServiceRollbackMixin:
                     FROM service_image_backups
                     WHERE service_id = %s
                       AND compose_version_id = %s
+                      AND COALESCE(metadata->>'backup_kind', '') <> 'container_snapshot_target'
                     ORDER BY
                       CASE
                         WHEN source = 'container_snapshot' AND backup_status = 'backup_succeeded' AND backup_ref IS NOT NULL THEN 0
@@ -159,6 +160,7 @@ class ServiceRollbackMixin:
         items = []
         pending = []
         missing = []
+        expired = []
         for name in image_services:
             row = by_service.get(name)
             if row and row.get("backup_status") == "backup_succeeded" and row.get("backup_ref"):
@@ -169,6 +171,16 @@ class ServiceRollbackMixin:
                     "backup_id": row.get("id"),
                     "source": row.get("source"),
                     "backup_kind": (row.get("metadata") or {}).get("backup_kind"),
+                })
+            elif row and row.get("backup_status") == "deleted":
+                metadata = row.get("metadata") or {}
+                cleanup = metadata.get("cleanup") or {}
+                expired.append({
+                    "service": name,
+                    "image_ref": row.get("image_ref"),
+                    "backup_id": row.get("id"),
+                    "deleted_at": cleanup.get("deleted_at"),
+                    "cleanup_reasons": cleanup.get("reasons") or [],
                 })
             elif row:
                 pending.append({
@@ -188,8 +200,10 @@ class ServiceRollbackMixin:
                 "snapshot_count": len([item for item in items if item.get("source") == "container_snapshot"]),
                 "pending_count": len(pending),
                 "missing_count": len(missing),
+                "expired_count": len(expired),
                 "items": items,
                 "pending": pending,
+                "expired": expired,
                 "missing_services": missing,
             },
         }
@@ -231,6 +245,13 @@ class ServiceRollbackMixin:
         current = _compose_summary(_load_yaml(current_content))
         target = _compose_summary(validation["normalized"])
         image_restore_context = self._image_restore_context(service_id, version, target, env=env)
+        if image_restore_context["image_restore"].get("expired_count"):
+            raise ServiceError(
+                409,
+                "보존 정책으로 백업 이미지가 삭제된 버전은 복원할 수 없습니다.",
+                "SERVICE_ROLLBACK_BACKUP_EXPIRED",
+                expired=image_restore_context["image_restore"].get("expired") or [],
+            )
         planned_content, planned_validation, planned_image_refs = self._compose_with_image_restore_refs(
             service,
             target_content,
