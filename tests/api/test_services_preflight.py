@@ -1,4 +1,5 @@
 import importlib.util
+import datetime
 import json
 import os
 import subprocess
@@ -189,6 +190,8 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         self.assertIn("placement_selector.recommend", deploy)
         for token in ["least_loaded_resource_score", "cpu_percent", "memory_used_percent", "storage_used_percent", "containers"]:
             self.assertIn(token, placement)
+        for token in ["PLACEMENT_STAT_WEIGHTS", "recent_metrics", "cpu_stats", "memory_stats", "resource_window", "metric_window_minutes"]:
+            self.assertIn(token, placement)
         for token in ["swarm.nodes", "swarm_ready", "swarm_hostname_mismatch", "swarm_availability", "selectable"]:
             self.assertIn(token, placement)
         self.assertIn("sync_domain_proxy_targets", deploy)
@@ -232,6 +235,86 @@ class ServicesPreflightStaticContractTest(unittest.TestCase):
         module.wiz = FakeWiz()
         spec.loader.exec_module(module)
         return module
+
+    def _load_placement_module(self):
+        class FakeDb:
+            def connect(self, *args, **kwargs):
+                raise AssertionError("database is not used in this placement unit test")
+
+        class FakeLocalExecutor:
+            def run(self, *args, **kwargs):
+                return {"status": "ok", "stdout": ""}
+
+        class FakeComposeRules:
+            def default_network_name(self, mode):
+                return "docker_infra_overlay" if mode == "swarm" else "docker_infra_bridge"
+
+        class FakeWiz:
+            def model(self, name):
+                if name == "db/postgres":
+                    return FakeDb()
+                if name == "struct/local_executor":
+                    return FakeLocalExecutor()
+                if name == "struct/compose_rules":
+                    return FakeComposeRules()
+                raise AssertionError(f"unexpected model: {name}")
+
+        spec = importlib.util.spec_from_file_location("services_placement_contract", PLACEMENT_MODEL)
+        module = importlib.util.module_from_spec(spec)
+        module.wiz = FakeWiz()
+        spec.loader.exec_module(module)
+        return module
+
+    def test_service_placement_uses_cpu_memory_window_stats_for_pressure(self):
+        placement_module = self._load_placement_module()
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        def metric(minutes_ago, cpu_last, memory_last, cpu_avg, cpu_max, memory_avg, memory_max):
+            reported_at = (now - datetime.timedelta(minutes=minutes_ago)).isoformat().replace("+00:00", "Z")
+            return {
+                "cpu_percent": cpu_last,
+                "memory": {"used_percent": memory_last},
+                "storage": {"used_percent": 20},
+                "containers": {"summary": {"total": 1, "running": 1, "stopped": 0}},
+                "reported_at": reported_at,
+                "metadata": {
+                    "resource_window": {
+                        "sample_count": 10,
+                        "started_at": reported_at,
+                        "ended_at": reported_at,
+                        "cpu_percent": {"min": 10, "avg": cpu_avg, "max": cpu_max, "last": cpu_last},
+                        "memory_used_percent": {"min": 15, "avg": memory_avg, "max": memory_max, "last": memory_last},
+                    }
+                },
+            }
+
+        candidate = placement_module.Model._candidate(
+            {
+                "id": "node-a",
+                "name": "node-a",
+                "host": "10.0.0.10",
+                "status": "active",
+                "is_local_master": False,
+                "swarm_node_id": "",
+                "memory": {"used_percent": 25},
+                "storage": {"used_percent": 20},
+                "containers": {"summary": {"total": 1, "running": 1, "stopped": 0}},
+                "reported_at": now,
+                "recent_metrics": [
+                    metric(40, 12, 18, 12, 15, 18, 25),
+                    metric(0, 20, 25, 70, 96, 65, 92),
+                ],
+            },
+            max_containers=1,
+        )
+
+        self.assertEqual(candidate["cpu_percent"], 20)
+        self.assertEqual(candidate["memory_used_percent"], 25)
+        self.assertEqual(candidate["cpu_stats"]["max"], 96)
+        self.assertEqual(candidate["memory_stats"]["max"], 92)
+        self.assertEqual(candidate["resource_window"]["sample_count"], 20)
+        self.assertGreater(candidate["cpu_pressure_percent"], candidate["cpu_percent"])
+        self.assertGreater(candidate["memory_pressure_percent"], candidate["memory_used_percent"])
 
     def test_service_port_allocation_avoids_well_known_published_ports(self):
         ports_module = self._load_ports_module()
@@ -464,7 +547,8 @@ services:
         self.assertIn("versionSourceLabel(version)", services_template)
         self.assertIn("openReleaseModal", services_view)
         self.assertIn('(click)="openReleaseModal()"', services_template)
-        self.assertIn("수동 릴리즈한 버전만 이력에 남고", services_view)
+        self.assertIn("릴리즈와 시스템 백업 체크포인트가 이력에 남고", services_view)
+        self.assertIn("backup_policy_snapshot: '자동 백업'", services_view)
         self.assertNotIn("백업 저장소에 백업이 있으면 이미지 참조도 함께 반영", services_template)
         self.assertNotIn("Harbor 백업", services_template)
         self.assertIn("잠깐 일시 정지", services_view)
@@ -479,11 +563,17 @@ services:
         self.assertIn("versionRestoreBlocked(version)", services_template)
         self.assertIn("자동 백업", services_view)
         self.assertIn("보존 만료", services_view)
+        self.assertIn("named_volume_snapshot", services_view)
+        self.assertIn("fa-database", services_template)
         self.assertIn("복원 불가", services_template)
         self.assertIn("image_backup_summary", services_runtime)
         self.assertIn("image_backup_entries", services_runtime)
         self.assertIn("deleted_count", services_runtime)
         self.assertIn("restore_blocked_count", services_runtime)
+        self.assertIn("service_volume_backups", services_runtime)
+        self.assertIn("docker_volume", services_runtime)
+        self.assertIn("artifact_status = 'deleted'", services_runtime)
+        self.assertIn("volume_succeeded_count", services_runtime)
         self.assertIn("container_snapshot_target", services_runtime)
         self.assertIn('source=payload.get("source") or "manual_snapshot"', services_runtime)
         self.assertIn("snapshot_service_image_async", services_runtime)
@@ -554,8 +644,9 @@ services:
         self.assertIn("suppressed_duplicate_logs", SERVICES_VIEW.read_text(encoding="utf-8"))
         self.assertNotIn("AI 검증과 수정 작업을 백그라운드에서 시작했습니다.', 'success'", SERVICES_VIEW.read_text(encoding="utf-8"))
         self.assertIn("hasAiModels()", SERVICES_VIEW.read_text(encoding="utf-8"))
-        self.assertIn("AI 검사/수정", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
-        self.assertIn('*ngIf="hasAiModels()"', SERVICES_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertNotIn("AI 검사/수정", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertNotIn('runRuntimeAiRepair()', SERVICES_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertNotIn('*ngIf="hasAiModels()"', SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         self.assertIn("AI 자동 조치 허용", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         self.assertIn("서버 진단", SERVICES_TEMPLATE.read_text(encoding="utf-8"))
         self.assertIn("브라우저 점검", services_view)
@@ -899,14 +990,23 @@ services:
         self.assertNotIn("Compose/Nginx", view)
         self.assertIn("상태 다시 확인", template)
         self.assertIn("외부에 오픈되는 컨테이너", template)
+        self.assertIn("containerVersionLabel", view)
+        self.assertIn("containerVersionTitle", view)
+        self.assertIn("const imageRef = image.split('@', 1)[0].trim()", view)
+        self.assertIn("imageRef.slice(lastColon + 1).trim()", view)
+        self.assertIn("containerVersionLabel(container)", template)
+        self.assertIn("containerVersionTitle(container)", template)
         self.assertIn("처리 로그 보기", template)
         self.assertIn("service-runtime-container-group", template)
         self.assertIn("service-runtime-container-card", template)
         self.assertIn("service-runtime-container-menu", template)
         self.assertIn("service-runtime-container-menu-panel", template)
+        self.assertIn("service-runtime-section", template)
+        self.assertIn(".service-runtime-section:has(.service-runtime-container-menu[open])", style)
         self.assertIn(".service-runtime-container-menu[open]", style)
         self.assertIn(".service-runtime-container-group:has(.service-runtime-container-menu[open])", style)
         self.assertIn(".service-runtime-container-card:has(.service-runtime-container-menu[open])", style)
+        self.assertIn("z-index: 30", style)
         self.assertIn("z-index: 90", style)
 
     def test_service_container_context_log_streaming_is_wired(self):
@@ -933,6 +1033,77 @@ services:
         self.assertIn('"docker", "logs", "--tail"', nodes_terminal)
         self.assertIn("def create_container_logs_session", nodes_terminal)
 
+    def test_service_container_version_change_is_wired(self):
+        api = SERVICES_API.read_text(encoding="utf-8")
+        view = SERVICES_VIEW.read_text(encoding="utf-8")
+        template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
+        update_model = UPDATE_MODEL.read_text(encoding="utf-8")
+        commands = LOCAL_COMMAND_MODEL.read_text(encoding="utf-8")
+        config = RUNTIME_CONFIG.read_text(encoding="utf-8")
+
+        for token in [
+            "versionChangeModalOpen",
+            "versionCheckBusy",
+            "openContainerVersionChange",
+            "validateVersionChangeImage",
+            "versionChangeVerified",
+            "versionChangeSubmitTitle",
+            "이미지 검증을 먼저 완료",
+            "submitVersionChange",
+            "service_container_version_validate",
+            "service_container_version_change",
+            "force_pull",
+        ]:
+            self.assertIn(token, view)
+        for token in ["span 버전 변경", "이미지 검증", "versionCheckResult", "같은 tag도 강제로 다시 불러오기", "digest", "볼륨에 저장되지 않은 데이터"]:
+            self.assertIn(token, template)
+        self.assertIn("def service_container_version_validate():", api)
+        self.assertIn("validate_container_version_image", api)
+        self.assertIn("def service_container_version_change():", api)
+        self.assertIn("change_container_version", api)
+        for token in [
+            "def validate_container_version_image",
+            "require_compose=False",
+            "SERVICE_CONTAINER_IMAGE_REQUIRED",
+            "image_source",
+            "runtime_context",
+            "runtime_image",
+            "_image_ref_matches_target",
+            "runtime_changed",
+            "apply_force",
+            "_compose_network_names",
+            "_deployment_context_for_compose",
+            "compose_rules.OVERLAY_NETWORK",
+            "compose_rules.BRIDGE_NETWORK",
+            "deployment_mode = \"swarm\"",
+            "deployment_mode = \"compose\"",
+            "_container_version_apply_result",
+            "_stack_service_update_image_result",
+            "_swarm_service_name",
+            "docker.image.manifest.inspect",
+            "docker\", \"manifest\", \"inspect",
+            "_manifest_inspect_result",
+            "def change_container_version",
+            "SERVICE_CONTAINER_VERSION_COMPOSE_ONLY",
+            "SERVICE_IMAGE_VERSION_NOT_VERIFIED",
+            "SERVICE_IMAGE_VERSION_UNCHANGED",
+            "SERVICE_CONTAINER_VERSION_APPLY_FAILED",
+            "docker compose -p",
+            "--no-deps",
+            "--force-recreate",
+        ]:
+            self.assertIn(token, update_model)
+        self.assertIn("docker.image.manifest.inspect", commands)
+        self.assertIn("_docker_image_manifest_inspect_command", commands)
+        self.assertIn("service.stack.update.image", commands)
+        self.assertIn("_service_stack_update_image_command", commands)
+        self.assertIn('"docker", "service", "update"', commands)
+        self.assertIn("service.compose.up.service", commands)
+        self.assertIn("_service_compose_up_service_command", commands)
+        self.assertIn("docker.image.manifest.inspect", config)
+        self.assertIn("service.stack.update.image", config)
+        self.assertIn("service.compose.up.service", config)
+
     def test_deploy_status_refresh_and_self_signed_ssl_test_path_are_wired(self):
         view = SERVICES_VIEW.read_text(encoding="utf-8")
         template = SERVICES_TEMPLATE.read_text(encoding="utf-8")
@@ -948,14 +1119,18 @@ services:
         self.assertIn("placement_selector.recommend", services)
         self.assertIn("refresh_deploy_status", deploy)
         self.assertIn("runtime_status", deploy)
-        for token in ["service.stack.services", "service.stack.ps", "docker.containers", "def refresh_deploy_status"]:
+        for token in ["service.stack.services", "service.stack.ps", "service_containers", "_runtime_target_node_ids", "def refresh_deploy_status"]:
             self.assertIn(token, status)
+        self.assertIn("docker.containers.service", commands)
         self.assertIn("--no-trunc", commands)
         self.assertIn("def refresh_deploy_status():", SERVICES_API.read_text(encoding="utf-8"))
         self.assertIn("public async refreshRuntimeStatus", view)
         self.assertIn("상태 확인", template)
         self.assertIn("실행 상태", template)
         self.assertIn("runtimeStatusText", view)
+        self.assertNotIn("AI 검사/수정", template)
+        self.assertNotIn("runRuntimeAiRepair()", template)
+        self.assertNotIn('*ngIf="hasAiModels()"', template)
         self.assertIn("openssl.self_signed_cert.issue", commands)
         self.assertIn("swarm.nodes.inspect", commands)
         self.assertIn("self_signed_cert_test_enabled", config)
@@ -1095,6 +1270,7 @@ services:
         self.assertIn("def detail_extras", runtime)
         self.assertIn("include_backup_system=True", runtime)
         self.assertIn("detail_service_extras", services_view)
+        self.assertIn("refreshDetailExtras(service.id, requestSeq)", services_view)
         self.assertIn("lightweight: true", services_view)
         self.assertNotIn("this.loadAiModelOptions().catch", services_view)
         self.assertIn("payload = ai_settings.model_options()", services_api)
@@ -1102,6 +1278,8 @@ services:
         self.assertIn("class ServiceDetailFast", fast_model)
         self.assertIn("def overview", fast_model)
         self.assertIn("def extras", fast_model)
+        self.assertIn("certificates.service_certificates(domains, env=env)", fast_model)
+        self.assertIn("self._certificate_targets(domains)", fast_model)
         self.assertNotIn("refreshOverviewExtras", services_view)
         self.assertIn('"auto_renewal": None', nginx_cert)
         self.assertIn("if rows:", nginx_cert)

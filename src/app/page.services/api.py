@@ -541,7 +541,15 @@ def refresh_deploy_status():
     payload = {}
     try:
         result = services_model.refresh_deploy_status(service_id)
-        payload = {"result": result, **_service_overview_payload(service_id, lightweight=True)}
+        runtime = result.get("runtime_status") or {}
+        payload = {
+            "result": {
+                "checked_at": runtime.get("checked_at"),
+                "container_summary": (runtime.get("containers") or {}).get("summary") or {},
+                "stack_summary": (runtime.get("stack") or {}).get("summary") or {},
+            },
+            **_service_overview_payload(service_id, lightweight=True),
+        }
     except services_model.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
@@ -798,6 +806,51 @@ def service_container_action():
     except DATABASE_ERRORS as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    wiz.response.status(code, **payload)
+
+
+def service_container_version_change():
+    services_model = wiz.model("struct").services
+    code = 200
+    payload = {}
+    try:
+        result = services_model.change_container_version(wiz.request.query())
+        service_id = result["service"]["id"]
+        overview = _service_overview_payload(service_id)
+        advanced = _service_advanced_payload(service_id)
+        payload = {"result": result, **overview, **advanced}
+        payload["detail_sections"] = {
+            **(overview.get("detail_sections") or {}),
+            **(advanced.get("detail_sections") or {}),
+        }
+    except services_model.ComposeValidationError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except DATABASE_ERRORS as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _raise_unless_service_error_like(exc)
+    wiz.response.status(code, **payload)
+
+
+def service_container_version_validate():
+    services_model = wiz.model("struct").services
+    code = 200
+    payload = {}
+    try:
+        payload = {"result": services_model.validate_container_version_image(wiz.request.query())}
+    except services_model.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except DATABASE_ERRORS as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _raise_unless_service_error_like(exc)
     wiz.response.status(code, **payload)
 
 

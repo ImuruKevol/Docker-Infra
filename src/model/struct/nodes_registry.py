@@ -113,6 +113,14 @@ class NodeRegistryMixin:
                 "SSH_KEY_CONNECT_FAILED",
                 check={"status": key_check["status"], "exit_code": key_check["exit_code"], "reason": hint},
             )
+        oras_result = self._ensure_oras_for_registered_node(
+            host,
+            username,
+            ssh_port,
+            key["key_file"],
+            timeout_seconds=max(300, int(payload.get("timeout_seconds") or 0)),
+            env=env,
+        )
         return {
             "host": host,
             "username": username,
@@ -124,8 +132,30 @@ class NodeRegistryMixin:
                 "fingerprint": {"status": "ok" if fingerprint else "unknown", "value": fingerprint},
                 "key_install": {"status": install_result["status"], "exit_code": install_result["exit_code"]},
                 "key": {"status": key_check["status"], "exit_code": key_check["exit_code"]},
+                "oras_install": {"status": oras_result["status"], "exit_code": oras_result["exit_code"]},
             },
         }
+
+    def _ensure_oras_for_registered_node(self, host, username, ssh_port, key_file, timeout_seconds=300, env=None):
+        script = "command -v oras >/dev/null 2>&1 || snap install oras --classic"
+        result = self.ssh_executor.run(
+            host,
+            ["sh", "-lc", script],
+            username=username,
+            port=ssh_port,
+            key_file=key_file,
+            timeout_seconds=timeout_seconds,
+            env=env,
+        )
+        if result["status"] != "ok":
+            hint = self.ssh_executor.failure_reason(result)
+            raise NodeError(
+                409,
+                f"서버에 ORAS를 설치할 수 없습니다. snap install oras --classic 실행 결과를 확인해주세요. {hint}",
+                "NODE_ORAS_INSTALL_FAILED",
+                check={"status": result["status"], "exit_code": result["exit_code"], "reason": hint},
+            )
+        return result
 
     def _remote_metric_payload(self, node, env=None):
         metric_result = self._run_ssh_command(

@@ -4,6 +4,7 @@ import threading
 
 backup_system = wiz.model("struct/backup_system")
 image_backups = wiz.model("struct/service_image_backups")
+volume_backups = wiz.model("struct/service_volume_backups")
 cleanup = wiz.model("struct/service_image_backup_cleanup")
 operations = wiz.model("struct/operations")
 shared = wiz.model("struct/services_shared")
@@ -55,6 +56,19 @@ def _snapshot_label(item):
     if service_label and compose_label and str(service_label) != str(compose_label):
         return f"{service_label} / {compose_label}"
     return str(service_label or compose_label or "container")
+
+
+def _volume_label(item):
+    metadata = item.get("metadata") or {}
+    service_label = (
+        metadata.get("service_name")
+        or metadata.get("service_namespace")
+        or metadata.get("namespace")
+        or item.get("service_id")
+    )
+    compose_label = item.get("compose_service") or "service"
+    volume_label = item.get("docker_volume") or item.get("volume_name") or "volume"
+    return " / ".join(str(part) for part in [service_label, compose_label, volume_label] if part)
 
 
 def _scheduled_at(policy, now):
@@ -114,10 +128,11 @@ class ServiceImageBackupScheduler:
             return "이번 예약 백업은 이미 실행되었습니다."
         return None
 
-    def _snapshot_candidates(self, limit, env=None):
-        if limit <= 0:
-            return []
-        return image_backups.record_runtime_snapshot_targets(limit, source="backup_policy_snapshot", env=env)
+    def _snapshot_candidates(self, env=None):
+        return image_backups.record_runtime_snapshot_targets(source="backup_policy_snapshot", env=env)
+
+    def _volume_candidates(self, env=None):
+        return volume_backups.record_runtime_volume_targets(source="backup_policy_snapshot", env=env)
 
     def _run_retention_cleanup(self, operation_id, policy, env=None):
         keep = int(policy.get("retention_keep_per_service") or 10)
@@ -138,7 +153,7 @@ class ServiceImageBackupScheduler:
         stream = "stderr" if failed else "system"
         self._append_progress(
             operation_id,
-            f"보존 정책 정리 완료: Harbor 이미지 {deleted}개 삭제, 실패 {failed}개.",
+            f"보존 정책 정리 완료: Harbor 백업 artifact {deleted}개 삭제, 실패 {failed}개.",
             stream=stream,
             metadata={"step": "cleanup_done", "summary": summary},
             env=env,
@@ -161,22 +176,23 @@ class ServiceImageBackupScheduler:
                 raise ServiceError(409, message, "BACKUP_SYSTEM_NOT_RUNNING")
             return self._finish_skipped(operation, {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 1, "message": message, "policy": policy, "backup_system": status}, env=env)
 
-        limit = int(policy.get("max_items_per_run") or 3)
-        snapshot_enabled = True
+        snapshot_enabled = str(policy.get("backup_mode") or policy.get("state_snapshot_mode") or "full_state") != "volume_only"
+        volume_enabled = True
         snapshot_pause = _as_bool(payload.get("snapshot_pause"), policy.get("snapshot_pause", True))
         if operation is None:
             operation = operations.create(
                 "service.image.backup.policy",
                 target_type="backup_system",
                 target_id="default",
-                requested_payload={"force": force, "limit": limit, "snapshot_enabled": snapshot_enabled, "snapshot_pause": snapshot_pause},
+                requested_payload={"force": force, "snapshot_enabled": snapshot_enabled, "volume_enabled": volume_enabled, "snapshot_pause": snapshot_pause},
                 metadata={"policy": policy},
                 env=env,
             )
-        self._append_progress(operation["id"], f"수동 백업을 시작합니다. 등록 서비스 컨테이너 스냅샷을 최대 {limit}개 생성합니다.", metadata={"step": "start", "snapshot_enabled": snapshot_enabled, "limit": limit}, env=env)
-        result = {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 0, "failures": [], "policy": policy, "snapshots": 0}
+        mode_label = "named volume 백업만" if not snapshot_enabled else "컨테이너 스냅샷과 named volume 백업"
+        self._append_progress(operation["id"], f"수동 백업을 시작합니다. 등록 서비스 전체 {mode_label}을 실행합니다.", metadata={"step": "start", "snapshot_enabled": snapshot_enabled, "volume_enabled": volume_enabled}, env=env)
+        result = {"processed": 0, "succeeded": 0, "failed": 0, "skipped": 0, "failures": [], "policy": policy, "snapshots": 0, "volumes": 0}
         if snapshot_enabled:
-            snapshot_candidates = self._snapshot_candidates(limit, env=env)
+            snapshot_candidates = self._snapshot_candidates(env=env)
             self._append_progress(operation["id"], f"등록 서비스 기준 스냅샷 대상 {len(snapshot_candidates)}개를 확인했습니다.", metadata={"step": "snapshot_targets", "count": len(snapshot_candidates)}, env=env)
             for item in snapshot_candidates:
                 result["processed"] += 1
@@ -194,6 +210,25 @@ class ServiceImageBackupScheduler:
                     self._append_progress(operation["id"], f"{label} 스냅샷 백업 실패: {detail['message']}", stream="stderr", metadata={"step": "snapshot", "backup_id": item["id"], "compose_service": item.get("compose_service"), "label": label}, env=env)
                     result["failed"] += 1
                     result["failures"].append({"backup_id": item["id"], **detail})
+        if volume_enabled:
+            volume_candidates = self._volume_candidates(env=env)
+            self._append_progress(operation["id"], f"등록 서비스 기준 named volume 백업 대상 {len(volume_candidates)}개를 확인했습니다.", metadata={"step": "volume_targets", "count": len(volume_candidates)}, env=env)
+            for item in volume_candidates:
+                result["processed"] += 1
+                result["volumes"] += 1
+                label = _volume_label(item)
+                try:
+                    self._append_progress(operation["id"], f"{label} named volume 백업을 시작합니다.", metadata={"step": "volume", "backup_id": item["id"], "compose_service": item.get("compose_service"), "volume": item.get("docker_volume"), "label": label}, env=env)
+                    volume_backups.volume_to_harbor(item["service_id"], item["id"], env=env)
+                    self._append_progress(operation["id"], f"{label} named volume 백업을 완료했습니다.", metadata={"step": "volume", "backup_id": item["id"], "compose_service": item.get("compose_service"), "volume": item.get("docker_volume"), "label": label}, env=env)
+                    result["succeeded"] += 1
+                except Exception as exc:
+                    if not _is_service_error_like(exc):
+                        raise
+                    detail = _failure_detail(exc)
+                    self._append_progress(operation["id"], f"{label} named volume 백업 실패: {detail['message']}", stream="stderr", metadata={"step": "volume", "backup_id": item["id"], "compose_service": item.get("compose_service"), "volume": item.get("docker_volume"), "label": label}, env=env)
+                    result["failed"] += 1
+                    result["failures"].append({"backup_id": item["id"], "backup_kind": "named_volume_snapshot", **detail})
 
         cleanup_failed = False
         if result["succeeded"] > 0:
@@ -210,7 +245,7 @@ class ServiceImageBackupScheduler:
                 self._append_progress(operation["id"], f"보존 정책 정리 실패: {detail['message']}", stream="stderr", metadata={"step": "cleanup_failed", "error_code": detail["error_code"]}, env=env)
 
         status_name = "succeeded" if result["failed"] == 0 and not cleanup_failed else "failed"
-        message = "실행 중인 등록 서비스 컨테이너가 없습니다." if result["processed"] == 0 else None
+        message = "실행 중인 등록 서비스 백업 대상이 없습니다." if result["processed"] == 0 else None
         self._append_progress(operation["id"], message or f"수동 백업 처리 완료: 성공 {result['succeeded']}개, 실패 {result['failed']}개.", stream="stderr" if result["failed"] else "system", metadata={"step": "done"}, env=env)
         operation = operations.transition(operation["id"], status_name, message=message, result_payload=result, env=env)
         result["operation"] = operation
@@ -219,6 +254,8 @@ class ServiceImageBackupScheduler:
 
     def run_async(self, payload=None, env=None):
         payload = {**(payload or {}), "force": True, "background": True}
+        payload.pop("max_items_per_run", None)
+        payload.pop("limit", None)
         operation = operations.create(
             "service.image.backup.policy",
             target_type="backup_system",

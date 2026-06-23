@@ -8,6 +8,7 @@ connect = wiz.model("db/postgres").connect
 shared = wiz.model("struct/macros_shared")
 MacroError = shared.MacroError
 macro_row = shared.macro_row
+macro_file_row = shared.macro_file_row
 normalize_enabled = shared.normalize_enabled
 normalize_script_text = shared.normalize_script_text
 normalize_scope_type = shared.normalize_scope_type
@@ -23,7 +24,13 @@ class MacroStore:
 
     def _select_sql(self):
         return """
-            SELECT m.*, n.name AS node_name, n.host AS node_host, COALESCE(f.files, '[]'::jsonb) AS files
+            SELECT
+                m.*,
+                n.name AS node_name,
+                n.host AS node_host,
+                COALESCE(f.files, '[]'::jsonb) AS files,
+                COALESCE(s.schedules, '[]'::jsonb) AS schedules,
+                COALESCE(s.schedule_count, 0) AS schedule_count
             FROM shell_macros m
             LEFT JOIN nodes n ON n.id = m.node_id
             LEFT JOIN LATERAL (
@@ -40,7 +47,70 @@ class MacroStore:
                 FROM shell_macro_files mf
                 WHERE mf.macro_id = m.id
             ) f ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    jsonb_agg(
+                        jsonb_build_object(
+                            'id', ms.id::text,
+                            'macro_id', ms.macro_id::text,
+                            'name', ms.name,
+                            'enabled', ms.enabled,
+                            'schedule_type', ms.schedule_type,
+                            'schedule_weekday', ms.schedule_weekday,
+                            'schedule_weekdays', ms.schedule_weekdays,
+                            'schedule_month_day', ms.schedule_month_day,
+                            'schedule_time', ms.schedule_time,
+                            'target_type', ms.target_type,
+                            'targets', ms.targets,
+                            'args', ms.args,
+                            'cron_file', ms.cron_file,
+                            'last_run_at', ms.last_run_at,
+                            'last_result', ms.last_result,
+                            'history', COALESCE(
+                                (
+                                    SELECT jsonb_agg(
+                                        jsonb_build_object(
+                                            'id', ol.id::text,
+                                            'status', ol.status,
+                                            'message', ol.message,
+                                            'target_id', ol.target_id,
+                                            'requested_payload', ol.requested_payload,
+                                            'result_payload', ol.result_payload,
+                                            'output', ol.output,
+                                            'metadata', ol.metadata,
+                                            'started_at', ol.started_at,
+                                            'finished_at', ol.finished_at,
+                                            'created_at', ol.created_at,
+                                            'updated_at', ol.updated_at
+                                        )
+                                        ORDER BY ol.created_at DESC
+                                    )
+                                    FROM (
+                                        SELECT *
+                                        FROM operation_logs ol
+                                        WHERE ol.type = 'macro.run'
+                                          AND ol.metadata->>'schedule_id' = ms.id::text
+                                        ORDER BY ol.created_at DESC
+                                        LIMIT 10
+                                    ) ol
+                                ),
+                                '[]'::jsonb
+                            ),
+                            'test_run_id', ms.test_run_id,
+                            'metadata', ms.metadata,
+                            'created_at', ms.created_at,
+                            'updated_at', ms.updated_at
+                        )
+                        ORDER BY ms.enabled DESC, ms.created_at DESC
+                    ) AS schedules,
+                    count(*) AS schedule_count
+                FROM shell_macro_schedules ms
+                WHERE ms.macro_id = m.id
+            ) s ON true
         """
+
+    def _ensure_schedule_schema(self, env=None):
+        wiz.model("struct/macro_schedules").ensure_schema(env=env)
 
     def _fetch(self, cursor, macro_id):
         cursor.execute(
@@ -182,6 +252,7 @@ class MacroStore:
             raise MacroError(409, "이미 같은 이름의 매크로가 있습니다.", "MACRO_NAME_EXISTS")
 
     def list(self, payload=None, env=None):
+        self._ensure_schedule_schema(env=env)
         payload = payload or {}
         scope_type = str(payload.get("scope_type") or "").strip().lower()
         node_id = str(payload.get("node_id") or "").strip()
@@ -221,6 +292,7 @@ class MacroStore:
                 return [macro_row(item) for item in cursor.fetchall()]
 
     def save(self, payload, file_storages=None, env=None):
+        self._ensure_schedule_schema(env=env)
         payload = payload or {}
         macro_id = payload.get("id")
         name = str(payload.get("name") or "").strip()
@@ -274,11 +346,36 @@ class MacroStore:
                 return macro_row(self._fetch(cursor, saved_id))
 
     def delete(self, macro_id, env=None):
+        self._ensure_schedule_schema(env=env)
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
                 macro = macro_row(self._fetch(cursor, macro_id))
                 cursor.execute("DELETE FROM shell_macros WHERE id = %s", (macro_id,))
                 return {"deleted": True, "macro": macro}
+
+    def delete_file(self, file_id, macro_id=None, env=None):
+        file_id = str(file_id or "").strip()
+        macro_id = str(macro_id or "").strip()
+        if not file_id:
+            raise MacroError(400, "file_id는 필수입니다.", "MACRO_FILE_ID_REQUIRED")
+
+        query = """
+            SELECT id, macro_id, filename, content_type, size_bytes, created_at
+            FROM shell_macro_files
+            WHERE id = %s
+        """
+        params = [file_id]
+        if macro_id:
+            query += " AND macro_id = %s"
+            params.append(macro_id)
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, params)
+                row = cursor.fetchone()
+                if row is None:
+                    raise MacroError(404, "첨부 파일을 찾을 수 없습니다.", "MACRO_FILE_NOT_FOUND")
+                cursor.execute("DELETE FROM shell_macro_files WHERE id = %s", (file_id,))
+                return {"deleted": True, "macro_id": str(row["macro_id"]), "file": macro_file_row(row)}
 
     def download_file(self, file_id, macro_id=None, env=None):
         file_id = str(file_id or "").strip()

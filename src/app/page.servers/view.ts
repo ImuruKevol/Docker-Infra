@@ -2310,6 +2310,7 @@ export class Component implements OnInit, OnDestroy {
             fingerprint: '서버 fingerprint',
             key_install: '관리용 SSH key 등록',
             key: '관리용 SSH key 접속',
+            oras_install: 'ORAS 설치',
             ssh: 'SSH 접속',
             docker: 'Docker 상태',
             metric: '자원 정보 수집',

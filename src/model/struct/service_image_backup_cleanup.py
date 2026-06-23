@@ -9,6 +9,7 @@ connect = wiz.model("db/postgres").connect
 backup_system = wiz.model("struct/backup_system")
 harbor = wiz.model("struct/images_harbor")
 image_backups = wiz.model("struct/service_image_backups")
+volume_backups = wiz.model("struct/service_volume_backups")
 operations = wiz.model("struct/operations")
 shared = wiz.model("struct/services_shared")
 ServiceError = shared.ServiceError
@@ -62,6 +63,21 @@ class ServiceImageBackupCleanup:
                 )
                 return [_row(row) for row in cursor.fetchall()]
 
+    def _volume_rows(self, env=None):
+        volume_backups.ensure_schema(env=env)
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM service_volume_backups
+                    WHERE artifact_status = 'backup_succeeded'
+                      AND artifact_ref IS NOT NULL
+                    ORDER BY created_at DESC
+                    """
+                )
+                return [_row(row) for row in cursor.fetchall()]
+
     def plan(self, payload=None, env=None):
         policy = backup_system.status(env=env).get("backup_policy") or {}
         keep = int((payload or {}).get("retention_keep_per_service") or policy.get("retention_keep_per_service") or 10)
@@ -72,7 +88,7 @@ class ServiceImageBackupCleanup:
         candidates = []
         seen = set()
         for row in self._rows(env=env):
-            key = (row["service_id"], row["compose_service"])
+            key = ("image", row["service_id"], row["compose_service"])
             grouped.setdefault(key, []).append(row)
             reasons = []
             created = datetime.datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00"))
@@ -83,7 +99,17 @@ class ServiceImageBackupCleanup:
             parts = _ref_parts(row["backup_ref"])
             if reasons and parts and row["id"] not in seen:
                 seen.add(row["id"])
-                candidates.append({**row, "cleanup_reasons": reasons, "harbor": parts})
+                candidates.append({**row, "backup_kind": "container_snapshot", "cleanup_reasons": reasons, "harbor": parts})
+        for row in self._volume_rows(env=env):
+            key = ("volume", row["service_id"], row["docker_volume"])
+            grouped.setdefault(key, []).append(row)
+            reasons = []
+            if len(grouped[key]) > keep:
+                reasons.append("retention")
+            parts = _ref_parts(row["artifact_ref"])
+            if reasons and parts and row["id"] not in seen:
+                seen.add(row["id"])
+                candidates.append({**row, "backup_kind": "named_volume_snapshot", "cleanup_reasons": reasons, "harbor": parts})
         total_size = sum(int((item.get("metadata") or {}).get("size") or 0) for item in candidates)
         return {"candidates": candidates[:200], "summary": {"count": len(candidates), "estimated_bytes": total_size, "keep": keep, "unused_days": days}}
 
@@ -121,16 +147,28 @@ class ServiceImageBackupCleanup:
         }
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE service_image_backups
-                    SET backup_status = 'deleted',
-                        metadata = metadata || %s::jsonb,
-                        updated_at = now()
-                    WHERE id = %s
-                    """,
-                    (Jsonb(metadata), item["id"]),
-                )
+                if item.get("backup_kind") == "named_volume_snapshot":
+                    cursor.execute(
+                        """
+                        UPDATE service_volume_backups
+                        SET artifact_status = 'deleted',
+                            metadata = metadata || %s::jsonb,
+                            updated_at = now()
+                        WHERE id = %s
+                        """,
+                        (Jsonb(metadata), item["id"]),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE service_image_backups
+                        SET backup_status = 'deleted',
+                            metadata = metadata || %s::jsonb,
+                            updated_at = now()
+                        WHERE id = %s
+                        """,
+                        (Jsonb(metadata), item["id"]),
+                    )
 
 
 Model = ServiceImageBackupCleanup()

@@ -20,12 +20,14 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
                 "020_actual_schema_cleanup.sql",
                 "021_ai_agent_history.down.sql",
                 "021_ai_agent_history.sql",
+                "022_macro_schedules.down.sql",
+                "022_macro_schedules.sql",
             ],
         )
 
         sql = "\n".join(
             (MIGRATION_DIR / name).read_text(encoding="utf-8")
-            for name in ["019_current_schema.sql", "020_actual_schema_cleanup.sql", "021_ai_agent_history.sql"]
+            for name in ["019_current_schema.sql", "020_actual_schema_cleanup.sql", "021_ai_agent_history.sql", "022_macro_schedules.sql"]
         )
 
         for table in [
@@ -38,6 +40,7 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
             "node_metrics",
             "shell_macros",
             "shell_macro_files",
+            "shell_macro_schedules",
             "operation_logs",
             "backup_system_settings",
             "service_image_backups",
@@ -50,6 +53,7 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
         self.assertIn("metadata JSONB NOT NULL DEFAULT '{}'::jsonb", sql)
         self.assertIn("test_run_id TEXT", sql)
         self.assertIn("request_id TEXT NOT NULL DEFAULT ''", sql)
+        self.assertIn("schedule_weekdays JSONB NOT NULL DEFAULT '[0]'::jsonb", sql)
 
     def test_removed_tables_are_not_created_by_current_schema(self):
         sql = (MIGRATION_DIR / "019_current_schema.sql").read_text(encoding="utf-8")

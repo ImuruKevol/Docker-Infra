@@ -22,6 +22,7 @@ OPERATION_LABELS = {
     "service.action": "서비스 제어",
     "service.image.backup": "서비스 이미지 백업",
     "service.image.snapshot": "컨테이너 스냅샷",
+    "service.container.version_change": "컨테이너 버전 변경",
     "macro.run": "매크로 실행",
     "container.action": "컨테이너 제어",
     "domain.zone.save": "도메인 저장",

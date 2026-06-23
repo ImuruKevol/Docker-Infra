@@ -13,6 +13,7 @@ def load_scheduler_module():
             "db/postgres": SimpleNamespace(connect=lambda env=None: None),
             "struct/backup_system": object(),
             "struct/service_image_backups": object(),
+            "struct/service_volume_backups": object(),
             "struct/service_image_backup_cleanup": object(),
             "struct/operations": object(),
             "struct/services_shared": SimpleNamespace(ServiceError=Exception, row=lambda row: row),
@@ -56,7 +57,8 @@ class BackupSystemSchedulePolicyTest(unittest.TestCase):
         self.assertEqual(policy["schedule_weekday"], 6)
         self.assertEqual(policy["schedule_month_day"], 31)
         self.assertEqual(policy["schedule_time"], "02:00")
-        self.assertEqual(policy["method"], "container_snapshot")
+        self.assertEqual(policy["method"], "service_state_snapshot")
+        self.assertEqual(policy["backup_mode"], "full_state")
         self.assertTrue(policy["snapshot_enabled"])
 
     def test_weekly_schedule_runs_only_after_selected_day_and_time(self):
@@ -114,12 +116,24 @@ class BackupSystemSchedulePolicyTest(unittest.TestCase):
         class FakeImageBackups:
             def __init__(self):
                 self.snapshot_ids = []
+                self.limits = []
 
             def snapshot_to_harbor(self, service_id, backup_id, pause=True, env=None):
                 self.snapshot_ids.append(backup_id)
 
-            def record_runtime_snapshot_targets(self, limit, source="backup_policy_snapshot", env=None):
+            def record_runtime_snapshot_targets(self, limit=None, source="backup_policy_snapshot", env=None):
+                self.limits.append(limit)
                 return [{"service_id": "svc-1", "id": "snapshot-1", "compose_service": "web", "metadata": {"service_name": "demo-service"}}]
+
+        class FakeVolumeBackups:
+            def __init__(self):
+                self.volume_ids = []
+
+            def volume_to_harbor(self, service_id, backup_id, env=None):
+                self.volume_ids.append(backup_id)
+
+            def record_runtime_volume_targets(self, source="backup_policy_snapshot", env=None):
+                return [{"service_id": "svc-1", "id": "volume-1", "compose_service": "db", "docker_volume": "demo_db_data", "metadata": {"service_name": "demo-service"}}]
 
         class FakeCleanup:
             def __init__(self):
@@ -145,22 +159,30 @@ class BackupSystemSchedulePolicyTest(unittest.TestCase):
                 return {"id": operation_id, "status": status, "result_payload": result_payload or {}}
 
         image_backups = FakeImageBackups()
+        volume_backups = FakeVolumeBackups()
         cleanup = FakeCleanup()
         operations = FakeOperations()
         scheduler.backup_system = FakeBackupSystem()
         scheduler.image_backups = image_backups
+        scheduler.volume_backups = volume_backups
         scheduler.cleanup = cleanup
         scheduler.operations = operations
 
         result = scheduler.Model.run({"force": True, "include_snapshots": False, "snapshot_enabled": False})
 
         self.assertEqual(image_backups.snapshot_ids, ["snapshot-1"])
+        self.assertEqual(image_backups.limits, [None])
+        self.assertEqual(volume_backups.volume_ids, ["volume-1"])
         self.assertEqual(result["snapshots"], 1)
+        self.assertEqual(result["volumes"], 1)
         self.assertEqual(result["cleanup"]["deleted_count"], 2)
         self.assertEqual(cleanup.payloads[0]["retention_keep_per_service"], 10)
         self.assertTrue(operations.requested_payload["snapshot_enabled"])
+        self.assertTrue(operations.requested_payload["volume_enabled"])
+        self.assertNotIn("limit", operations.requested_payload)
         self.assertTrue(any("등록 서비스" in item["message"] for item in operations.output_messages))
         self.assertTrue(any("demo-service / web 스냅샷" in item["message"] for item in operations.output_messages))
+        self.assertTrue(any("demo-service / db / demo_db_data named volume" in item["message"] for item in operations.output_messages))
         self.assertTrue(any("보존 정책 정리 완료" in item["message"] for item in operations.output_messages))
 
     def _frozen_now(self, module, now):

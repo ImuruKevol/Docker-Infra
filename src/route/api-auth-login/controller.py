@@ -23,9 +23,11 @@ try:
         docker_infra_authenticated=True,
         docker_infra_session_token=result["session_token"],
     )
+    auth.remember_session_cookie(result["session_token"], result.get("session"))
     payload = {
         "authenticated": True,
         "session": result["session"],
+        "session_policy": auth.session_policy(),
     }
 except auth.AuthError as exc:
     code = exc.status_code

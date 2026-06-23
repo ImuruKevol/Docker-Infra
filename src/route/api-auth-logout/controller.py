@@ -6,7 +6,7 @@ if method not in ["POST", "DELETE"]:
 
 code = 200
 payload = {}
-token = wiz.session.get("docker_infra_session_token", None)
+token = auth.request_session_token(wiz.session.get("docker_infra_session_token", None))
 
 try:
     payload = {"authenticated": False, "revoked": auth.logout(token)}
@@ -15,4 +15,5 @@ except RuntimeError as exc:
     payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
 
 wiz.session.clear()
+auth.clear_session_cookie()
 wiz.response.status(code, **payload)

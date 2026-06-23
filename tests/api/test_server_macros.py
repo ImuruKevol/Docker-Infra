@@ -14,6 +14,10 @@ class ServerMacrosStaticContractTest(unittest.TestCase):
         macros_view = Path("/root/docker-infra/project/main/src/app/page.macros/view.pug").read_text(encoding="utf-8")
         macros_ts = Path("/root/docker-infra/project/main/src/app/page.macros/view.ts").read_text(encoding="utf-8")
         macros_api = Path("/root/docker-infra/project/main/src/app/page.macros/api.py").read_text(encoding="utf-8")
+        macro_schedules = Path("/root/docker-infra/project/main/src/model/struct/macro_schedules.py").read_text(encoding="utf-8")
+        cron_files = Path("/root/docker-infra/project/main/src/model/struct/cron_files.py").read_text(encoding="utf-8")
+        schedule_route = Path("/root/docker-infra/project/main/src/route/api-macro-schedule-run/controller.py").read_text(encoding="utf-8")
+        schedule_route_json = Path("/root/docker-infra/project/main/src/route/api-macro-schedule-run/app.json").read_text(encoding="utf-8")
         search_select_view = Path("/root/docker-infra/project/main/src/app/component.search.select/view.html").read_text(encoding="utf-8")
 
         self.assertNotIn("setDetailTab('macros')", servers_view)
@@ -25,34 +29,59 @@ class ServerMacrosStaticContractTest(unittest.TestCase):
             "첨부 파일",
             "selectMacroFiles($event)",
             "downloadMacroFile(file, $event)",
+            "deleteMacroFile(file, $event)",
             "runTargetType() === 'service'",
             "serviceTargetServiceItems()",
             "serviceContainerTargetItems()",
             "macroArgsEnabled()",
             "macroArgsInput()",
             "실행 인자 사용",
+            "openScheduleModal(selectedMacro())",
+            "selectedMacroScheduleCount()",
+            "macroScheduleTypes()",
+            "toggleScheduleWeekday(day.value)",
+            "isScheduleWeekdaySelected(day.value)",
+            "toggleScheduleTarget(item.value)",
+            "scheduleTargetSearch()",
+            "openScheduleHistoryResult(item)",
+            "scheduleHistoryResultOpen()",
+            "scheduleHistoryStdoutText()",
+            "scheduleHistoryStderrText()",
+            "space-y-3",
+            "h-72",
+            "실행 이력",
+            "scheduleHistory()",
             "페이지당 10개",
         ]:
             self.assertIn(token, macros_view)
+        self.assertNotIn("stderr 출력이 없습니다.", macros_view)
+        self.assertNotIn("lg:grid-cols-2", macros_view)
         self.assertNotIn("페이지당 20개", macros_view)
-        for token in ["public pageSize = 10", "selectedServiceId", "container_display_name", "macroArgsEnabled", "macroArgsInput"]:
+        for token in ["public pageSize = 10", "selectedServiceId", "container_display_name", "macroArgsEnabled", "macroArgsInput", "scheduleTargetSearch", "removeMacroFileFromState", "deleteMacroFile", "saveSchedule", "deleteSchedule", "buildScheduleTargets", "schedule_weekdays", "toggleScheduleWeekday", "scheduleHistory", "scheduleHistoryResultOpen", "scheduleHistoryResultItem", "openScheduleHistoryResult", "closeScheduleHistoryResult", "scheduleHistoryStdoutText", "scheduleHistoryStderrText"]:
             self.assertIn(token, macros_ts)
         for token in ["data-search-select-input", "valueChange.emit", "filteredItems()"]:
             self.assertIn(token, search_select_view if token == "data-search-select-input" else Path("/root/docker-infra/project/main/src/app/component.search.select/view.ts").read_text(encoding="utf-8"))
         for token in ["def list_macros()", "def run_macro()"]:
             self.assertIn(token, servers_api)
-        for token in ["def load()", "def save_macro()", "def delete_macro()", "def run_macro()", "def operation_status()", "def download_macro_file()", "container_display_name", "_friendly_container_name"]:
+        for token in ["def load()", "def save_macro()", "def delete_macro()", "def save_schedule()", "def delete_schedule()", "def run_macro()", "def operation_status()", "def download_macro_file()", "def delete_macro_file()", "container_display_name", "_friendly_container_name"]:
             self.assertIn(token, macros_api)
         for token in ["def create(self, wiz, data, io):", "def ptyinput(self, wiz, data):", "def resize(self, wiz, data):", "def close(self, wiz, data, io):"]:
             self.assertIn(token, servers_socket)
         macros_store = Path("/root/docker-infra/project/main/src/model/struct/macros_store.py").read_text(encoding="utf-8")
-        for token in ["scope_type", "available_for_node", "node_id", "shell_macro_files", "keep_file_ids", "download_file"]:
+        for token in ["scope_type", "available_for_node", "node_id", "shell_macro_files", "shell_macro_schedules", "schedule_weekdays", "operation_logs", "output", "keep_file_ids", "download_file", "delete_file"]:
             self.assertIn(token, macros_store)
         macros_runner = Path("/root/docker-infra/project/main/src/model/struct/macros_runner.py").read_text(encoding="utf-8")
-        for token in ["DOCKER_INFRA_MACRO_DIR", "write_file_bytes", "_fetch_files", "normalize_script_text", "target_context"]:
+        for token in ["DOCKER_INFRA_MACRO_DIR", "write_file_bytes", "_fetch_files", "normalize_script_text", "target_context", "schedule_id"]:
             self.assertIn(token, macros_runner)
         macros_shared = Path("/root/docker-infra/project/main/src/model/struct/macros_shared.py").read_text(encoding="utf-8")
         self.assertIn('replace("\\r\\n", "\\n").replace("\\r", "\\n")', macros_shared)
+        for token in ["CREATE TABLE IF NOT EXISTS shell_macro_schedules", "schedule_weekdays", "operation_logs", "CRON_ROUTE", "DOCKER_INFRA_MACRO_CRON_DIR", "cron_files.write", "runner.run"]:
+            self.assertIn(token, macro_schedules)
+        for token in ["/etc/cron.d", "SHELL=/bin/sh", "PATH=/usr/local/sbin", "CronFileError"]:
+            self.assertIn(token, cron_files)
+        for token in ["verify_token", "schedules.run(schedule_id)", "CRON_TOKEN_HEADER"]:
+            self.assertIn(token, schedule_route)
+        self.assertIn("api-macro-schedule-run", schedule_route_json)
 
 
 class ServerMacrosLiveFlowTest(unittest.TestCase):

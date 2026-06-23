@@ -220,6 +220,63 @@ def delete_macro():
     wiz.response.status(code, **payload)
 
 
+def save_schedule():
+    macros_model = wiz.model("struct").macros
+    body = wiz.request.query()
+    macro_id = body.get("macro_id")
+    if not macro_id:
+        wiz.response.status(400, message="macro_id는 필수입니다.", error_code="MACRO_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        schedule = macros_model.save_schedule(body)
+        payload = {
+            "schedule": schedule,
+            "schedules": macros_model.list_schedules(macro_id=macro_id),
+        }
+    except macros_model.MacroError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _error_payload(exc)
+
+    wiz.response.status(code, **payload)
+
+
+def delete_schedule():
+    macros_model = wiz.model("struct").macros
+    body = wiz.request.query()
+    schedule_id = body.get("schedule_id")
+    macro_id = body.get("macro_id")
+    if not schedule_id:
+        wiz.response.status(400, message="schedule_id는 필수입니다.", error_code="MACRO_SCHEDULE_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        deleted = macros_model.delete_schedule(schedule_id, macro_id=macro_id)
+        payload = {
+            **deleted,
+            "schedules": macros_model.list_schedules(macro_id=macro_id) if macro_id else [],
+        }
+    except macros_model.MacroError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _error_payload(exc)
+
+    wiz.response.status(code, **payload)
+
+
 def run_macro():
     macros_model = wiz.model("struct").macros
     nodes_model = wiz.model("struct").nodes
@@ -288,6 +345,30 @@ def download_macro_file():
     payload = {}
     try:
         payload = macros_model.download_file(file_id, macro_id=body.get("macro_id"))
+    except macros_model.MacroError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _error_payload(exc)
+
+    wiz.response.status(code, **payload)
+
+
+def delete_macro_file():
+    macros_model = wiz.model("struct").macros
+    body = wiz.request.query()
+    file_id = body.get("file_id")
+    if not file_id:
+        wiz.response.status(400, message="file_id는 필수입니다.", error_code="MACRO_FILE_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = macros_model.delete_file(file_id, macro_id=body.get("macro_id"))
     except macros_model.MacroError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

@@ -66,6 +66,16 @@ class NodesSwarmStaticContractTest(unittest.TestCase):
         self.assertIn("runtime_summary", nodes_model)
         self.assertIn("NODE_RUNNING_SERVICES_BLOCK_UNREGISTER", nodes_delete)
         self.assertIn("live_containers", nodes_delete)
+        self.assertIn("Remote swarm inspect", nodes_delete)
+        self.assertIn("docker info --format '{{json .}}'", nodes_delete)
+        self.assertIn('node.get("swarm_node_id") or remote_swarm.get("node_id")', nodes_delete)
+        self.assertIn('"standalone": state in {"", "inactive", "pending"}', nodes_delete)
+        self.assertIn('return "standalone_node"', nodes_delete)
+        self.assertIn('return "remote_swarm_node_id_empty"', nodes_delete)
+        self.assertIn("monitoring.metrics_collector.remove", nodes_delete)
+        self.assertIn("monitoring.node_exporter.remove", nodes_delete)
+        self.assertIn("docker swarm leave --force", nodes_delete)
+        self.assertIn("swarm.node.remove", nodes_delete)
 
 
 class NodesSwarmLiveFlowTest(unittest.TestCase):

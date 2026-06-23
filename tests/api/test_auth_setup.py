@@ -11,6 +11,13 @@ USER_CONTROLLER = ROOT / "src" / "controller" / "user.py"
 ACCESS_VIEW = ROOT / "src" / "app" / "page.access" / "view.pug"
 ACCESS_TS = ROOT / "src" / "app" / "page.access" / "view.ts"
 ACCESS_API = ROOT / "src" / "app" / "page.access" / "api.py"
+AUTH_MODEL = ROOT / "src" / "model" / "struct" / "auth.py"
+AUTH_SESSION_ROUTE = ROOT / "src" / "route" / "api-auth-session" / "controller.py"
+AUTH_LOGIN_ROUTE = ROOT / "src" / "route" / "api-auth-login" / "controller.py"
+SYSTEM_API = ROOT / "src" / "app" / "page.system" / "api.py"
+SYSTEM_TS = ROOT / "src" / "app" / "page.system" / "view.ts"
+SIDEBAR_VIEW = ROOT / "src" / "app" / "component.nav.sidebar" / "view.pug"
+SIDEBAR_TS = ROOT / "src" / "app" / "component.nav.sidebar" / "view.ts"
 LAYOUT_TS = ROOT / "src" / "app" / "layout.sidebar" / "view.ts"
 BOOT_CONFIG = ROOT.parents[1] / "config" / "boot.py"
 
@@ -70,7 +77,49 @@ class AuthSetupStaticContractTest(unittest.TestCase):
         self.assertNotIn("def setup()", api)
         self.assertNotIn("def disable_backup_system()", api)
 
-        self.assertIn("redirectAuthenticated", ACCESS_TS.read_text(encoding="utf-8"))
+        view_ts = ACCESS_TS.read_text(encoding="utf-8")
+        self.assertIn("redirectAuthenticated", view_ts)
+        self.assertNotIn("sessionDurationLabel", view_ts)
+        self.assertNotIn("세션 지속시간", view)
+
+    def test_session_duration_policy_is_configurable_and_displayed(self):
+        auth_model = AUTH_MODEL.read_text(encoding="utf-8")
+        access_api = ACCESS_API.read_text(encoding="utf-8")
+        login_route = AUTH_LOGIN_ROUTE.read_text(encoding="utf-8")
+        session_route = AUTH_SESSION_ROUTE.read_text(encoding="utf-8")
+        system_api = SYSTEM_API.read_text(encoding="utf-8")
+        system_ts = SYSTEM_TS.read_text(encoding="utf-8")
+        sidebar_view = SIDEBAR_VIEW.read_text(encoding="utf-8")
+        sidebar_ts = SIDEBAR_TS.read_text(encoding="utf-8")
+
+        for token in [
+            "SESSION_TTL_SETTING_KEY",
+            "auth.session_ttl_hours",
+            "save_session_policy",
+            "session_policy",
+            "SESSION_TOKEN_COOKIE_NAME",
+            "remember_session_cookie",
+            "extend_session",
+            "remaining_seconds",
+        ]:
+            self.assertIn(token, auth_model)
+        self.assertIn("session_policy", access_api)
+        self.assertIn("auth.remember_session_cookie", access_api)
+        self.assertIn("auth.remember_session_cookie", login_route)
+        self.assertIn("auth.request_session_token", session_route)
+        self.assertIn('method not in ["GET", "POST", "DELETE"]', session_route)
+        self.assertIn("auth.extend_session", session_route)
+        self.assertIn("auth.extend_session", system_api)
+        self.assertIn("docker-infra:session-updated", system_ts)
+        self.assertIn("세션 남은 시간", sidebar_view)
+        self.assertIn('data-testid="session-extend"', sidebar_view)
+        self.assertIn("fa-arrow-rotate-right", sidebar_view)
+        self.assertIn("sessionRemainingLabel", sidebar_ts)
+        self.assertIn("extendSession", sidebar_ts)
+        self.assertIn("sessionExtending", sidebar_ts)
+        self.assertIn("handleSessionUpdated", sidebar_ts)
+        self.assertIn("remaining_seconds", sidebar_ts)
+        self.assertIn("/api/auth/session", sidebar_ts)
 
     def test_layout_sidebar_uses_existing_auth_check_without_extra_session_route(self):
         layout = LAYOUT_TS.read_text(encoding="utf-8")

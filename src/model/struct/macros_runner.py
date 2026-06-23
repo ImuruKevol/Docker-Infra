@@ -358,6 +358,9 @@ class MacroRunner:
                 "service_namespace",
                 "container_id",
                 "container_name",
+                "container_display_name",
+                "schedule_id",
+                "schedule_name",
             ]
             if payload.get(key)
         }

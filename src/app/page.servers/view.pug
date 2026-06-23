@@ -308,6 +308,7 @@ div(*ngIf="serverModalOpen()", class="fixed inset-0 z-40 flex items-center justi
                 span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") SSH 비밀번호 {{isEditing() ? '(선택)' : ''}}
                 input(type="password", [(ngModel)]="serverForm.password", autocomplete="new-password", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
                 p(*ngIf="isEditing()", class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 비워두면 저장된 SSH key로 다시 연결 확인한 뒤 저장합니다.
+                p(*ngIf="!isEditing()", class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") 등록 중 관리용 SSH key를 저장하고 `snap install oras --classic`으로 ORAS를 설치합니다.
             label(class="block")
                 span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 표시 이름
                 input(type="text", [(ngModel)]="serverForm.name", placeholder="비워두면 host를 사용합니다", class="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")

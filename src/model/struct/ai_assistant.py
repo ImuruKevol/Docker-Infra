@@ -1178,6 +1178,7 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 "files.values.default.yaml",
                 "files.values.schema.json",
                 "files.README.md",
+                "metadata.backup_policy",
                 "summary",
                 "warnings[]",
             ],
@@ -1222,6 +1223,12 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                     "every placeholder must have a default in values.default.yaml and a property in values.schema.json",
                     "secret-like properties must include secret=true and a safe change_me-style default",
                     "service_name/namespace should be the only mandatory identity input unless the image truly requires more",
+                ],
+                "backup_rules": [
+                    "Templates with named volumes must include metadata.backup_policy.",
+                    "Default backup policy is mode=full_state, container_snapshot=true, named_volumes=true.",
+                    "Use mode=volume_only and container_snapshot=false only when the user explicitly wants to skip container snapshots for a stateful service.",
+                    "Do not create image-only backup policies.",
                 ],
                 "port_rules": [
                     "Any browser/API/user-facing service must declare services.<name>.ports; expose alone is internal-only and is not enough.",
@@ -1286,6 +1293,7 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                         "values.default.yaml contains defaults for every placeholder",
                         "values.schema.json is a JSON Schema object for the same placeholders",
                         "README.md is Korean user-facing usage notes shown in the service creation screen",
+                        "metadata.backup_policy describes full_state or volume_only behavior for named volumes",
                         "the placeholder set must match across docker-compose.yaml, values.default.yaml, and values.schema.json",
                         "services that provide browser/API/user-facing access must include services.<name>.ports with an explicit published-to-target port mapping",
                         "do not use expose as a substitute for public access; expose is internal-only",
@@ -3778,6 +3786,7 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
                 "For secret-like placeholders, set a safe change_me-style default and mark the schema property with secret=true.",
                 "README.md is mandatory and must explain what this template creates and which values matter, in Korean.",
                 "Do not include template description or primary_image. Use tags[] for classification.",
+                "If the template has named volumes, include metadata.backup_policy with mode full_state by default; only use volume_only when the user explicitly asks to skip container snapshots.",
                 "Do not include concrete registered domain names, registered server IDs, host-specific paths, container_name, hostname, or runtime_actions.",
             ]
         )
@@ -4061,6 +4070,33 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
             "warnings": self._string_list(data.get("warnings")),
         }
 
+    def _template_backup_policy(self, components, metadata):
+        volume_refs = []
+        for component in components or []:
+            for volume in component.get("volumes") or []:
+                source = self._clean_text(volume.get("source"))
+                target = self._clean_text(volume.get("target"))
+                if not source or source.startswith(("/", ".", "~")):
+                    continue
+                volume_refs.append({
+                    "service": component.get("key"),
+                    "source": source,
+                    "target": target,
+                })
+        if not volume_refs:
+            return None
+        current = metadata.get("backup_policy") if isinstance(metadata.get("backup_policy"), dict) else {}
+        requested_mode = self._clean_text(current.get("mode") or current.get("backup_mode"))
+        skip_container = current.get("container_snapshot") is False
+        mode = "volume_only" if requested_mode == "volume_only" or skip_container else "full_state"
+        return {
+            **current,
+            "mode": mode,
+            "container_snapshot": mode != "volume_only",
+            "named_volumes": True,
+            "volumes": volume_refs,
+        }
+
     def _validate_template_draft(self, template, context=None):
         files = template.get("files") or {}
         compose = self._clean_text(files.get("compose"))
@@ -4109,6 +4145,9 @@ docker node ls --format 'table {{.Hostname}}\\t{{.Status}}\\t{{.Availability}}\\
             "components": [item.get("key") for item in components if item.get("key")],
             "component_labels": {item.get("key"): item.get("label") for item in components if item.get("key") and item.get("label")},
         }
+        backup_policy = self._template_backup_policy(components, template["metadata"])
+        if backup_policy:
+            template["metadata"]["backup_policy"] = backup_policy
         return {"compose": validation, "components": components}
 
     def _repair_context(self, target, context, data, exc, attempt):

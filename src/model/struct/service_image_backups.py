@@ -1,4 +1,7 @@
+import datetime
+import hashlib
 import re
+import shutil
 from pathlib import Path
 
 import yaml
@@ -15,6 +18,14 @@ _row = shared.row
 
 def _normalize_image_part(value):
     return re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(value or "").strip()).strip("-") or "image"
+
+
+def _checksum(content):
+    return hashlib.sha256(str(content or "").encode("utf-8")).hexdigest()
+
+
+def _history_id():
+    return datetime.datetime.utcnow().strftime("backup_%Y%m%d_%H%M%S_%f")
 
 
 def parse_image_ref(image_ref):
@@ -205,7 +216,62 @@ class ServiceImageBackups(actions_mixin):
                     ORDER BY s.created_at ASC
                     """
                 )
-                return [_row(row) for row in cursor.fetchall()]
+                rows = [_row(row) for row in cursor.fetchall()]
+        for row in rows:
+            row["latest_compose_version_id"] = self._ensure_backup_compose_version(row, source="backup_policy_snapshot", env=env)
+        return rows
+
+    def _ensure_backup_compose_version(self, service, source="backup_policy_snapshot", env=None):
+        existing_id = service.get("latest_compose_version_id")
+        compose_path = Path(str(service.get("compose_path") or "")).expanduser()
+        if not compose_path.is_file():
+            return existing_id
+        content = compose_path.read_text(encoding="utf-8")
+        checksum = _checksum(content)
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM compose_versions
+                    WHERE service_id = %s AND checksum = %s
+                    ORDER BY version DESC, created_at DESC
+                    LIMIT 1
+                    """,
+                    (service["id"], checksum),
+                )
+                current = cursor.fetchone()
+                if current is not None:
+                    return current["id"]
+
+                history_id = _history_id()
+                history_dir = compose_path.parent / ".history" / history_id
+                history_dir.mkdir(parents=True, exist_ok=True)
+                version_path = history_dir / compose_path.name
+                shutil.copy2(compose_path, version_path)
+
+                cursor.execute("SELECT COALESCE(max(version), 0) + 1 AS next_version FROM compose_versions WHERE service_id = %s", (service["id"],))
+                version_number = int(cursor.fetchone()["next_version"])
+                cursor.execute(
+                    """
+                    INSERT INTO compose_versions(service_id, version, path, checksum, test_run_id, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        service["id"],
+                        version_number,
+                        str(version_path),
+                        checksum,
+                        service.get("test_run_id"),
+                        Jsonb({
+                            "source": source,
+                            "history_id": history_id,
+                            "backup_checkpoint": True,
+                        }),
+                    ),
+                )
+                return cursor.fetchone()["id"]
 
     def _compose_image_map(self, service):
         compose_path = Path(str(service.get("compose_path") or "")).expanduser()
@@ -257,14 +323,17 @@ class ServiceImageBackups(actions_mixin):
                 )
                 return _row(cursor.fetchone())
 
-    def record_runtime_snapshot_targets(self, limit, source="backup_policy_snapshot", env=None):
+    def record_runtime_snapshot_targets(self, limit=None, source="backup_policy_snapshot", env=None):
         self.ensure_schema(env=env)
         try:
-            limit = int(limit or 0)
+            limit = int(limit) if limit not in (None, "") else None
         except (TypeError, ValueError):
-            limit = 0
-        if limit <= 0:
-            return []
+            limit = None
+        if limit is not None and limit <= 0:
+            limit = None
+
+        def reached_limit():
+            return limit is not None and len(rows) >= limit
 
         services = self._runtime_snapshot_services(env=env)
         if not services:
@@ -277,7 +346,7 @@ class ServiceImageBackups(actions_mixin):
         node_rows = nodes.list(env=env)
         node_errors = []
         for node_ref in node_rows:
-            if len(rows) >= limit:
+            if reached_limit():
                 break
             try:
                 panel = nodes.live_containers(node_ref["id"], persist=False, env=env)
@@ -295,7 +364,7 @@ class ServiceImageBackups(actions_mixin):
                 if service is None:
                     continue
                 for container in group.get("containers") or []:
-                    if len(rows) >= limit:
+                    if reached_limit():
                         break
                     if not _is_running_container(container) or not container.get("id"):
                         continue

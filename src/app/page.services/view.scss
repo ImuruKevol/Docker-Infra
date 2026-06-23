@@ -2,6 +2,10 @@
     display: block;
 }
 
+.service-runtime-section:has(.service-runtime-container-menu[open]) {
+    z-index: 30;
+}
+
 .service-runtime-container-menu[open] {
     z-index: 90;
 }

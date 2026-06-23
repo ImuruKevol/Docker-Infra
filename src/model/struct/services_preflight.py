@@ -161,6 +161,11 @@ class ServicesPreflight:
                 "score": (scores.get(node.get("id")) or {}).get("score"),
                 "cpu_percent": (scores.get(node.get("id")) or {}).get("cpu_percent"),
                 "memory_used_percent": (scores.get(node.get("id")) or {}).get("memory_used_percent"),
+                "cpu_pressure_percent": (scores.get(node.get("id")) or {}).get("cpu_pressure_percent"),
+                "memory_pressure_percent": (scores.get(node.get("id")) or {}).get("memory_pressure_percent"),
+                "cpu_stats": (scores.get(node.get("id")) or {}).get("cpu_stats"),
+                "memory_stats": (scores.get(node.get("id")) or {}).get("memory_stats"),
+                "resource_window": (scores.get(node.get("id")) or {}).get("resource_window"),
                 "storage_used_percent": (scores.get(node.get("id")) or {}).get("storage_used_percent"),
                 "containers": (scores.get(node.get("id")) or {}).get("containers"),
             }

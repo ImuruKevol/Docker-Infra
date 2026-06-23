@@ -1,0 +1,8 @@
+{
+    "id": "api-macro-schedule-run",
+    "title": "Macro Schedule Run",
+    "route": "/api/macros/schedules/run",
+    "category": "infra",
+    "viewuri": "",
+    "controller": "base"
+}

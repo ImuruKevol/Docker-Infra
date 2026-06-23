@@ -16,6 +16,7 @@ def _ai_settings_payload(ai_settings, include_status=False):
 def load():
     ai_settings = wiz.model("struct/ai_settings")
     appearance = wiz.model("struct/appearance")
+    auth = wiz.model("struct/auth")
     body = wiz.request.query()
     section = str(body.get("section") or "").strip().lower()
     include_backup = section == "backup" or _as_bool(body.get("include_backup"))
@@ -25,6 +26,7 @@ def load():
     try:
         payload = {
             "general": appearance.public_payload(),
+            "session_settings": auth.session_policy(),
             "ai_settings": _ai_settings_payload(ai_settings, include_status=include_ai_status),
         }
         if include_backup:
@@ -41,11 +43,36 @@ def load():
 
 def save_general():
     appearance = wiz.model("struct/appearance")
+    auth = wiz.model("struct/auth")
     body = wiz.request.query()
     code = 200
     payload = {}
     try:
-        payload = {"general": appearance.save(body, test_run_id=body.get("test_run_id"))}
+        general_payload = body.get("general") if isinstance(body.get("general"), dict) else body
+        session_payload = body.get("session_settings") if isinstance(body.get("session_settings"), dict) else body
+        test_run_id = body.get("test_run_id") or general_payload.get("test_run_id") or session_payload.get("test_run_id")
+        has_session_ttl = any(key in session_payload for key in ["ttl_hours", "session_ttl_hours", "hours"])
+        general = appearance.save(general_payload, test_run_id=test_run_id)
+        session_settings = (
+            auth.save_session_policy(session_payload, test_run_id=test_run_id)
+            if has_session_ttl
+            else auth.session_policy()
+        )
+        refreshed_session = None
+        if has_session_ttl:
+            token = auth.request_session_token(wiz.session.get("docker_infra_session_token", None))
+            refreshed_session = auth.extend_session(token, ttl_seconds=session_settings["ttl_seconds"])
+            if refreshed_session and token:
+                auth.remember_session_cookie(token, refreshed_session)
+        payload = {
+            "general": general,
+            "session_settings": session_settings,
+        }
+        if has_session_ttl:
+            payload["session"] = refreshed_session
+    except auth.AuthError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
     except RuntimeError as exc:
         code = 503
         payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
@@ -226,14 +253,13 @@ def save_backup_policy():
 def run_backup_policy_now():
     scheduler = wiz.model("struct/service_image_backup_scheduler")
     body = wiz.request.query()
-    run_payload = {**body, "force": True, "include_snapshots": True, "snapshot_enabled": True}
-    code = 200
+    run_payload = {**body, "force": True, "background": True, "include_snapshots": True, "snapshot_enabled": True, "include_named_volumes": True}
+    run_payload.pop("max_items_per_run", None)
+    run_payload.pop("limit", None)
+    code = 202
     payload = {}
     try:
-        if body.get("background"):
-            payload = scheduler.run_async(run_payload)
-        else:
-            payload = {"result": scheduler.run(run_payload)}
+        payload = scheduler.run_async(run_payload)
     except scheduler.ServiceError as exc:
         code = exc.status_code
         payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}

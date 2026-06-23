@@ -55,6 +55,7 @@ class BackupSystemPolicyMixin:
                     "failed": int(result.get("failed") or 0),
                     "skipped": int(result.get("skipped") or 0),
                     "snapshots": int(result.get("snapshots") or 0),
+                    "volumes": int(result.get("volumes") or 0),
                     "cleanup": result.get("cleanup") or None,
                 }
                 metadata["backup_policy"] = policy

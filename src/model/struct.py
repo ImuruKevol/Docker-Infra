@@ -80,6 +80,10 @@ class Struct:
         return self._load("macros")
 
     @property
+    def macro_schedules(self):
+        return self._load("macro_schedules")
+
+    @property
     def nodes(self):
         return self._load("nodes")
 

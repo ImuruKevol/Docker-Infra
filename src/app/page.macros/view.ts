@@ -19,7 +19,13 @@ export class Component implements OnInit, OnDestroy {
     public macroArgsEnabled = signal<boolean>(false);
     public macroArgsInput = signal<string>('');
     public macroRunResult = signal<any>(null);
+    public scheduleModalOpen = signal<boolean>(false);
+    public scheduleHistoryResultOpen = signal<boolean>(false);
+    public scheduleHistoryResultItem = signal<any>(null);
+    public scheduleTargetSearch = signal<string>('');
+    public scheduleFormMode = signal<string>('create');
     public macroForm: any = this.emptyMacroForm();
+    public scheduleForm: any = this.emptyScheduleForm();
     public macroEditorOptions: any = {
         language: 'shell',
         theme: 'vs',
@@ -76,6 +82,26 @@ export class Component implements OnInit, OnDestroy {
 
     private resetMacroForm() {
         this.macroForm = this.emptyMacroForm();
+    }
+
+    private emptyScheduleForm(macroId: string = this.selectedMacroId()) {
+        return {
+            id: '',
+            macro_id: macroId || '',
+            name: '',
+            enabled: true,
+            schedule_type: 'weekly',
+            schedule_weekday: 0,
+            schedule_weekdays: [0],
+            schedule_month_day: 1,
+            schedule_time: '02:00',
+            target_type: 'server',
+            target_ids: [],
+            targets: [],
+            args: '',
+            cron_file: '',
+            history: [],
+        };
     }
 
     public existingMacroFiles() {
@@ -460,6 +486,388 @@ export class Component implements OnInit, OnDestroy {
 
     public selectedMacroDescription() {
         return String(this.selectedMacro()?.description || '').trim() || '설명이 등록되지 않았습니다.';
+    }
+
+    public macroSchedules(macro: any = this.selectedMacro()) {
+        return macro?.schedules || [];
+    }
+
+    public macroScheduleCount(macro: any = this.selectedMacro()) {
+        return Number(macro?.schedule_count ?? this.macroSchedules(macro).length ?? 0);
+    }
+
+    public selectedMacroScheduleCount() {
+        return this.macroScheduleCount(this.selectedMacro());
+    }
+
+    public macroScheduleTypes() {
+        return [
+            { key: 'weekly', label: '매주', icon: 'fa-calendar-week' },
+            { key: 'monthly', label: '매월', icon: 'fa-calendar-days' },
+        ];
+    }
+
+    public weekdayOptions() {
+        return [
+            { value: 0, label: '월' },
+            { value: 1, label: '화' },
+            { value: 2, label: '수' },
+            { value: 3, label: '목' },
+            { value: 4, label: '금' },
+            { value: 5, label: '토' },
+            { value: 6, label: '일' },
+        ];
+    }
+
+    public scheduleWeekdays(schedule: any = this.scheduleForm) {
+        const raw = Array.isArray(schedule?.schedule_weekdays) && schedule.schedule_weekdays.length
+            ? schedule.schedule_weekdays
+            : [schedule?.schedule_weekday ?? 0];
+        const days: number[] = [];
+        const seen = new Set<number>();
+        for (const item of raw) {
+            const day = Math.max(0, Math.min(6, Number(item) || 0));
+            if (seen.has(day)) continue;
+            seen.add(day);
+            days.push(day);
+        }
+        return days.length ? days.sort((a: number, b: number) => a - b) : [0];
+    }
+
+    private scheduleTargetValue(target: any, targetType: string = this.scheduleForm?.target_type) {
+        if (targetType === 'service') return String(target?.service_target_id || target?.id || target?.value || '').trim();
+        return String(target?.node_id || target?.id || target?.value || '').trim();
+    }
+
+    private scheduleTargetIds(schedule: any) {
+        const targetType = schedule?.target_type || 'server';
+        return (schedule?.targets || []).map((target: any) => this.scheduleTargetValue(target, targetType)).filter((value: string) => !!value);
+    }
+
+    private itemMatchesQuery(item: any, query: string) {
+        if (!query) return true;
+        const haystack = `${item?.label || ''} ${item?.description || ''} ${item?.value || ''}`.toLowerCase();
+        return haystack.includes(query);
+    }
+
+    public openScheduleModal(macro: any = this.selectedMacro()) {
+        if (!macro?.id) return;
+        this.selectedMacroId.set(macro.id);
+        this.scheduleTargetSearch.set('');
+        this.resetScheduleHistoryResult();
+        this.scheduleModalOpen.set(true);
+        const first = this.macroSchedules(macro)[0];
+        if (first) {
+            this.selectScheduleForm(first);
+        } else {
+            this.newScheduleForm();
+        }
+        void this.service.render();
+    }
+
+    public async closeScheduleModal() {
+        this.scheduleModalOpen.set(false);
+        this.resetScheduleHistoryResult();
+        this.scheduleTargetSearch.set('');
+        this.scheduleForm = this.emptyScheduleForm();
+        await this.service.render();
+    }
+
+    public newScheduleForm() {
+        this.scheduleFormMode.set('create');
+        this.resetScheduleHistoryResult();
+        this.scheduleTargetSearch.set('');
+        this.scheduleForm = this.emptyScheduleForm(this.selectedMacroId());
+        void this.service.render();
+    }
+
+    public selectScheduleForm(schedule: any) {
+        this.scheduleFormMode.set('edit');
+        this.resetScheduleHistoryResult();
+        const scheduleWeekdays = this.scheduleWeekdays(schedule);
+        const history = [...(schedule?.history || [])];
+        this.scheduleForm = {
+            id: schedule?.id || '',
+            macro_id: schedule?.macro_id || this.selectedMacroId(),
+            name: schedule?.name || '',
+            enabled: schedule?.enabled !== false,
+            schedule_type: schedule?.schedule_type || 'weekly',
+            schedule_weekday: scheduleWeekdays[0],
+            schedule_weekdays: scheduleWeekdays,
+            schedule_month_day: Number(schedule?.schedule_month_day ?? 1),
+            schedule_time: schedule?.schedule_time || '02:00',
+            target_type: schedule?.target_type || 'server',
+            target_ids: this.scheduleTargetIds(schedule),
+            targets: [...(schedule?.targets || [])],
+            args: schedule?.args || '',
+            cron_file: schedule?.cron_file || '',
+            history,
+        };
+        void this.service.render();
+    }
+
+    public async setScheduleType(type: string) {
+        this.scheduleForm.schedule_type = type === 'monthly' ? 'monthly' : 'weekly';
+        await this.service.render();
+    }
+
+    public isScheduleWeekdaySelected(day: any) {
+        return this.scheduleWeekdays(this.scheduleForm).includes(Number(day));
+    }
+
+    public async toggleScheduleWeekday(day: any) {
+        const value = Math.max(0, Math.min(6, Number(day) || 0));
+        const selected = new Set<number>(this.scheduleWeekdays(this.scheduleForm));
+        if (selected.has(value) && selected.size > 1) {
+            selected.delete(value);
+        } else {
+            selected.add(value);
+        }
+        const weekdays = Array.from(selected).sort((a: number, b: number) => a - b);
+        this.scheduleForm.schedule_weekdays = weekdays;
+        this.scheduleForm.schedule_weekday = weekdays[0] ?? 0;
+        await this.service.render();
+    }
+
+    public async setScheduleTargetType(type: string) {
+        if (!['server', 'service'].includes(type)) return;
+        if (this.scheduleForm.target_type !== type) {
+            this.scheduleForm.target_type = type;
+            this.scheduleForm.target_ids = [];
+            this.scheduleForm.targets = [];
+            this.scheduleTargetSearch.set('');
+        }
+        await this.service.render();
+    }
+
+    public scheduleTargetItems() {
+        const items = this.scheduleForm?.target_type === 'service' ? this.serviceTargetItems() : this.serverTargetItems();
+        const query = String(this.scheduleTargetSearch() || '').trim().toLowerCase();
+        return items.filter((item: any) => this.itemMatchesQuery(item, query));
+    }
+
+    public isScheduleTargetSelected(value: string) {
+        const key = String(value || '').trim();
+        return (this.scheduleForm?.target_ids || []).map((item: any) => String(item || '').trim()).includes(key);
+    }
+
+    public async toggleScheduleTarget(value: string) {
+        const key = String(value || '').trim();
+        if (!key) return;
+        const selected = new Set((this.scheduleForm?.target_ids || []).map((item: any) => String(item || '').trim()).filter((item: string) => !!item));
+        if (selected.has(key)) {
+            selected.delete(key);
+        } else {
+            selected.add(key);
+        }
+        this.scheduleForm.target_ids = Array.from(selected);
+        await this.service.render();
+    }
+
+    private existingScheduleTargetByValue(value: string) {
+        const targetType = this.scheduleForm?.target_type || 'server';
+        return (this.scheduleForm?.targets || []).find((target: any) => this.scheduleTargetValue(target, targetType) === value) || null;
+    }
+
+    private buildScheduleTargets() {
+        const targetType = this.scheduleForm?.target_type || 'server';
+        const ids = this.scheduleForm?.target_ids || [];
+        if (targetType === 'service') {
+            return ids.map((id: string) => {
+                const target = this.serviceTargets().find((item: any) => item.id === id) || this.existingScheduleTargetByValue(id) || {};
+                return {
+                    target_type: 'service',
+                    node_id: target.node_id,
+                    service_target_id: target.id || target.service_target_id || id,
+                    service_id: target.service_id || '',
+                    service_name: target.service_name || '',
+                    service_namespace: target.service_namespace || '',
+                    container_id: target.container_id || '',
+                    container_name: target.container_name || '',
+                    container_display_name: target.container_display_name || '',
+                    label: target.label || this.serviceTargetLabel(target),
+                };
+            }).filter((target: any) => target.node_id && target.service_target_id);
+        }
+        return ids.map((id: string) => {
+            const node = this.nodes().find((item: any) => item.id === id) || this.existingScheduleTargetByValue(id) || {};
+            return {
+                target_type: 'server',
+                node_id: node.id || node.node_id || id,
+                label: node.label || this.nodeLabel(node),
+            };
+        }).filter((target: any) => target.node_id);
+    }
+
+    public scheduleTargetCount() {
+        return (this.scheduleForm?.target_ids || []).length;
+    }
+
+    public canSaveSchedule() {
+        return Boolean(this.selectedMacro()?.id && this.scheduleForm?.schedule_time && this.scheduleTargetCount() > 0 && !this.busy());
+    }
+
+    public async saveSchedule() {
+        const macro = this.selectedMacro();
+        if (!macro?.id) {
+            await this.alert('스케줄을 등록할 매크로를 선택하세요.');
+            return;
+        }
+        if (!this.scheduleTargetCount()) {
+            await this.alert('실행 대상을 하나 이상 선택하세요.');
+            return;
+        }
+        this.busy.set(true);
+        const scheduleWeekdays = this.scheduleWeekdays(this.scheduleForm);
+        const { code, data } = await wiz.call('save_schedule', {
+            id: this.scheduleForm?.id || '',
+            macro_id: macro.id,
+            name: this.scheduleForm?.name || '',
+            enabled: this.scheduleForm?.enabled ? 'true' : 'false',
+            schedule_type: this.scheduleForm?.schedule_type || 'weekly',
+            schedule_weekday: scheduleWeekdays[0],
+            schedule_weekdays: JSON.stringify(scheduleWeekdays),
+            schedule_month_day: Number(this.scheduleForm?.schedule_month_day ?? 1),
+            schedule_time: this.scheduleForm?.schedule_time || '02:00',
+            target_type: this.scheduleForm?.target_type || 'server',
+            targets: JSON.stringify(this.buildScheduleTargets()),
+            args: this.scheduleForm?.args || '',
+        });
+        this.busy.set(false);
+        if (code === 200) {
+            const savedId = data?.schedule?.id || '';
+            await this.load();
+            const saved = this.macroSchedules(this.selectedMacro()).find((item: any) => item.id === savedId);
+            if (saved) this.selectScheduleForm(saved);
+        } else {
+            await this.alert(data?.message || '스케줄을 저장할 수 없습니다.');
+        }
+        await this.service.render();
+    }
+
+    public async deleteSchedule(schedule: any = this.scheduleForm) {
+        if (!schedule?.id) return;
+        const confirmed = await this.service.modal.show({
+            title: '스케줄 삭제',
+            message: '선택한 매크로 실행 스케줄을 삭제합니다.',
+            cancel: '취소',
+            action: '삭제',
+            actionBtn: 'warning',
+            status: 'warning',
+        });
+        if (!confirmed) return;
+
+        const macroId = this.selectedMacro()?.id || schedule?.macro_id || '';
+        this.busy.set(true);
+        const { code, data } = await wiz.call('delete_schedule', { schedule_id: schedule.id, macro_id: macroId });
+        this.busy.set(false);
+        if (code === 200) {
+            await this.load();
+            const first = this.macroSchedules(this.selectedMacro())[0];
+            if (first) {
+                this.selectScheduleForm(first);
+            } else {
+                this.newScheduleForm();
+            }
+        } else {
+            await this.alert(data?.message || '스케줄을 삭제할 수 없습니다.');
+        }
+        await this.service.render();
+    }
+
+    private scheduleWeekdayLabel(value: any) {
+        return this.weekdayOptions().find((item: any) => item.value === Number(value))?.label || '월';
+    }
+
+    public scheduleSummary(schedule: any) {
+        if (!schedule?.enabled) return '비활성화됨';
+        const time = schedule?.schedule_time || '02:00';
+        if (schedule?.schedule_type === 'monthly') {
+            return `매월 ${Number(schedule?.schedule_month_day || 1)}일 ${time}`;
+        }
+        const weekdays = this.scheduleWeekdays(schedule).map((day: number) => `${this.scheduleWeekdayLabel(day)}요일`).join(', ');
+        return `매주 ${weekdays} ${time}`;
+    }
+
+    public scheduleFormSummary() {
+        return this.scheduleSummary(this.scheduleForm);
+    }
+
+    public scheduleTargetSummary(schedule: any) {
+        const count = Number(schedule?.target_count ?? (schedule?.targets || []).length ?? 0);
+        const typeLabel = schedule?.target_type === 'service' ? '서비스' : '서버';
+        return `${typeLabel} ${count}개`;
+    }
+
+    public scheduleLastRunLabel(schedule: any) {
+        if (!schedule?.last_run_at) return '실행 이력 없음';
+        return `마지막 실행 ${this.formatDate(schedule.last_run_at)}`;
+    }
+
+    public scheduleHistory() {
+        return this.scheduleForm?.history || [];
+    }
+
+    public scheduleHistorySummary() {
+        const count = this.scheduleHistory().length;
+        return count ? `최근 ${count}건` : '이력 없음';
+    }
+
+    public scheduleHistoryDate(history: any) {
+        return history?.finished_at || history?.started_at || history?.created_at || history?.updated_at;
+    }
+
+    public scheduleHistoryTargetLabel(history: any) {
+        const metadata = history?.metadata || {};
+        const context = history?.requested_payload?.target_context || {};
+        const targetType = metadata?.target_type || context?.target_type || '';
+        if (targetType === 'service') {
+            const service = metadata?.service_name || context?.service_name || metadata?.service_namespace || context?.service_namespace || '서비스';
+            const container = metadata?.container_display_name || context?.container_display_name || metadata?.container_name || context?.container_name || '';
+            return [service, container].filter((item: string) => !!item).join(' - ') || history?.target_id || '-';
+        }
+        return metadata?.node_name || history?.target_id || '-';
+    }
+
+    private resetScheduleHistoryResult() {
+        this.scheduleHistoryResultOpen.set(false);
+        this.scheduleHistoryResultItem.set(null);
+    }
+
+    public async openScheduleHistoryResult(history: any) {
+        this.scheduleHistoryResultItem.set(history || null);
+        this.scheduleHistoryResultOpen.set(Boolean(history));
+        await this.service.render();
+    }
+
+    public async closeScheduleHistoryResult() {
+        this.resetScheduleHistoryResult();
+        await this.service.render();
+    }
+
+    private scheduleHistoryStreamText(history: any, streamName: string) {
+        const output = Array.isArray(history?.output) ? history.output : [];
+        if (!output.length) return '';
+        const streamKey = String(streamName || '').toLowerCase();
+        return output
+            .filter((entry: any) => String(entry?.stream || '').toLowerCase() === streamKey)
+            .map((entry: any) => entry?.message)
+            .filter((message: any) => message !== undefined && message !== null && String(message).length > 0)
+            .map((message: any) => String(message))
+            .join('\n');
+    }
+
+    public scheduleHistoryStdoutText(history: any = this.scheduleHistoryResultItem()) {
+        return this.scheduleHistoryStreamText(history, 'stdout');
+    }
+
+    public scheduleHistoryStderrText(history: any = this.scheduleHistoryResultItem()) {
+        return this.scheduleHistoryStreamText(history, 'stderr');
+    }
+
+    public scheduleStatusClass(schedule: any) {
+        if (schedule?.enabled) return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
+        return 'border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400';
     }
 
     public isEditingMacro() {
@@ -888,6 +1296,49 @@ export class Component implements OnInit, OnDestroy {
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
+    }
+
+    private removeMacroFileFromState(fileId: string, macroId: string = this.selectedMacro()?.id || '') {
+        const targetFileId = String(fileId || '').trim();
+        const targetMacroId = String(macroId || '').trim();
+        if (!targetFileId) return;
+        this.macros.set(this.macros().map((macro: any) => {
+            if (targetMacroId && macro?.id !== targetMacroId) return macro;
+            if (!this.macroFilesFor(macro).some((item: any) => item.id === targetFileId)) return macro;
+            const files = this.macroFilesFor(macro).filter((item: any) => item.id !== targetFileId);
+            return { ...macro, files, file_count: files.length };
+        }));
+        if (!targetMacroId || this.macroForm?.id === targetMacroId) {
+            this.macroForm.existing_files = this.existingMacroFiles().filter((item: any) => item.id !== targetFileId);
+        }
+    }
+
+    public async deleteMacroFile(file: any, event?: Event) {
+        event?.preventDefault();
+        event?.stopPropagation();
+        if (!file?.id) return;
+        const confirmed = await this.service.modal.show({
+            title: '첨부 파일 삭제',
+            message: `${file?.filename || '첨부 파일'}을 삭제합니다.`,
+            cancel: '취소',
+            action: '삭제',
+            actionBtn: 'warning',
+            status: 'warning',
+        });
+        if (!confirmed) return;
+
+        this.busy.set(true);
+        const { code, data } = await wiz.call('delete_macro_file', {
+            macro_id: this.selectedMacro()?.id || '',
+            file_id: file.id,
+        });
+        this.busy.set(false);
+        if (code === 200) {
+            this.removeMacroFileFromState(file.id, data?.macro_id || this.selectedMacro()?.id || '');
+        } else {
+            await this.alert(data?.message || '첨부 파일을 삭제할 수 없습니다.');
+        }
+        await this.service.render();
     }
 
     private blobFromBase64(value: string, contentType: string) {

@@ -3,6 +3,7 @@ from pathlib import Path
 
 connect = wiz.model("db/postgres").connect
 shared = wiz.model("struct/services_shared")
+certificates = wiz.model("struct/service_nginx_certificates")
 ServiceError = shared.ServiceError
 _row = shared.row
 
@@ -108,10 +109,14 @@ class ServiceDetailFast:
             with connection.cursor() as cursor:
                 self._service_row(cursor, service_id)
                 domains = self._domains(cursor, service_id)
+        try:
+            free_certificates = certificates.service_certificates(domains, env=env)
+        except Exception:
+            free_certificates = self._certificate_targets(domains)
         return {
             "domains": domains,
             "backup_system": _backup_system_status(env=env),
-            "free_certificates": self._certificate_targets(domains),
+            "free_certificates": free_certificates,
         }
 
 

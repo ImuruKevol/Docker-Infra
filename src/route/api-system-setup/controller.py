@@ -48,12 +48,14 @@ try:
             docker_infra_authenticated=True,
             docker_infra_session_token=login_result["session_token"],
         )
+        auth.remember_session_cookie(login_result["session_token"], login_result.get("session"))
         payload = {
             "setup": result["setup"],
             "local_master": result["local_master"],
             "monitoring_auto_configure": monitoring_result,
             "authenticated": True,
             "session": login_result["session"],
+            "session_policy": auth.session_policy(),
         }
 except setup.SetupError as exc:
     code = exc.status_code

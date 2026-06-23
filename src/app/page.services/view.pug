@@ -155,7 +155,7 @@ main(class="space-y-5 px-5 py-5")
                     div(*ngIf="detailTabLoading()", class="p-4 text-sm text-zinc-500 dark:text-zinc-400") 탭 정보를 불러오는 중입니다.
 
                     div(*ngIf="detailTab() === 'overview'", class="space-y-5 p-4")
-                        section(class="rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
+                        section(class="service-runtime-section relative rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900")
                             div(class="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 xl:flex-row xl:items-center xl:justify-between")
                                 div
                                     h3(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 실행 상태
@@ -171,9 +171,6 @@ main(class="space-y-5 px-5 py-5")
                                     button(type="button", [attr.title]="runtimeBulkActionTitle('stop')", (click)="runRuntimeBulkAction('stop')", [disabled]="busy() || !canRunRuntimeBulkAction('stop')", class="inline-flex h-8 items-center gap-2 rounded-md border border-rose-300 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/30")
                                         i(class="fa-solid fa-stop")
                                         span 일괄 중지
-                                    button(*ngIf="hasAiModels()", type="button", (click)="runRuntimeAiRepair()", [disabled]="runtimeAiBusy() || busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-sky-300 px-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-60 dark:border-sky-900/70 dark:text-sky-300 dark:hover:bg-sky-950/30")
-                                        i(class="fa-solid", [ngClass]="runtimeAiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
-                                        span AI 검사/수정
                                     button(type="button", (click)="refreshRuntimeStatus()", [disabled]="busy()", class="inline-flex h-8 items-center gap-2 rounded-md border border-zinc-300 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                         i(class="fa-solid", [ngClass]="busy() ? 'fa-spinner fa-spin' : 'fa-rotate-right'")
                                         span 상태 확인
@@ -192,6 +189,7 @@ main(class="space-y-5 px-5 py-5")
                                                 div(class="min-w-0")
                                                     div(class="flex flex-wrap items-center gap-2")
                                                         p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{containerDisplayName(container)}}
+                                                        span(*ngIf="containerVersionLabel(container)", class="inline-flex max-w-[180px] shrink-0 truncate rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300", [attr.title]="containerVersionTitle(container)") {{containerVersionLabel(container)}}
                                                         span(class="shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="containerExposureClass(container)") {{containerExposureLabel(container)}}
                                                     p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400") {{container.node_name || '서버 확인 필요'}}
                                             div(class="flex shrink-0 items-center gap-2")
@@ -206,6 +204,9 @@ main(class="space-y-5 px-5 py-5")
                                                         button(type="button", [attr.title]="runtimeContainerLogsTitle(container)", (click)="openContainerLogs(container)", [disabled]="busy() || !canOpenRuntimeContainerLogs(container)", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-40 dark:text-sky-300 dark:hover:bg-sky-950/30")
                                                             i(class="fa-solid fa-file-lines w-4")
                                                             span 로그
+                                                        button(type="button", [attr.title]="runtimeContainerVersionChangeTitle(container)", (click)="openContainerVersionChange(container)", [disabled]="busy() || !canChangeRuntimeContainerVersion(container)", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 dark:text-emerald-300 dark:hover:bg-emerald-950/30")
+                                                            i(class="fa-solid fa-code-branch w-4")
+                                                            span 버전 변경
                                                         button(type="button", [attr.title]="runtimeContainerActionTitle(container, 'start')", (click)="runRuntimeContainerAction(container, 'start')", [disabled]="busy() || !canRunRuntimeContainerAction(container, 'start')", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                                             i(class="fa-solid fa-play w-4")
                                                             span 실행
@@ -234,6 +235,7 @@ main(class="space-y-5 px-5 py-5")
                                                 div(class="min-w-0")
                                                     div(class="flex flex-wrap items-center gap-2")
                                                         p(class="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{containerDisplayName(container)}}
+                                                        span(*ngIf="containerVersionLabel(container)", class="inline-flex max-w-[180px] shrink-0 truncate rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300", [attr.title]="containerVersionTitle(container)") {{containerVersionLabel(container)}}
                                                         span(class="shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold", [ngClass]="containerExposureClass(container)") {{containerExposureLabel(container)}}
                                                     p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400") {{container.node_name || '서버 확인 필요'}}
                                             div(class="flex shrink-0 items-center gap-2")
@@ -248,6 +250,9 @@ main(class="space-y-5 px-5 py-5")
                                                         button(type="button", [attr.title]="runtimeContainerLogsTitle(container)", (click)="openContainerLogs(container)", [disabled]="busy() || !canOpenRuntimeContainerLogs(container)", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-40 dark:text-sky-300 dark:hover:bg-sky-950/30")
                                                             i(class="fa-solid fa-file-lines w-4")
                                                             span 로그
+                                                        button(type="button", [attr.title]="runtimeContainerVersionChangeTitle(container)", (click)="openContainerVersionChange(container)", [disabled]="busy() || !canChangeRuntimeContainerVersion(container)", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 dark:text-emerald-300 dark:hover:bg-emerald-950/30")
+                                                            i(class="fa-solid fa-code-branch w-4")
+                                                            span 버전 변경
                                                         button(type="button", [attr.title]="runtimeContainerActionTitle(container, 'start')", (click)="runRuntimeContainerAction(container, 'start')", [disabled]="busy() || !canRunRuntimeContainerAction(container, 'start')", class="flex h-8 w-full items-center gap-2 px-3 text-left font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 dark:text-zinc-200 dark:hover:bg-zinc-800")
                                                             i(class="fa-solid fa-play w-4")
                                                             span 실행
@@ -386,7 +391,7 @@ main(class="space-y-5 px-5 py-5")
                                         i(class="fa-solid", [ngClass]="supportOptionsLoading() ? 'fa-spinner fa-spin' : 'fa-arrow-right-arrow-left'")
                                         span 마이그레이션
                                     span(class="inline-flex shrink-0 rounded-md border px-2 py-1 text-xs font-semibold", [ngClass]="backupSystemBadgeClass()") {{backupSystemBadgeText()}}
-                            div(*ngIf="detail()?.versions?.length === 0", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400") 아직 릴리즈된 버전이 없습니다.
+                            div(*ngIf="detail()?.versions?.length === 0", class="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400") 아직 기록된 버전 이력이 없습니다.
                             div(*ngFor="let version of detail()?.versions", class="border-t border-zinc-100 px-4 py-3 first:border-t-0 dark:border-zinc-800")
                                 div(class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between")
                                     div(class="min-w-0")
@@ -396,7 +401,7 @@ main(class="space-y-5 px-5 py-5")
                                         p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{formatDate(version.created_at)}}
                                         div(*ngIf="versionBackupEntries(version).length > 0", class="mt-2 flex flex-wrap gap-1.5")
                                             span(*ngFor="let backup of versionBackupEntries(version)", class="inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold", [ngClass]="versionBackupEntryClass(backup)")
-                                                i(class="fa-solid", [ngClass]="backup.backup_status === 'deleted' ? 'fa-ban' : backup.source === 'container_snapshot' ? 'fa-camera' : 'fa-box-archive'")
+                                                i(class="fa-solid", [ngClass]="backup.backup_status === 'deleted' ? 'fa-ban' : backup.source === 'named_volume_snapshot' ? 'fa-database' : backup.source === 'container_snapshot' ? 'fa-camera' : 'fa-box-archive'")
                                                 span(class="truncate") {{versionBackupEntryTitle(backup)}}
                                                 span(class="shrink-0 opacity-75") {{versionBackupEntryMeta(backup)}}
                                         p(*ngIf="versionRestoreBlocked(version)", class="mt-2 text-xs font-semibold text-rose-600 dark:text-rose-300") {{versionRestoreBlockText(version)}}
@@ -514,7 +519,7 @@ div(*ngIf="editModalOpen()", class="fixed inset-0 z-40 flex items-center justify
                                         span(class="font-semibold text-zinc-900 dark:text-zinc-100") {{editEnvVarCount()}} / {{editVolumeCount()}}
                             div(class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
                                 p(class="font-semibold") 고급 저장은 Compose 초안을 갱신합니다.
-                                p(class="mt-1") 버전 이력은 수동 릴리즈에서만 추가됩니다.
+                                p(class="mt-1") 버전 이력은 릴리즈 또는 시스템 백업 체크포인트에서 추가됩니다.
 
                     div(*ngIf="editAdvancedSettings() && editSection() === 'components'", class="space-y-4")
                         div(*ngIf="editComponents.length === 0", class="rounded-md border border-zinc-200 px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400") 수정할 구성이 없습니다.
@@ -751,6 +756,15 @@ div(*ngIf="rollbackModalOpen()", class="fixed inset-0 z-50 flex items-center jus
                             div(*ngIf="rollbackImageRestoreRows().length > 0", class="mt-2 flex flex-wrap gap-2")
                                 span(*ngFor="let item of rollbackImageRestoreRows()", class="inline-flex max-w-full rounded-md border border-current/20 bg-white/50 px-2 py-1 text-[11px] font-semibold dark:bg-zinc-950/30")
                                     span(class="truncate") {{item.service}} · {{item.backup_ref}}
+                div(class="rounded-md border px-3 py-2 text-sm", [ngClass]="rollbackVolumeRestoreClass()")
+                    div(class="flex items-start gap-2")
+                        i(class="fa-solid fa-database mt-0.5")
+                        div(class="min-w-0")
+                            p(class="font-semibold") named volume 복원
+                            p(class="mt-1 text-xs leading-5") {{rollbackVolumeRestoreText()}}
+                            div(*ngIf="rollbackVolumeRestoreRows().length > 0", class="mt-2 flex flex-wrap gap-2")
+                                span(*ngFor="let item of rollbackVolumeRestoreRows()", class="inline-flex max-w-full rounded-md border border-current/20 bg-white/50 px-2 py-1 text-[11px] font-semibold dark:bg-zinc-950/30")
+                                    span(class="truncate") {{item.compose_service}} · {{item.docker_volume}} · {{item.artifact_ref}}
                 div(*ngIf="rollbackServiceList('added_services').length || rollbackServiceList('removed_services').length", class="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800")
                     p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") 구성 변화
                     div(class="mt-2 flex flex-wrap gap-2")
@@ -833,6 +847,44 @@ div(*ngIf="runtimeAiModalOpen()", class="fixed inset-0 z-50 flex items-center ju
                 button(type="button", (click)="submitRuntimeAiRepair()", [disabled]="runtimeAiBusy()", class="inline-flex h-9 min-w-[126px] items-center justify-center gap-2 rounded-md bg-sky-600 px-3 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60")
                     i(class="fa-solid", [ngClass]="runtimeAiBusy() ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'")
                     span {{runtimeAiBusy() ? '시작 중' : '백그라운드 시작'}}
+
+div(*ngIf="versionChangeModalOpen()", class="fixed inset-0 z-50 flex items-center justify-center px-4 py-6")
+    div(class="absolute inset-0 bg-zinc-950/60", (click)="closeVersionChangeModal()")
+    section(class="relative w-full max-w-lg overflow-hidden rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900")
+        div(class="flex items-start justify-between gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            div(class="min-w-0")
+                h2(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") 버전 변경
+                p(class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400") {{versionChangeContainerName()}} · {{versionChangeCurrentImage()}}
+            button(type="button", (click)="closeVersionChangeModal()", [disabled]="versionChangeBusy()", class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800")
+                i(class="fa-solid fa-xmark")
+        div(class="space-y-4 px-5 py-4")
+            label(class="block")
+                span(class="mb-1 block text-xs font-semibold text-zinc-500 dark:text-zinc-400") 변경할 버전
+                div(class="flex flex-col gap-2 sm:flex-row")
+                    input(type="text", [(ngModel)]="versionChangeForm.version", (ngModelChange)="resetVersionChangeCheck()", (keyup.enter)="submitVersionChange()", placeholder="예: 1.2.3 또는 sha256:...", class="h-10 min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                    button(type="button", (click)="validateVersionChangeImage()", [disabled]="versionChangeCheckDisabled()", class="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md border border-emerald-300 px-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-900/70 dark:text-emerald-300 dark:hover:bg-emerald-950/30")
+                        i(class="fa-solid", [ngClass]="versionCheckBusy() ? 'fa-spinner fa-spin' : 'fa-magnifying-glass'")
+                        span {{versionCheckBusy() ? '확인 중' : '이미지 검증'}}
+            div(*ngIf="versionCheckResult()", class="rounded-md border px-3 py-2 text-xs leading-5", [ngClass]="versionChangeCheckClass()")
+                p(class="flex items-center gap-2 font-semibold")
+                    i(class="fa-solid", [ngClass]="versionChangeCheckIcon()")
+                    span {{versionChangeCheckTitle()}}
+                p(class="mt-1") {{versionChangeCheckMessage()}}
+                p(*ngIf="versionCheckResult()?.image_ref", class="mt-1 break-all font-mono text-[11px] opacity-80") {{versionCheckResult()?.image_ref}}
+            label(class="flex items-start gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200")
+                input(type="checkbox", [(ngModel)]="versionChangeForm.force_pull", class="mt-0.5 h-4 w-4 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500 dark:border-emerald-900")
+                span(class="min-w-0")
+                    span(class="block font-semibold") 같은 tag도 강제로 다시 불러오기
+                    span(class="mt-0.5 block text-xs leading-5 text-zinc-500 dark:text-zinc-400") 버전명은 같지만 digest가 바뀐 이미지를 다시 pull하고 컨테이너를 재생성합니다.
+            div(class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200")
+                p(class="font-semibold") 볼륨에 저장되지 않은 데이터는 사라질 수 있습니다.
+                p(class="mt-1") 컨테이너 내부 파일시스템에만 기록된 로그, 업로드 파일, 임시 데이터는 새 이미지로 재생성되면서 보존되지 않을 수 있습니다.
+                p(class="mt-1") Compose의 볼륨 또는 바인드 마운트에 저장된 데이터만 유지됩니다.
+        div(class="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800")
+            button(type="button", (click)="closeVersionChangeModal()", [disabled]="versionChangeBusy()", class="inline-flex h-9 min-w-[76px] items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800") 취소
+            button(type="button", (click)="submitVersionChange()", [disabled]="versionChangeDisabled()", [attr.title]="versionChangeSubmitTitle()", class="inline-flex h-9 min-w-[112px] items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60")
+                i(class="fa-solid", [ngClass]="versionChangeBusy() ? 'fa-spinner fa-spin' : 'fa-code-branch'")
+                span {{versionChangeBusy() ? '적용 중' : '변경 적용'}}
 
 div(*ngIf="containerTerminalOpen()", class="fixed inset-0 z-50 flex items-center justify-center px-4 py-6")
     div(class="absolute inset-0 bg-zinc-950/65", (click)="closeContainerTerminal()")

@@ -96,6 +96,13 @@ def _docker_container_restart_command(params): return ["docker", "restart", *_co
 def _docker_container_delete_command(params): return ["docker", "rm", "-f", *_container_ids(params)]
 
 
+def _docker_service_containers_command(params):
+    namespace = str((params or {}).get("namespace") or (params or {}).get("stack_name") or "").strip()
+    if NETWORK_NAME_RE.match(namespace) is None:
+        raise LocalCommandError(400, "service namespace 형식이 올바르지 않습니다.", "INVALID_SERVICE_NAMESPACE")
+    return ["docker", "ps", "-a", "--no-trunc", "--filter", f"name={namespace}", "--format", "{{json .}}"]
+
+
 CONTAINER_FILE_LIST_SCRIPT = r"""
 set -eu
 base="${1:-/}"
@@ -530,10 +537,21 @@ def _metrics_collector_remove_command(params):
     return ["sh", "-lc", script]
 
 
-def _docker_image_remove_command(params):
+def _docker_image_ref_param(params):
     image_ref = str((params or {}).get("image_ref") or "").strip()
     if not image_ref:
         raise LocalCommandError(400, "image_ref가 필요합니다.", "IMAGE_REF_REQUIRED")
+    if any(ch.isspace() for ch in image_ref):
+        raise LocalCommandError(400, "image_ref에는 공백을 사용할 수 없습니다.", "INVALID_IMAGE_REF")
+    return image_ref
+
+
+def _docker_image_manifest_inspect_command(params):
+    return ["docker", "manifest", "inspect", _docker_image_ref_param(params)]
+
+
+def _docker_image_remove_command(params):
+    image_ref = _docker_image_ref_param(params)
     return ["docker", "image", "rm", "-f", image_ref]
 
 
@@ -785,10 +803,51 @@ def _service_stack_deploy_command(params):
     return ["docker", "stack", "deploy", "--with-registry-auth", "--prune", "-c", compose_path, stack_name]
 
 
+def _service_stack_update_image_command(params):
+    stack_name = _stack_name_param(params)
+    service_name = _compose_service_param(params)
+    image_ref = _docker_image_ref_param(params)
+    swarm_service_name = str((params or {}).get("swarm_service_name") or f"{stack_name}_{service_name}").strip()
+    if NETWORK_NAME_RE.match(swarm_service_name) is None:
+        raise LocalCommandError(400, "swarm service name 형식이 올바르지 않습니다.", "INVALID_SWARM_SERVICE_NAME")
+    force = str((params or {}).get("force") or (params or {}).get("force_pull") or "").strip().lower() in {"1", "true", "yes", "on"}
+    command = ["docker", "service", "update", "--with-registry-auth", "--image", image_ref]
+    if force:
+        command.append("--force")
+    command.append(swarm_service_name)
+    return command
+
+
 def _service_compose_up_command(params):
     compose_path = _path_param(params, "compose_path")
     stack_name = _stack_name_param(params)
     return ["docker", "compose", "-p", stack_name, "-f", compose_path, "up", "-d", "--remove-orphans"]
+
+
+def _compose_service_param(params):
+    service_name = str((params or {}).get("service_name") or (params or {}).get("compose_service") or "").strip()
+    if not service_name:
+        raise LocalCommandError(400, "compose service name은 필수입니다.", "COMPOSE_SERVICE_NAME_REQUIRED")
+    return service_name
+
+
+def _service_compose_up_service_command(params):
+    compose_path = _path_param(params, "compose_path")
+    stack_name = _stack_name_param(params)
+    service_name = _compose_service_param(params)
+    force_pull = str((params or {}).get("force_pull") or "").strip().lower() in {"1", "true", "yes", "on"}
+    script = (
+        "set -eu\n"
+        f"STACK={shlex.quote(stack_name)}\n"
+        f"FILE={shlex.quote(compose_path)}\n"
+        f"SERVICE={shlex.quote(service_name)}\n"
+    )
+    if force_pull:
+        script += 'docker compose -p "$STACK" -f "$FILE" pull "$SERVICE"\n'
+        script += 'docker compose -p "$STACK" -f "$FILE" up -d --no-deps --force-recreate "$SERVICE"\n'
+    else:
+        script += 'docker compose -p "$STACK" -f "$FILE" up -d --no-deps "$SERVICE"\n'
+    return ["sh", "-lc", script]
 
 
 def _service_compose_down_command(params):
@@ -843,7 +902,7 @@ def _service_stack_services_command(params):
 
 def _service_stack_ps_command(params):
     stack_name = _stack_name_param(params)
-    return ["docker", "stack", "ps", stack_name, "--no-trunc", "--format", "{{json .}}"]
+    return ["docker", "stack", "ps", stack_name, "--filter", "desired-state=running", "--format", "{{json .}}"]
 
 
 def _certbot_nginx_issue_command(params):
@@ -1127,10 +1186,12 @@ COMMAND_SPECS = {
     "docker.version": {"category": "docker", "argv": ["docker", "version", "--format", "{{json .}}"]},
     "docker.info": {"category": "docker", "argv": ["docker", "info", "--format", "{{json .}}"]},
     "docker.containers": {"category": "docker", "argv": ["docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}"]},
+    "docker.containers.service": {"category": "docker", "factory": _docker_service_containers_command},
     "docker.images": {"category": "docker", "argv": ["docker", "image", "ls", "--digests", "--no-trunc", "--format", "{{json .}}"]},
     "docker.images.usage": {"category": "docker", "argv": ["sh", "-lc", DOCKER_IMAGE_USAGE_SCRIPT]},
     "docker.images.storage": {"category": "docker", "argv": ["python3", "-c", DOCKER_IMAGE_STORAGE_SCRIPT]},
     "docker.images.delete_estimate": {"category": "docker", "factory": _docker_image_delete_estimate_command, "default_timeout_seconds": 45},
+    "docker.image.manifest.inspect": {"category": "docker", "factory": _docker_image_manifest_inspect_command, "default_timeout_seconds": 45},
     "docker.prune.estimate": {"category": "docker", "factory": _docker_prune_estimate_command, "default_timeout_seconds": 20},
     "docker.network.inspect": {"category": "docker", "factory": _inspect_network_command},
     "docker.network.ensure": {"category": "docker", "factory": _docker_network_ensure_command, "destructive": True},
@@ -1151,7 +1212,9 @@ COMMAND_SPECS = {
     "docker.container.file.move": {"category": "docker", "factory": _docker_container_file_move_command, "destructive": True, "default_timeout_seconds": 30},
     "docker.image.remove": {"category": "docker", "factory": _docker_image_remove_command, "destructive": True},
     "service.stack.deploy": {"category": "service", "factory": _service_stack_deploy_command, "destructive": True, "default_timeout_seconds": 300},
+    "service.stack.update.image": {"category": "service", "factory": _service_stack_update_image_command, "destructive": True, "default_timeout_seconds": 300},
     "service.compose.up": {"category": "service", "factory": _service_compose_up_command, "destructive": True, "default_timeout_seconds": 300},
+    "service.compose.up.service": {"category": "service", "factory": _service_compose_up_service_command, "destructive": True, "default_timeout_seconds": 300},
     "service.compose.down": {"category": "service", "factory": _service_compose_down_command, "destructive": True, "default_timeout_seconds": 120},
     "service.stack.remove": {"category": "service", "factory": _service_stack_remove_command, "destructive": True, "default_timeout_seconds": 120},
     "service.stack.volumes.remove": {"category": "service", "factory": _service_stack_volumes_remove_command, "destructive": True, "default_timeout_seconds": 90},

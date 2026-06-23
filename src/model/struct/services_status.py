@@ -1,5 +1,6 @@
 import datetime
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from psycopg.types.json import Jsonb
 
@@ -89,7 +90,7 @@ def _node_lookup_maps(env=None, include_swarm=False):
         return maps
 
     try:
-        result = local_executor.run("swarm.nodes", timeout_seconds=10, env=env)
+        result = local_executor.run("swarm.nodes", timeout_seconds=3, env=env)
         maps["swarm_check"] = {"status": result.get("status"), "exit_code": result.get("exit_code")}
         if result.get("status") == "ok":
             for row in _json_lines(result.get("stdout")):
@@ -200,6 +201,37 @@ def _task_error_active(task):
     return desired == "running"
 
 
+def _compact_stack_service(row):
+    return {
+        key: row.get(key)
+        for key in ["Name", "Mode", "Replicas", "Image", "Ports"]
+        if row.get(key) not in (None, "")
+    }
+
+
+def _compact_stack_task(task):
+    return {
+        key: task.get(key)
+        for key in [
+            "ID",
+            "Name",
+            "Service",
+            "Image",
+            "Node",
+            "DesiredState",
+            "CurrentState",
+            "Error",
+            "Ports",
+            "registered_node_id",
+            "registered_node_name",
+            "registered_node_host",
+            "registered_swarm_node_id",
+            "registered_node_label",
+        ]
+        if task.get(key) not in (None, "")
+    }
+
+
 def _container_health(containers):
     summary = {"healthy": 0, "unhealthy": 0, "starting": 0, "running": 0, "stopped": 0, "unknown": 0}
     for item in containers:
@@ -239,7 +271,7 @@ class ServiceStatusMixin:
             mode = "compose"
         deployment_mode = compose_rules.normalize_deployment_mode(mode)
         network_name = network or compose_rules.default_network_name(deployment_mode)
-        return {"deployment_mode": deployment_mode, "network": network_name}
+        return {"deployment_mode": deployment_mode, "network": network_name, "node_id": node_id}
 
     def decorate_runtime_status(self, runtime_status, env=None, node_maps=None):
         if not isinstance(runtime_status, dict):
@@ -283,14 +315,14 @@ class ServiceStatusMixin:
             }
         node_maps = node_maps or _node_lookup_maps(env=env, include_swarm=True)
         params = {"stack_name": stack_name}
-        services_result = local_executor.run("service.stack.services", params=params, timeout_seconds=20, env=env)
-        tasks_result = local_executor.run("service.stack.ps", params=params, timeout_seconds=20, env=env)
+        services_result = local_executor.run("service.stack.services", params=params, timeout_seconds=6, env=env)
+        tasks_result = local_executor.run("service.stack.ps", params=params, timeout_seconds=6, env=env)
         services_rows = _json_lines(services_result.get("stdout")) if services_result.get("status") == "ok" else []
         task_rows = _json_lines(tasks_result.get("stdout")) if tasks_result.get("status") == "ok" else []
-        task_rows = [_decorate_task_node(task, node_maps) for task in task_rows]
+        task_rows = [_compact_stack_task(_decorate_task_node(task, node_maps)) for task in task_rows]
         replicas = [_replicas(row.get("Replicas")) for row in services_rows]
         return {
-            "services": services_rows,
+            "services": [_compact_stack_service(row) for row in services_rows],
             "tasks": task_rows,
             "summary": {
                 "service_count": len(services_rows),
@@ -308,35 +340,50 @@ class ServiceStatusMixin:
             },
         }
 
-    def _container_status(self, namespace, env=None):
-        # Keep service runtime aligned with the shared docker.containers collector so each row carries its real container id and node id.
+    def _container_status(self, namespace, stack_name=None, env=None, node_maps=None, target_node_ids=None):
         matched = []
         checks = []
-        node_rows = nodes.list(env=env)
-        for node in node_rows:
+        node_rows = list(((node_maps or {}).get("by_id") or {}).values()) or nodes.list(env=env)
+        wanted = {str(item) for item in (target_node_ids or []) if item}
+        selected_nodes = [node for node in node_rows if not wanted or str(node.get("id")) in wanted]
+        if wanted and not selected_nodes:
+            selected_nodes = node_rows
+
+        def load_node(node):
             try:
-                panel = nodes.live_containers(node["id"], persist=True, env=env)
+                panel = nodes.service_containers(node["id"], namespace, stack_name=stack_name, env=env)
                 check = panel.get("check") or {}
-                checks.append({
-                    "node_id": node["id"],
-                    "node_name": node.get("name"),
-                    "status": check.get("status"),
-                    "exit_code": check.get("exit_code"),
-                })
-                containers = panel.get("items") or []
+                return {
+                    "check": {
+                        "node_id": node["id"],
+                        "node_name": node.get("name"),
+                        "status": check.get("status"),
+                        "exit_code": check.get("exit_code"),
+                    },
+                    "containers": [
+                        {**item, "node_id": node["id"], "node_name": node.get("name"), "node_host": node.get("host")}
+                        for item in (panel.get("items") or [])
+                    ],
+                }
             except nodes.NodeError as exc:
-                checks.append({
-                    "node_id": node["id"],
-                    "node_name": node.get("name"),
-                    "status": "error",
-                    "message": exc.message,
-                    "error_code": exc.error_code,
-                })
-                containers = []
-            for item in containers:
-                if item.get("service_namespace") != namespace and not str(item.get("runtime_service_name") or "").startswith(f"{namespace}_"):
-                    continue
-                matched.append({**item, "node_id": node["id"], "node_name": node.get("name"), "node_host": node.get("host")})
+                return {
+                    "check": {
+                        "node_id": node["id"],
+                        "node_name": node.get("name"),
+                        "status": "error",
+                        "message": exc.message,
+                        "error_code": exc.error_code,
+                    },
+                    "containers": [],
+                }
+
+        if selected_nodes:
+            with ThreadPoolExecutor(max_workers=min(4, len(selected_nodes))) as executor:
+                futures = [executor.submit(load_node, node) for node in selected_nodes]
+                for future in as_completed(futures):
+                    result = future.result()
+                    checks.append(result["check"])
+                    matched.extend(result["containers"])
         return {
             "summary": _container_summary(matched),
             "health": _container_health(matched),
@@ -396,6 +443,26 @@ class ServiceStatusMixin:
             },
         }
 
+    def _runtime_target_node_ids(self, service, deployment_context, stack):
+        ids = []
+        if deployment_context.get("deployment_mode") == "compose" and deployment_context.get("node_id"):
+            ids.append(deployment_context.get("node_id"))
+        for task in (stack or {}).get("tasks") or []:
+            if task.get("registered_node_id"):
+                ids.append(task.get("registered_node_id"))
+        runtime = ((service.get("metadata") or {}).get("runtime_status") or {}).get("containers") or {}
+        for container in runtime.get("containers") or []:
+            if container.get("node_id"):
+                ids.append(container.get("node_id"))
+        result = []
+        seen = set()
+        for node_id in ids:
+            key = str(node_id or "")
+            if key and key not in seen:
+                seen.add(key)
+                result.append(key)
+        return result
+
     def refresh_deploy_status(self, service_id, operation_id=None, env=None):
         with connect(env=env) as connection:
             with connection.cursor() as cursor:
@@ -406,14 +473,22 @@ class ServiceStatusMixin:
         deployment_context = self._service_deployment_context(service, env=env)
         include_swarm = deployment_context["deployment_mode"] != "compose"
         node_maps = _node_lookup_maps(env=env, include_swarm=include_swarm)
+        stack = self._stack_status(stack_name, env=env, node_maps=node_maps, deployment_mode=deployment_context["deployment_mode"])
+        target_node_ids = self._runtime_target_node_ids(service, deployment_context, stack)
         runtime = {
             "checked_at": _now(),
             "operation_id": operation_id,
             "stack_name": stack_name,
             "deployment_mode": deployment_context["deployment_mode"],
             "network": deployment_context["network"],
-            "stack": self._stack_status(stack_name, env=env, node_maps=node_maps, deployment_mode=deployment_context["deployment_mode"]),
-            "containers": self._container_status(service.get("namespace"), env=env),
+            "stack": stack,
+            "containers": self._container_status(
+                service.get("namespace"),
+                stack_name=stack_name,
+                env=env,
+                node_maps=node_maps,
+                target_node_ids=target_node_ids,
+            ),
             "domains": self._domain_status(domains, node_maps=node_maps),
         }
         metadata = dict(service.get("metadata") or {})

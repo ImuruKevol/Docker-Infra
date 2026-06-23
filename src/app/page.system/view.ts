@@ -74,6 +74,7 @@ export class Component implements OnInit, OnDestroy {
     public resetModalOpen = signal<boolean>(false);
     public resetConfirmText = signal<string>('');
     public resetDeleteData = signal<boolean>(true);
+    public sessionSettings: any = this.defaultSessionSettings();
     public pendingAssets: any = {
         favicon: this.emptyAssetSelection(),
         logo: this.emptyAssetSelection()
@@ -133,6 +134,7 @@ export class Component implements OnInit, OnDestroy {
         const { code, data } = await wiz.call('load', { section });
         if (code === 200) {
             this.general = data.general || this.general;
+            this.sessionSettings = this.normalizeSessionSettings(data.session_settings || this.sessionSettings);
             if (data.backup_system) {
                 this.backupSystem = data.backup_system || {};
                 this.syncBackupPolicy();
@@ -877,6 +879,9 @@ export class Component implements OnInit, OnDestroy {
 
     public async saveGeneral() {
         if (this.savingGeneral()) return;
+        const sessionTtlHours = await this.validSessionTtlHours();
+        if (!sessionTtlHours) return;
+        this.sessionSettings.ttl_hours = sessionTtlHours;
         this.savingGeneral.set(true);
         await this.service.render();
         const nextGeneral = { ...this.general };
@@ -889,19 +894,61 @@ export class Component implements OnInit, OnDestroy {
             }
             if (asset?.url) nextGeneral[`${kind}_url`] = asset.url;
         }
-        const { code, data } = await wiz.call('save_general', nextGeneral);
+        const { code, data } = await wiz.call('save_general', {
+            general: nextGeneral,
+            session_settings: this.sessionSettingsPayload()
+        });
         this.savingGeneral.set(false);
         if (code === 200) {
             this.general = data.general || nextGeneral;
+            this.sessionSettings = this.normalizeSessionSettings(data.session_settings || this.sessionSettings);
             for (const kind of ASSET_KINDS) this.clearPendingAsset(kind);
             this.bumpAssetVersion();
             AppearanceRuntime.apply(this.general);
+            window.dispatchEvent(new CustomEvent('docker-infra:session-updated', {
+                detail: {
+                    session: data.session || null,
+                    session_policy: this.sessionSettings
+                }
+            }));
             await this.alert('일반 설정을 저장했습니다.', 'success');
             await this.service.render();
             return;
         }
         await this.alert(data?.message || '일반 설정을 저장할 수 없습니다.');
         await this.service.render();
+    }
+
+    public sessionDurationLabel() {
+        const hours = Number(this.sessionSettings?.ttl_hours || 0);
+        return this.formatDurationHours(hours);
+    }
+
+    public sessionDurationRangeLabel() {
+        const min = Number(this.sessionSettings?.min_ttl_hours || 1);
+        const max = Number(this.sessionSettings?.max_ttl_hours || 720);
+        return `${min}~${max}시간`;
+    }
+
+    private async validSessionTtlHours() {
+        const raw = Number(this.sessionSettings?.ttl_hours);
+        const min = Number(this.sessionSettings?.min_ttl_hours || 1);
+        const max = Number(this.sessionSettings?.max_ttl_hours || 720);
+        if (!Number.isInteger(raw)) {
+            await this.alert('세션 지속시간은 시간 단위 정수로 입력해주세요.');
+            return 0;
+        }
+        if (raw < min || raw > max) {
+            await this.alert(`세션 지속시간은 ${min}~${max}시간 사이로 입력해주세요.`);
+            return 0;
+        }
+        return raw;
+    }
+
+    private sessionSettingsPayload() {
+        return {
+            ttl_hours: Number(this.sessionSettings?.ttl_hours || this.defaultSessionSettings().ttl_hours)
+        };
     }
 
     public async changeAdminPassword() {
@@ -1122,7 +1169,8 @@ export class Component implements OnInit, OnDestroy {
             schedule_time: this.backupPolicy.schedule_time || '02:00',
             window_start: '00:00',
             window_end: '00:00',
-            method: 'container_snapshot',
+            method: 'service_state_snapshot',
+            backup_mode: this.backupPolicy.backup_mode || 'full_state',
             snapshot_enabled: true,
             snapshot_pause: true,
         };
@@ -1141,15 +1189,15 @@ export class Component implements OnInit, OnDestroy {
 
     public async runBackupPolicyNow() {
         if (this.runningBackupPolicy()) return;
-        const ok = await this.confirm('지금 실행 중인 컨테이너 상태 스냅샷을 내부 백업 시스템에 저장합니다.\n\n스냅샷 대상 컨테이너는 파일 상태 저장을 위해 잠깐 일시 정지될 수 있습니다. 진행할까요?', '지금 백업', 'warning');
+        const ok = await this.confirm('지금 실행 중인 컨테이너 상태 스냅샷과 named volume을 내부 백업 시스템에 저장합니다.\n\n스냅샷 대상 컨테이너는 파일 상태 저장을 위해 잠깐 일시 정지될 수 있습니다. 진행할까요?', '지금 백업', 'warning');
         if (!ok) return;
         this.stopBackupPolicyPoll();
         this.runningBackupPolicy.set(true);
         this.backupPolicyOperation = null;
-        this.backupPolicyLog = '수동 백업 요청을 시작합니다.\n';
+        this.backupPolicyLog = '백그라운드 백업 요청을 시작합니다.\n';
         await this.service.render();
-        const { code, data } = await wiz.call('run_backup_policy_now', { snapshot_pause: true, background: true });
-        if (code === 200) {
+        const { code, data } = await wiz.call('run_backup_policy_now', { snapshot_pause: true });
+        if (code === 200 || code === 202) {
             this.backupSystem = data.backup_system || this.backupSystem;
             this.backupPolicyOperation = data.operation || data.result?.operation || null;
             this.backupPolicyResult = data.result || this.backupPolicyResult;
@@ -1819,8 +1867,9 @@ export class Component implements OnInit, OnDestroy {
         const succeeded = Number(result.succeeded || 0);
         const failed = Number(result.failed || 0);
         const snapshots = Number(result.snapshots || 0);
+        const volumes = Number(result.volumes || 0);
         if (processed === 0) return '백업할 서비스 상태 스냅샷이 없습니다.';
-        return `서비스 상태 백업 ${processed}건 중 ${succeeded}건 완료, ${failed}건 실패 · 스냅샷 ${snapshots}건`;
+        return `서비스 상태 백업 ${processed}건 중 ${succeeded}건 완료, ${failed}건 실패 · 스냅샷 ${snapshots}건 · 볼륨 ${volumes}건`;
     }
 
     public cleanupSummaryLabel() {
@@ -1886,6 +1935,39 @@ export class Component implements OnInit, OnDestroy {
         this.assetVersion = Date.now();
     }
 
+    private defaultSessionSettings() {
+        return {
+            configured: false,
+            ttl_hours: 12,
+            ttl_seconds: 43200,
+            ttl_label: '12시간',
+            min_ttl_hours: 1,
+            max_ttl_hours: 720
+        };
+    }
+
+    private normalizeSessionSettings(payload: any) {
+        const defaults = this.defaultSessionSettings();
+        const ttlHours = Number(payload?.ttl_hours ?? defaults.ttl_hours);
+        const normalizedHours = Number.isFinite(ttlHours) ? ttlHours : defaults.ttl_hours;
+        return {
+            ...defaults,
+            ...(payload || {}),
+            ttl_hours: normalizedHours,
+            ttl_seconds: Number(payload?.ttl_seconds || normalizedHours * 3600),
+            ttl_label: payload?.ttl_label || this.formatDurationHours(normalizedHours)
+        };
+    }
+
+    private formatDurationHours(hours: number) {
+        if (!Number.isFinite(hours) || hours <= 0) return '-';
+        const days = Math.floor(hours / 24);
+        const remainderHours = hours % 24;
+        if (days > 0 && remainderHours > 0) return `${days}일 ${remainderHours}시간`;
+        if (days > 0) return `${days}일`;
+        return `${hours}시간`;
+    }
+
     private defaultAiSettings() {
         return {
             default_agent: '',
@@ -1941,10 +2023,10 @@ export class Component implements OnInit, OnDestroy {
             interval_days: 7,
             window_start: '00:00',
             window_end: '00:00',
-            max_items_per_run: 3,
             retention_keep_per_service: 10,
             cleanup_unused_days: 30,
-            method: 'container_snapshot',
+            method: 'service_state_snapshot',
+            backup_mode: 'full_state',
             snapshot_enabled: true,
             snapshot_pause: true,
             last_run_at: null,
@@ -1956,7 +2038,8 @@ export class Component implements OnInit, OnDestroy {
         this.backupPolicy = {
             ...this.defaultBackupPolicy(),
             ...(this.backupSystem?.backup_policy || {}),
-            method: 'container_snapshot',
+            method: 'service_state_snapshot',
+            backup_mode: this.backupSystem?.backup_policy?.backup_mode || 'full_state',
             snapshot_enabled: true,
             snapshot_pause: true
         };

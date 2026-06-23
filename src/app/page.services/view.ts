@@ -90,11 +90,17 @@ export class Component implements OnInit, OnDestroy {
     public containerLogsError = signal<string>('');
     public containerLogsTarget = signal<any>(null);
     public containerLogsText = signal<string>('');
+    public versionChangeModalOpen = signal<boolean>(false);
+    public versionChangeBusy = signal<boolean>(false);
+    public versionCheckBusy = signal<boolean>(false);
+    public versionCheckResult = signal<any>(null);
+    public versionChangeTarget = signal<any>(null);
     public serviceForm: any = this.emptyForm();
     public compose: any = this.emptyCompose();
     public envVars: any[] = [];
     public volumes: any[] = [];
     public editForm: any = {};
+    public versionChangeForm: any = { version: '', force_pull: false };
     public editComponents: any[] = [];
     public editCurrentDomain: any = null;
     public editOperatorComment = signal<string>('');
@@ -615,6 +621,7 @@ export class Component implements OnInit, OnDestroy {
         }
         this.detailLoading.set(false);
         await this.service.render();
+        if (code === 200) void this.refreshDetailExtras(service.id, requestSeq);
         if (this.detailTab() !== 'overview') await this.loadDetailSection(this.detailTab(), false, silent);
     }
 
@@ -1260,6 +1267,7 @@ export class Component implements OnInit, OnDestroy {
         const { code, data } = await wiz.call('refresh_deploy_status', { service_id: serviceId });
         if (code === 200) {
             this.applyDetail(data);
+            if (!this.detail()?.detail_sections?.overview_extras) void this.refreshDetailExtras(serviceId, this.detailRequestSeq);
         } else {
             await this.alert(data?.message || '실행 상태를 확인할 수 없습니다.');
         }
@@ -2481,6 +2489,7 @@ export class Component implements OnInit, OnDestroy {
             { label: '구성 수', value: `${summary.services || 0}개` },
             { label: '이미지 변경', value: `${summary.image_changes || 0}개` },
             { label: '이미지 롤백', value: this.rollbackImageRestoreValue() },
+            { label: '볼륨 복원', value: this.rollbackVolumeRestoreValue() },
             { label: '포트 변경', value: `${summary.port_changes || 0}개` },
             { label: '추가/제거', value: `${summary.added_services || 0}개 추가 · ${summary.removed_services || 0}개 제거` },
             { label: '도메인 주의', value: `${summary.domain_warnings || 0}개` },
@@ -2509,7 +2518,7 @@ export class Component implements OnInit, OnDestroy {
 
     public versionRollbackHint() {
         if (this.backupSystemEnabled()) {
-            return '수동 릴리즈한 버전만 이력에 남고, 스냅샷이 있는 버전은 이미지까지 함께 되돌릴 수 있습니다.';
+            return '릴리즈와 시스템 백업 체크포인트가 이력에 남고, 스냅샷이 있는 버전은 이미지까지 함께 되돌릴 수 있습니다.';
         }
         return '릴리즈 버튼으로 현재 Compose를 되돌릴 수 있는 버전으로 확정합니다.';
     }
@@ -2576,6 +2585,43 @@ export class Component implements OnInit, OnDestroy {
         }
         if (this.backupSystemEnabled()) {
             return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+        }
+        return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
+    public rollbackVolumeRestoreSummary() {
+        return this.rollbackPlan()?.volume_restore || {};
+    }
+
+    public rollbackVolumeRestoreRows() {
+        return this.rollbackVolumeRestoreSummary()?.items || [];
+    }
+
+    public rollbackVolumeRestoreValue() {
+        const restore = this.rollbackVolumeRestoreSummary();
+        const count = Number(restore.available_count || 0);
+        if (count > 0) return `${count}개 가능`;
+        if (Number(restore.expired_count || 0) > 0) return '보존 만료';
+        if (Number(restore.pending_count || 0) > 0) return '대기 중';
+        return '백업 없음';
+    }
+
+    public rollbackVolumeRestoreText() {
+        const restore = this.rollbackVolumeRestoreSummary();
+        const count = Number(restore.available_count || 0);
+        if (count > 0) return `선택한 버전에 연결된 named volume artifact ${count}개를 대상 Docker volume에 다시 풀어씁니다.`;
+        if (Number(restore.expired_count || 0) > 0) return '보존 정책으로 삭제된 volume artifact가 있어 이 버전은 복원할 수 없습니다.';
+        if (Number(restore.pending_count || 0) > 0) return '아직 성공한 volume artifact가 없어 Compose 설정만 되돌립니다.';
+        return '이 Compose 버전에 연결된 named volume 백업이 없습니다.';
+    }
+
+    public rollbackVolumeRestoreClass() {
+        const restore = this.rollbackVolumeRestoreSummary();
+        if (Number(restore.available_count || 0) > 0) {
+            return 'border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900/70 dark:bg-teal-950/30 dark:text-teal-200';
+        }
+        if (Number(restore.expired_count || 0) > 0) {
+            return 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-200';
         }
         return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
     }
@@ -3549,6 +3595,29 @@ export class Component implements OnInit, OnDestroy {
         return this.isRuntimeContainerPublic(container) ? '외부 오픈' : '내부 전용';
     }
 
+    private containerImageRef(container: any) {
+        return String(container?.image || container?.Image || '').trim();
+    }
+
+    public containerVersionLabel(container: any) {
+        const image = this.containerImageRef(container);
+        if (!image || image === '<none>') return '';
+        const imageRef = image.split('@', 1)[0].trim();
+        if (!imageRef || imageRef === '<none>') return '';
+        if (/^sha256:[a-f0-9]+$/i.test(imageRef)) return '';
+        if (/^[a-f0-9]{12,}$/i.test(imageRef)) return '';
+        const lastSlash = imageRef.lastIndexOf('/');
+        const lastColon = imageRef.lastIndexOf(':');
+        if (lastColon > lastSlash) return imageRef.slice(lastColon + 1).trim();
+        if (image.includes('@')) return '';
+        return 'latest';
+    }
+
+    public containerVersionTitle(container: any) {
+        const image = this.containerImageRef(container);
+        return image ? `이미지: ${image}` : '이미지 정보 없음';
+    }
+
     public containerExposureClass(container: any) {
         if (this.isRuntimeContainerPublic(container)) {
             return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
@@ -3811,6 +3880,152 @@ export class Component implements OnInit, OnDestroy {
         if (this.canOpenRuntimeContainerLogs(container)) return `${this.containerDisplayName(container)} 로그 보기`;
         if (!container?.node_id) return '서버 정보를 확인할 수 없어 로그를 볼 수 없습니다.';
         return '컨테이너 ID를 확인할 수 없어 로그를 볼 수 없습니다.';
+    }
+
+    public canChangeRuntimeContainerVersion(container: any) {
+        return Boolean(this.selected()?.id && container?.id && container?.node_id);
+    }
+
+    public runtimeContainerVersionChangeTitle(container: any) {
+        if (this.canChangeRuntimeContainerVersion(container)) return `${this.containerDisplayName(container)} 버전 변경`;
+        if (!container?.node_id) return '서버 정보를 확인할 수 없어 버전을 변경할 수 없습니다.';
+        return '컨테이너 ID를 확인할 수 없어 버전을 변경할 수 없습니다.';
+    }
+
+    public async openContainerVersionChange(container: any) {
+        if (!this.canChangeRuntimeContainerVersion(container) || this.busy()) return;
+        this.versionChangeTarget.set(container);
+        this.versionChangeForm = {
+            version: this.containerVersionLabel(container) || 'latest',
+            force_pull: false,
+        };
+        this.versionCheckResult.set(null);
+        this.versionChangeModalOpen.set(true);
+        await this.service.render();
+    }
+
+    public async closeVersionChangeModal() {
+        if (this.versionChangeBusy() || this.versionCheckBusy()) return;
+        this.versionChangeModalOpen.set(false);
+        this.versionChangeTarget.set(null);
+        this.versionCheckResult.set(null);
+        this.versionChangeForm = { version: '', force_pull: false };
+        await this.service.render();
+    }
+
+    public versionChangeContainerName() {
+        return this.containerDisplayName(this.versionChangeTarget());
+    }
+
+    public versionChangeCurrentImage() {
+        return this.containerImageRef(this.versionChangeTarget()) || '이미지 정보 없음';
+    }
+
+    private normalizedVersionChangeVersion(value: any = this.versionChangeForm.version) {
+        let version = String(value || '').trim();
+        if (version.startsWith('@sha256:')) version = version.slice(1);
+        return version;
+    }
+
+    public versionChangeVerified() {
+        const result = this.versionCheckResult();
+        return result?.exists === true && String(result?.version || '').trim() === this.normalizedVersionChangeVersion();
+    }
+
+    public versionChangeDisabled() {
+        return this.versionChangeBusy() || this.versionCheckBusy() || !this.normalizedVersionChangeVersion() || !this.versionChangeVerified();
+    }
+
+    public versionChangeCheckDisabled() {
+        return this.versionChangeBusy() || this.versionCheckBusy() || !this.normalizedVersionChangeVersion();
+    }
+
+    public versionChangeSubmitTitle() {
+        if (this.versionChangeVerified()) return '검증된 이미지 버전으로 변경 적용';
+        return '이미지 검증을 먼저 완료해주세요.';
+    }
+
+    public resetVersionChangeCheck() {
+        if (this.versionCheckResult()) this.versionCheckResult.set(null);
+    }
+
+    public versionChangeCheckClass() {
+        const result = this.versionCheckResult();
+        if (result?.exists === true) {
+            return 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-200';
+        }
+        return 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-200';
+    }
+
+    public versionChangeCheckIcon() {
+        return this.versionCheckResult()?.exists === true ? 'fa-circle-check' : 'fa-triangle-exclamation';
+    }
+
+    public versionChangeCheckTitle() {
+        return this.versionCheckResult()?.exists === true ? '이미지 확인 완료' : '이미지 확인 실패';
+    }
+
+    public versionChangeCheckMessage() {
+        const result = this.versionCheckResult();
+        return result?.message || result?.check?.message || '이미지 확인 결과를 표시할 수 없습니다.';
+    }
+
+    public async validateVersionChangeImage() {
+        const serviceId = this.selected()?.id;
+        const target = this.versionChangeTarget();
+        const version = this.normalizedVersionChangeVersion();
+        if (!serviceId || !target?.id || !target?.node_id || !version || this.versionChangeCheckDisabled()) return;
+        this.versionCheckBusy.set(true);
+        this.versionCheckResult.set(null);
+        const { code, data } = await wiz.call('service_container_version_validate', {
+            service_id: serviceId,
+            container_id: target.id,
+            node_id: target.node_id,
+            version,
+        });
+        this.versionCheckBusy.set(false);
+        if (code === 200) {
+            this.versionCheckResult.set(data?.result || data);
+        } else {
+            this.versionCheckResult.set({
+                exists: false,
+                message: this.formatComposeError(data, '이미지를 확인할 수 없습니다.'),
+                image_ref: '',
+            });
+        }
+        await this.service.render();
+    }
+
+    public async submitVersionChange() {
+        const serviceId = this.selected()?.id;
+        const target = this.versionChangeTarget();
+        const version = this.normalizedVersionChangeVersion();
+        if (!serviceId || !target?.id || !target?.node_id || !version || this.versionChangeBusy()) return;
+        if (!this.versionChangeVerified()) {
+            await this.alert('이미지 검증을 먼저 완료해주세요.');
+            return;
+        }
+        this.versionChangeBusy.set(true);
+        this.busy.set(true);
+        const { code, data } = await wiz.call('service_container_version_change', {
+            service_id: serviceId,
+            container_id: target.id,
+            node_id: target.node_id,
+            version,
+            force_pull: this.versionChangeForm.force_pull,
+        });
+        this.versionChangeBusy.set(false);
+        this.busy.set(false);
+        if (code === 200) {
+            this.applyDetail(data);
+            this.versionChangeModalOpen.set(false);
+            this.versionChangeTarget.set(null);
+            this.versionCheckResult.set(null);
+            await this.alert('컨테이너 버전 변경을 적용했습니다.', 'success');
+        } else {
+            await this.alert(this.formatComposeError(data, '컨테이너 버전을 변경할 수 없습니다.'));
+        }
+        await this.service.render();
     }
 
     public containerTerminalTitle() {
@@ -4458,9 +4673,11 @@ export class Component implements OnInit, OnDestroy {
             'service.certbot.renewal.ensure': '무료 인증서 자동 갱신 설정',
             'service.compose.release': '수동 릴리즈',
             'service.compose.rollback': 'Compose 되돌리기',
+            'service.container.version_change': '컨테이너 버전 변경',
             'service.image.backup': '이미지 백업',
             'service.image.restore': '이미지 복원',
             'service.image.snapshot': '현재 상태 백업',
+            'service.volume.restore': '볼륨 복원',
         };
         if (labels[type]) return labels[type];
         return String(type || '').replace(/^service[._-]?/i, '').replace(/[._-]+/g, ' ') || '처리 내역';
@@ -4499,17 +4716,15 @@ export class Component implements OnInit, OnDestroy {
     public versionBackupEntryTitle(item: any) {
         const metadata = item?.metadata || {};
         const source = metadata.snapshot_request_source || item?.source || '';
-        const sourceLabel = source === 'backup_policy_snapshot'
-            ? '자동 백업'
-            : source === 'manual_release_snapshot'
-                ? '릴리즈 스냅샷'
-                : source === 'manual_snapshot'
-                    ? '수동 스냅샷'
-                    : item?.source === 'container_snapshot'
-                        ? '스냅샷 백업'
-                        : '이미지 백업';
+        let sourceLabel = '이미지 백업';
+        if (source === 'backup_policy_snapshot') sourceLabel = '자동 백업';
+        else if (source === 'manual_release_snapshot') sourceLabel = '릴리즈 스냅샷';
+        else if (source === 'manual_snapshot') sourceLabel = '수동 스냅샷';
+        else if (item?.source === 'named_volume_snapshot') sourceLabel = '볼륨 백업';
+        else if (item?.source === 'container_snapshot') sourceLabel = '스냅샷 백업';
         const compose = item?.compose_service ? ` - ${item.compose_service}` : '';
-        return `${sourceLabel}${compose}`;
+        const volume = metadata.docker_volume || metadata.volume_name;
+        return `${sourceLabel}${compose}${volume ? ` / ${volume}` : ''}`;
     }
 
     public versionBackupEntryMeta(item: any) {
@@ -4531,7 +4746,11 @@ export class Component implements OnInit, OnDestroy {
         const rows = version?.image_backup_entries || [];
         const byService: any = {};
         for (const row of rows) {
-            const key = row?.compose_service || row?.id || 'service';
+            const metadata = row?.metadata || {};
+            const volume = metadata.docker_volume || metadata.volume_name;
+            const key = row?.source === 'named_volume_snapshot'
+                ? `volume:${row?.compose_service || 'service'}:${volume || row?.id || 'volume'}`
+                : `image:${row?.compose_service || row?.id || 'service'}`;
             byService[key] = byService[key] || { deleted: false, succeeded: false };
             if (row?.backup_status === 'deleted') byService[key].deleted = true;
             if (row?.backup_status === 'backup_succeeded' && row?.backup_ref) byService[key].succeeded = true;
@@ -4541,7 +4760,7 @@ export class Component implements OnInit, OnDestroy {
 
     public versionRestoreBlockText(version: any) {
         if (!this.versionRestoreBlocked(version)) return '';
-        return '보존 정책으로 백업 이미지가 삭제되어 이 버전은 복원할 수 없습니다.';
+        return '보존 정책으로 백업 artifact가 삭제되어 이 버전은 복원할 수 없습니다.';
     }
 
     public imageDisplayName(item: any) {
@@ -4575,6 +4794,7 @@ export class Component implements OnInit, OnDestroy {
             compose_rollback: '되돌리기',
             manual_release: '수동 릴리즈',
             manual_release_snapshot: '릴리즈 스냅샷',
+            backup_policy_snapshot: '자동 백업',
             service_migration_snapshot: '마이그레이션 스냅샷',
         };
         return labels[source] || source || '-';

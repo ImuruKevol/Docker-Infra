@@ -200,6 +200,33 @@ class NodeRuntimeMixin(files_mixin):
         groups = self._decorate_containers(items, env=env)
         return {"items": items, "groups": groups, "check": result}
 
+    def _service_container_command(self, namespace):
+        return ["docker", "ps", "-a", "--no-trunc", "--filter", f"name={namespace}", "--format", "{{json .}}"]
+
+    def _service_container_items(self, items, namespace, stack_name=None):
+        service_ref = {"namespace": namespace, "stack_name": stack_name or namespace}
+        return [
+            item for item in items
+            if _container_matches_service(item, service_ref)
+        ]
+
+    def service_containers(self, node_id, namespace, stack_name=None, env=None):
+        node, _test_run_id = self._target_node(node_id, env=env)
+        result = self._run_node_command(
+            node,
+            local_command_id="docker.containers.service",
+            local_params={"namespace": stack_name or namespace},
+            remote_command=self._service_container_command(stack_name or namespace),
+            timeout_seconds=4,
+            env=env,
+        )
+        if result["status"] != "ok":
+            if runtime_state.docker_unavailable(result):
+                return {"items": [], "check": result, "docker_result": result}
+            raise NodeError(409, f"컨테이너 목록을 불러올 수 없습니다. {self._command_failure(result, 'docker ps failed')}", "NODE_CONTAINERS_REFRESH_FAILED", check=result)
+        items = self._service_container_items(_parse_docker_ps_lines(result["stdout"]), namespace, stack_name=stack_name)
+        return {"items": items, "check": result}
+
     def server_detail(self, node_id, env=None):
         panel = self.live_containers(node_id, persist=True, env=env)
         return {

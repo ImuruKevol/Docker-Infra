@@ -65,6 +65,14 @@ class SystemSettingsStaticContractTest(unittest.TestCase):
         self.assertIn("system-admin-new-password", system_view)
         self.assertIn("system-admin-password-save", system_view)
         self.assertIn("changeAdminPassword()", system_ts)
+        for token in ["session_settings", "save_session_policy"]:
+            self.assertIn(token, system_api)
+        for token in ["auth.extend_session", "auth.remember_session_cookie"]:
+            self.assertIn(token, system_api)
+        for token in ["docker-infra:session-updated", "handleSessionUpdated"]:
+            self.assertIn(token, system_ts + sidebar)
+        for token in ["세션 지속시간", "system-session-ttl-hours", "sessionDurationLabel()", "sessionDurationRangeLabel()"]:
+            self.assertIn(token, system_view + system_ts)
         for token in ["def ai_codex_device_login_start():", "def ai_codex_device_login_status():", "def ai_codex_device_login_cancel():"]:
             self.assertIn(token, system_api)
         for token in ["def ai_claude_code_login_start():", "def ai_claude_code_login_status():", "def ai_claude_code_login_submit():", "def ai_claude_code_login_cancel():", "def ai_hermes_apply_settings():"]:

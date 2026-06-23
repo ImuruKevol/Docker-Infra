@@ -11,6 +11,7 @@ connect = wiz.model("db/postgres").connect
 validator = wiz.model("struct/compose_validator")
 operations = wiz.model("struct/operations")
 image_backups = wiz.model("struct/service_image_backups")
+volume_backups = wiz.model("struct/service_volume_backups")
 backup_system = wiz.model("struct/backup_system")
 shared = wiz.model("struct/services_shared")
 ServiceError = shared.ServiceError
@@ -208,6 +209,21 @@ class ServiceRollbackMixin:
             },
         }
 
+    def _volume_restore_context(self, service_id, version, env=None):
+        try:
+            volume_restore = volume_backups.version_restore_context(service_id, version["id"], env=env)
+        except Exception:
+            volume_restore = {
+                "can_apply": False,
+                "available_count": 0,
+                "pending_count": 0,
+                "expired_count": 0,
+                "items": [],
+                "pending": [],
+                "expired": [],
+            }
+        return {"volume_restore": volume_restore}
+
     def _compose_with_image_restore_refs(self, service, target_content, image_restore):
         if not image_restore.get("can_apply"):
             return target_content, None, []
@@ -245,12 +261,20 @@ class ServiceRollbackMixin:
         current = _compose_summary(_load_yaml(current_content))
         target = _compose_summary(validation["normalized"])
         image_restore_context = self._image_restore_context(service_id, version, target, env=env)
+        volume_restore_context = self._volume_restore_context(service_id, version, env=env)
         if image_restore_context["image_restore"].get("expired_count"):
             raise ServiceError(
                 409,
                 "보존 정책으로 백업 이미지가 삭제된 버전은 복원할 수 없습니다.",
                 "SERVICE_ROLLBACK_BACKUP_EXPIRED",
                 expired=image_restore_context["image_restore"].get("expired") or [],
+            )
+        if volume_restore_context["volume_restore"].get("expired_count"):
+            raise ServiceError(
+                409,
+                "보존 정책으로 volume artifact가 삭제된 버전은 복원할 수 없습니다.",
+                "SERVICE_ROLLBACK_VOLUME_BACKUP_EXPIRED",
+                expired=volume_restore_context["volume_restore"].get("expired") or [],
             )
         planned_content, planned_validation, planned_image_refs = self._compose_with_image_restore_refs(
             service,
@@ -295,6 +319,7 @@ class ServiceRollbackMixin:
             "target_version": version,
             "backup_system": image_restore_context["backup_system"],
             "image_restore": image_restore_context["image_restore"],
+            "volume_restore": volume_restore_context["volume_restore"],
             "summary": {
                 "same_content": _checksum(current_content) == _checksum(target_content),
                 "services": len(target),
@@ -302,6 +327,7 @@ class ServiceRollbackMixin:
                 "removed_services": len(removed),
                 "image_changes": len(image_changes),
                 "image_restore_available": image_restore_context["image_restore"]["available_count"],
+                "volume_restore_available": volume_restore_context["volume_restore"]["available_count"],
                 "port_changes": len(port_changes),
                 "domain_warnings": len([item for item in domain_impacts if item["status"] == "warning"]),
             },
@@ -334,6 +360,15 @@ class ServiceRollbackMixin:
         previous_path = history_dir / f"previous-{compose_path.name}"
         if compose_path.exists():
             shutil.copy2(compose_path, previous_path)
+        operation = operations.create(
+            "service.compose.rollback",
+            target_type="service",
+            target_id=service_id,
+            message=f"Compose 버전 {version['version']} 기준으로 되돌림",
+            requested_payload={"service_id": service_id, "version_id": version_id},
+            metadata={"service_id": service_id, "namespace": service.get("namespace")},
+            env=env,
+        )
         compose_path.write_text(target_content, encoding="utf-8")
         applied_path = history_dir / compose_path.name
         shutil.copy2(compose_path, applied_path)
@@ -353,17 +388,40 @@ class ServiceRollbackMixin:
                     (Jsonb(metadata), service_id),
                 )
                 updated_service = _row(cursor.fetchone())
-        operation = operations.create(
-            "service.compose.rollback",
-            target_type="service",
-            target_id=service_id,
-            status="succeeded",
-            message=f"Compose 버전 {version['version']} 기준으로 되돌림" + (f" · 이미지 {len(applied_image_refs)}개 Harbor 백업 반영" if applied_image_refs else ""),
-            requested_payload={"service_id": service_id, "version_id": version_id},
+        volume_restore_result = None
+        try:
+            if payload.get("restore_volumes") is not False and (plan.get("volume_restore") or {}).get("can_apply"):
+                count = int((plan.get("volume_restore") or {}).get("available_count") or 0)
+                operations.append_output(
+                    operation["id"],
+                    f"Compose 버전에 연결된 named volume artifact {count}개를 복원합니다.",
+                    stream="system",
+                    metadata={"step": "volume_restore", "count": count},
+                    env=env,
+                )
+                volume_restore_result = volume_backups.restore_version(updated_service, version["id"], operation_id=operation["id"], env=env)
+        except Exception as exc:
+            operations.transition(operation["id"], "failed", message=getattr(exc, "message", str(exc)), env=env)
+            if all(hasattr(exc, key) for key in ("status_code", "message", "error_code")):
+                raise
+            raise ServiceError(502, str(exc), "SERVICE_ROLLBACK_VOLUME_RESTORE_FAILED")
+
+        restored_volumes = (volume_restore_result or {}).get("restored") or []
+        message = f"Compose 버전 {version['version']} 기준으로 되돌림"
+        if applied_image_refs:
+            message += f" · 이미지 {len(applied_image_refs)}개 Harbor 백업 반영"
+        if restored_volumes:
+            message += f" · volume {len(restored_volumes)}개 복원"
+        operation = operations.transition(
+            operation["id"],
+            "succeeded",
+            message=message,
             result_payload={
                 "target_version": version["version"],
                 "image_restore_count": len(applied_image_refs),
                 "image_restore": applied_image_refs,
+                "volume_restore_count": len(restored_volumes),
+                "volume_restore": restored_volumes,
                 "history_id": history_id,
             },
             metadata={"service_id": service_id, "namespace": updated_service.get("namespace")},

@@ -11,6 +11,7 @@ service_nginx = wiz.model("struct/service_nginx")
 deploy_targets = wiz.model("struct/services_deploy_targets")
 shared = wiz.model("struct/services_shared")
 image_backups = wiz.model("struct/service_image_backups")
+volume_backups = wiz.model("struct/service_volume_backups")
 backup_system = wiz.model("struct/backup_system")
 operations = wiz.model("struct/operations")
 ServiceError = shared.ServiceError
@@ -155,12 +156,16 @@ class ServiceRuntimeMixin:
         )
         return [_row(row) for row in cursor.fetchall()]
 
-    def _attach_version_backup_summaries(self, cursor, service_id, versions):
+    def _attach_version_backup_summaries(self, cursor, service_id, versions, env=None):
         if not versions:
             return versions
         version_ids = [str(item["id"]) for item in versions if item.get("id")]
         if not version_ids:
             return versions
+        try:
+            volume_backups.ensure_schema(env=env)
+        except Exception:
+            pass
         cursor.execute(
             """
             SELECT
@@ -195,6 +200,9 @@ class ServiceRuntimeMixin:
             "snapshot_succeeded_count": 0,
             "snapshot_deleted_count": 0,
             "restore_blocked_count": 0,
+            "volume_count": 0,
+            "volume_succeeded_count": 0,
+            "volume_deleted_count": 0,
         }
         cursor.execute(
             """
@@ -244,11 +252,86 @@ class ServiceRuntimeMixin:
             item = _row(row)
             version_id = str(item.pop("version_id"))
             entries_by_version.setdefault(version_id, []).append(item)
+        try:
+            cursor.execute(
+                """
+                SELECT version_id, COUNT(*) AS restore_blocked_count
+                FROM (
+                    SELECT
+                        compose_version_id::text AS version_id,
+                        docker_volume,
+                        BOOL_OR(artifact_status = 'deleted') AS has_deleted,
+                        BOOL_OR(artifact_status = 'backup_succeeded' AND artifact_ref IS NOT NULL) AS has_succeeded
+                    FROM service_volume_backups
+                    WHERE service_id = %s
+                      AND compose_version_id::text = ANY(%s)
+                    GROUP BY compose_version_id, docker_volume
+                ) grouped
+                WHERE has_deleted AND NOT has_succeeded
+                GROUP BY version_id
+                """,
+                (service_id, version_ids),
+            )
+            for row in cursor.fetchall():
+                version_id = str(row["version_id"])
+                blocked_by_version[version_id] = blocked_by_version.get(version_id, 0) + int(row["restore_blocked_count"] or 0)
+            cursor.execute(
+                """
+                SELECT
+                    compose_version_id::text AS version_id,
+                    COUNT(*) AS volume_count,
+                    COUNT(*) FILTER (WHERE artifact_status = 'backup_succeeded' AND artifact_ref IS NOT NULL) AS volume_succeeded_count,
+                    COUNT(*) FILTER (WHERE artifact_status = 'deleted') AS volume_deleted_count
+                FROM service_volume_backups
+                WHERE service_id = %s
+                  AND compose_version_id::text = ANY(%s)
+                GROUP BY compose_version_id
+                """,
+                (service_id, version_ids),
+            )
+            for row in cursor.fetchall():
+                item = _row(row)
+                current = by_version.setdefault(str(item["version_id"]), {})
+                current["volume_count"] = item.get("volume_count")
+                current["volume_succeeded_count"] = item.get("volume_succeeded_count")
+                current["volume_deleted_count"] = item.get("volume_deleted_count")
+            cursor.execute(
+                """
+                SELECT
+                    compose_version_id::text AS version_id,
+                    id,
+                    compose_service,
+                    'named_volume_snapshot' AS source,
+                    artifact_status AS backup_status,
+                    artifact_ref AS backup_ref,
+                    artifact_error AS backup_error,
+                    metadata || jsonb_build_object(
+                        'volume_name', volume_name,
+                        'docker_volume', docker_volume,
+                        'mount_target', mount_target
+                    ) AS metadata,
+                    created_at,
+                    updated_at
+                FROM service_volume_backups
+                WHERE service_id = %s
+                  AND compose_version_id::text = ANY(%s)
+                ORDER BY created_at DESC, updated_at DESC
+                LIMIT 300
+                """,
+                (service_id, version_ids),
+            )
+            for row in cursor.fetchall():
+                item = _row(row)
+                version_id = str(item.pop("version_id"))
+                entries_by_version.setdefault(version_id, []).append(item)
+        except Exception:
+            pass
         for version in versions:
             summary = by_version.get(str(version.get("id"))) or {}
             version["image_backup_summary"] = {key: int(summary.get(key) or 0) for key in empty}
             version["image_backup_summary"]["restore_blocked_count"] = blocked_by_version.get(str(version.get("id")), 0)
-            version["image_backup_entries"] = entries_by_version.get(str(version.get("id")), [])
+            entries = entries_by_version.get(str(version.get("id")), [])
+            version["image_backup_entries"] = sorted(entries, key=lambda item: str(item.get("created_at") or item.get("updated_at") or ""), reverse=True)
         return versions
 
     def _operation_select_columns(self, include_output=True):
@@ -386,7 +469,7 @@ class ServiceRuntimeMixin:
             with connection.cursor() as cursor:
                 service = self._service_row(cursor, service_id)
                 versions = self._versions(cursor, service_id)
-                versions = self._attach_version_backup_summaries(cursor, service_id, versions)
+                versions = self._attach_version_backup_summaries(cursor, service_id, versions, env=env)
         return {
             "service": service,
             "versions": versions,

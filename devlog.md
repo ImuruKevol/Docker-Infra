@@ -452,3 +452,45 @@
 | 2026-06-22 | 006 | 백업 진행 서비스명 표시와 보존 정책 자동 정리 | [상세](devlog/2026-06-22/006-backup-progress-retention-volume-design.md) |
 | 2026-06-22 | 007 | 서비스 버전 이력 백업 내역 연동과 만료 복원 차단 | [상세](devlog/2026-06-22/007-service-version-backup-history-restore-guard.md) |
 | 2026-06-22 | 008 | named volume 백업 설계 Agent 연동과 ORAS 공급 정책 보강 | [상세](devlog/2026-06-22/008-volume-backup-agent-oras-design.md) |
+| 2026-06-22 | 009 | ORAS 필수 정책과 named volume 자동 백업 구현 | [상세](devlog/2026-06-22/009-oras-required-volume-backup-implementation.md) |
+| 2026-06-22 | 010 | 서버 등록 해제 시 Swarm 원격 확인과 수집 agent 정리 검증 | [상세](devlog/2026-06-22/010-node-unregister-swarm-monitoring-cleanup.md) |
+| 2026-06-22 | 011 | 독립 서버 등록 해제 시 Swarm skip 상태 정상화 | [상세](devlog/2026-06-22/011-node-unregister-standalone-swarm-skip.md) |
+| 2026-06-22 | 012 | ORAS absolute path 오류 수정과 named volume 백업 실수행 | [상세](devlog/2026-06-22/012-volume-backup-oras-path-fix-run.md) |
+| 2026-06-22 | 013 | 시스템 백업 전체 스냅샷 대상 처리와 버전 이력 체크포인트 연결 | [상세](devlog/2026-06-22/013-system-backup-version-checkpoint-snapshot-limit.md) |
+| 2026-06-22 | 014 | 서비스 생성 자동 배치 CPU/Memory 구간 통계 반영 | [상세](devlog/2026-06-22/014-service-placement-resource-window-stats.md) |
+| 2026-06-22 | 015 | 시스템 백업 무제한 대상 처리와 기본 백그라운드 실행 | [상세](devlog/2026-06-22/015-system-backup-unbounded-background-polling.md) |
+| 2026-06-22 | 016 | 서비스 상세 상태 확인 경량화와 무료 SSL 섹션 로드 보정 | [상세](devlog/2026-06-22/016-service-detail-status-refresh-ssl-section.md) |
+| 2026-06-22 | 017 | 서비스 상세 컨테이너 버전 배지 추가 | [상세](devlog/2026-06-22/017-service-container-version-badge.md) |
+| 2026-06-22 | 018 | 서비스 컨테이너 메뉴 z-index 보정 | [상세](devlog/2026-06-22/018-service-container-menu-z-index.md) |
+| 2026-06-22 | 019 | 컨테이너 버전 배지 digest 대신 태그 표시 | [상세](devlog/2026-06-22/019-service-container-version-tag-parse.md) |
+| 2026-06-22 | 020 | 무료 SSL 인증서 상태 표시 데이터 소스 통일 | [상세](devlog/2026-06-22/020-service-free-ssl-status-source.md) |
+| 2026-06-22 | 021 | 서비스 상세 구성 탭 AI 검사/수정 버튼 제거 | [상세](devlog/2026-06-22/021-service-detail-remove-ai-repair-button.md) |
+| 2026-06-22 | 022 | 서비스 상세 컨테이너별 버전 변경 기능 추가 | [상세](devlog/2026-06-22/022-service-container-version-change.md) |
+| 2026-06-22 | 023 | 매크로 다중 스케줄과 cron.d 파일 실행 경로 추가 | [상세](devlog/2026-06-22/023-macro-schedule-crond.md) |
+| 2026-06-22 | 024 | 버전 변경 모달 이미지 존재 검증 버튼 추가 | [상세](devlog/2026-06-22/024-service-container-version-image-validation.md) |
+| 2026-06-22 | 025 | 이미지 검증 결과 표시 signal 이름 오류 수정 | [상세](devlog/2026-06-22/025-service-container-version-check-signal-fix.md) |
+| 2026-06-22 | 026 | 매크로 스케줄 다중 요일 선택과 실행 이력 표시 보정 | [상세](devlog/2026-06-22/026-macro-schedule-weekdays-history.md) |
+| 2026-06-22 | 027 | 매크로 스케줄 DB 반영과 대상 목록/첨부 파일 삭제 UX 보정 | [상세](devlog/2026-06-22/027-macro-schedule-db-file-delete-ui.md) |
+| 2026-06-22 | 028 | 매크로 첨부 파일 삭제 로컬 갱신과 스케줄 대상 검색 추가 | [상세](devlog/2026-06-22/028-macro-file-local-delete-target-search.md) |
+| 2026-06-22 | 028 | ORAS named volume 복원 경로 구현과 레이어 동작 검증 | [상세](devlog/2026-06-22/028-oras-volume-restore-validation.md) |
+| 2026-06-22 | 029 | 이미지 검증 Compose 제한 해제와 런타임 image fallback 추가 | [상세](devlog/2026-06-22/029-service-container-version-validate-runtime-image.md) |
+| 2026-06-22 | 030 | 버전 변경 적용 전 이미지 검증 필수화 | [상세](devlog/2026-06-22/030-service-container-version-change-requires-validation.md) |
+| 2026-06-22 | 031 | 볼륨 백업 장기 레이어형 스토리지 설계 문서화 | [상세](devlog/2026-06-22/031-volume-layered-storage-design.md) |
+| 2026-06-22 | 032 | overlay 서비스 버전 변경 적용 경로 보정 | [상세](devlog/2026-06-22/032-service-container-version-swarm-update.md) |
+| 2026-06-23 | 001 | 미니PC 지향 볼륨 스토리지 후보와 Ceph 제외 기준 보강 | [상세](devlog/2026-06-23/001-mini-pc-volume-storage-direction.md) |
+| 2026-06-23 | 002 | 매크로 스케줄 대상 높이 고정과 실행 이력 결과 펼침 추가 | [상세](devlog/2026-06-23/002-macro-schedule-history-detail-layout.md) |
+| 2026-06-23 | 003 | 컨테이너 버전 변경 Compose 네트워크 컨텍스트 보정 | [상세](devlog/2026-06-23/003-service-container-version-compose-network-context.md) |
+| 2026-06-23 | 004 | 로그인 세션 지속시간 표시와 설정 저장 추가 | [상세](devlog/2026-06-23/004-session-duration-display-settings.md) |
+| 2026-06-23 | 005 | 세션 지속시간 표시 위치를 로그인 화면에서 사이드바로 이동 | [상세](devlog/2026-06-23/005-session-duration-sidebar-display.md) |
+| 2026-06-23 | 006 | 사이드바 세션 표시를 설정값에서 남은 시간으로 변경 | [상세](devlog/2026-06-23/006-session-remaining-sidebar-display.md) |
+| 2026-06-23 | 005 | Dockerized Ceph 기반 bind mount 스토리지 설계 재작성 | [상세](devlog/2026-06-23/005-dockerized-ceph-bind-mount-storage.md) |
+| 2026-06-23 | 006 | 매크로 스케줄 실행 이력 결과 모달 전환 | [상세](devlog/2026-06-23/006-macro-schedule-history-result-modal.md) |
+| 2026-06-23 | 007 | 컨테이너 버전 변경 런타임 이미지 불일치 재적용 보정 | [상세](devlog/2026-06-23/007-service-container-version-runtime-mismatch-apply.md) |
+| 2026-06-23 | 008 | Ceph OSD slot backing과 CRUSH host 분산 정책 보강 | [상세](devlog/2026-06-23/008-ceph-osd-slot-crush-host-policy.md) |
+| 2026-06-23 | 009 | 매크로 스케줄 결과 모달 stdout/stderr 세로 배치 | [상세](devlog/2026-06-23/009-macro-schedule-result-stream-layout.md) |
+| 2026-06-23 | 010 | CephFS Storage Docker Infra 적용 설계 문서 추가 | [상세](devlog/2026-06-23/010-ceph-storage-application-plan.md) |
+| 2026-06-23 | 011 | 세션 지속시간 변경 시 현재 세션 만료 시간 갱신 | [상세](devlog/2026-06-23/011-session-ttl-current-session-refresh.md) |
+| 2026-06-23 | 012 | 독립 서버 보존과 Swarm OSD 구성 마법사 설계 반영 | [상세](devlog/2026-06-23/012-independent-server-swarm-osd-wizard.md) |
+| 2026-06-23 | 013 | 사이드바 세션 남은 시간 카드에 연장 버튼 추가 | [상세](devlog/2026-06-23/013-session-remaining-extend-button.md) |
+| 2026-06-23 | 014 | GlusterFS 대안 검토와 CephFS 기본값 유지 근거 보강 | [상세](devlog/2026-06-23/014-glusterfs-alternative-review.md) |
+| 2026-06-23 | 015 | GlusterFS 설계 내용 제거와 CephFS 적용 작업 지시서 작성 | [상세](devlog/2026-06-23/015-ceph-storage-reviewops-task-instructions.md) |

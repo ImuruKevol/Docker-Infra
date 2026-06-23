@@ -5,6 +5,7 @@ connect = wiz.model("db/postgres").connect
 config = wiz.config("docker_infra")
 shared = wiz.model("struct/nodes_shared")
 NodeError = shared.NodeError
+_swarm_from_docker_info = shared.swarm_from_docker_info
 
 
 class NodeDeleteMixin:
@@ -47,6 +48,41 @@ class NodeDeleteMixin:
             "if command -v docker >/dev/null 2>&1; then $SUDO docker swarm leave --force >/dev/null 2>&1 || true; fi\n"
             "printf 'Remote swarm membership cleanup checked\\n'\n"
         )
+
+    def _remote_swarm_inspect_script(self):
+        return (
+            "set -eu\n"
+            "SUDO=''\n"
+            "if [ \"$(id -u)\" != '0' ]; then SUDO='sudo -n'; fi\n"
+            "if command -v docker >/dev/null 2>&1; then $SUDO docker info --format '{{json .}}' 2>/dev/null || true; fi\n"
+        )
+
+    def _inspect_remote_swarm_membership(self, node, operation_id, env=None):
+        step = "Remote swarm inspect"
+        self._step(operation_id, step, "running", env=env)
+        result = self._run_ssh_command(
+            node,
+            ["sh", "-lc", self._remote_swarm_inspect_script()],
+            timeout_seconds=20,
+            env=env,
+            capture_limit=8000,
+        )
+        info, swarm = _swarm_from_docker_info(result.get("stdout") if result.get("status") == "ok" else "")
+        state = str(swarm.get("LocalNodeState") or "").strip().lower()
+        payload = {
+            "status": result.get("status"),
+            "exit_code": result.get("exit_code"),
+            "state": state,
+            "node_id": swarm.get("NodeID") or "",
+            "control_available": swarm.get("ControlAvailable"),
+            "docker_available": bool(info),
+            "swarm_active": state == "active",
+            "standalone": state in {"", "inactive", "pending"},
+        }
+        self._step(operation_id, step, "succeeded" if result.get("status") == "ok" else "failed", payload, env=env)
+        if result.get("status") != "ok":
+            return payload
+        return payload
 
     def _remote_cleanup_script(self, node, env=None):
         public_key = self._managed_public_key(node)
@@ -108,12 +144,27 @@ class NodeDeleteMixin:
         output = f"{result.get('stdout', '')}\n{result.get('stderr', '')}".lower()
         return "not found" in output or "no such node" in output
 
-    def _cleanup_master_registration(self, node, operation_id, env=None):
+    def _master_swarm_skip_reason(self, remote_swarm):
+        state = str((remote_swarm or {}).get("state") or "").strip().lower()
+        if state == "active":
+            return "remote_swarm_node_id_empty"
+        if state in {"", "inactive", "pending"}:
+            return "standalone_node"
+        return "swarm_node_id_empty"
+
+    def _cleanup_master_registration(self, node, operation_id, remote_swarm=None, env=None):
         results = {}
-        swarm_node_id = str(node.get("swarm_node_id") or "").strip()
+        remote_swarm = remote_swarm or {}
+        swarm_node_id = str(node.get("swarm_node_id") or remote_swarm.get("node_id") or "").strip()
         if swarm_node_id:
             step = "Master swarm node remove"
-            self._step(operation_id, step, "running", {"swarm_node_id": swarm_node_id}, env=env)
+            self._step(
+                operation_id,
+                step,
+                "running",
+                {"swarm_node_id": swarm_node_id, "source": "stored" if node.get("swarm_node_id") else "remote_inspect"},
+                env=env,
+            )
             result = self.local_executor.run(
                 "swarm.node.remove",
                 params={"node_id": swarm_node_id},
@@ -128,11 +179,22 @@ class NodeDeleteMixin:
                     "MASTER_SWARM_NODE_REMOVE_FAILED",
                     check={"status": result.get("status"), "exit_code": result.get("exit_code"), "stderr": result.get("stderr")},
                 )
-            self._step(operation_id, step, "succeeded", {"missing": self._swarm_remove_missing(result)}, env=env)
+            self._step(
+                operation_id,
+                step,
+                "succeeded",
+                {
+                    "missing": self._swarm_remove_missing(result),
+                    "swarm_node_id": swarm_node_id,
+                    "source": "stored" if node.get("swarm_node_id") else "remote_inspect",
+                },
+                env=env,
+            )
             results["swarm_remove"] = result
         else:
-            self._step(operation_id, "Master swarm node remove", "skipped", {"reason": "swarm_node_id_empty"}, env=env)
-            results["swarm_remove"] = {"status": "skipped", "reason": "swarm_node_id_empty"}
+            reason = self._master_swarm_skip_reason(remote_swarm)
+            self._step(operation_id, "Master swarm node remove", "skipped", {"reason": reason}, env=env)
+            results["swarm_remove"] = {"status": "skipped", "reason": reason, "remote_swarm": remote_swarm}
 
         known_hosts = self.ssh_executor.remove_known_host(node["host"], port=node.get("ssh_port"), env=env)
         self.operations.append_output(
@@ -251,8 +313,9 @@ class NodeDeleteMixin:
         )
         operation_id = operation["id"]
         try:
+            remote_swarm = self._inspect_remote_swarm_membership(node, operation_id, env=env)
             remote_cleanup = self._cleanup_remote_registration(node, operation_id, env=env)
-            master_cleanup = self._cleanup_master_registration(node, operation_id, env=env)
+            master_cleanup = self._cleanup_master_registration(node, operation_id, remote_swarm=remote_swarm, env=env)
             db_delete = self._delete_node_row(node, env=env)
             key_cleanup = self._remove_unused_key_file(db_delete.get("key_file"), db_delete.get("remaining_key_refs", 0), env=env)
             self.operations.append_output(
@@ -269,6 +332,7 @@ class NodeDeleteMixin:
                 "name": node.get("name"),
                 "host": node.get("host"),
                 "remote_cleanup": {"status": remote_cleanup.get("status"), "exit_code": remote_cleanup.get("exit_code")},
+                "remote_swarm": remote_swarm,
                 "master_cleanup": master_cleanup,
                 "database": db_delete,
                 "key_file": key_cleanup,
