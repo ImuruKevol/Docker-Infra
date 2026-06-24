@@ -94,7 +94,7 @@ Title:
 서비스 생성 Wizard에 저장소 단계 추가
 
 Body:
-`/services/create`에 저장소 단계를 추가한다. Compose의 named volume 후보를 감지하고 실행 대상에 따라 기본값을 다르게 둔다. 독립 서버는 local bind mount, Swarm/Ceph 서버는 CephFS bind mount를 기본으로 한다. Ceph 미구성 시 local bind mount로 계속하거나 Storage 설정으로 이동하게 한다. CephFS 선택 시 top-level `volumes:`를 제거하고 host bind path로 변환한다.
+`/services/create`에 저장소 단계를 추가한다. Compose의 Docker-managed volume 후보를 감지하고 실행 대상에 따라 저장 전 bind mount로 변환한다. 독립 서버는 local bind mount, Swarm/Ceph 서버는 CephFS bind mount를 기본으로 한다. Ceph 미구성 시 local bind mount로 계속하거나 Storage 설정으로 이동하게 한다. 저장된 Compose에는 top-level `volumes:`가 남지 않아야 한다.
 
 참고:
 - `docs/ceph-storage-application-plan.md` §7, §15.1, §15.2, §15.3, §23 Phase 4
@@ -119,13 +119,13 @@ Body:
 ## 9
 
 Title:
-기존 ORAS named volume 기능을 legacy 경로로 축소
+기존 volume artifact 백업/복원 경로 제거
 
 Body:
-신규 기본 경로에서는 ORAS named volume backup을 제거하고 CephFS snapshot을 사용한다. 기존 named volume 서비스와 과거 artifact 복원은 legacy 경로로 유지한다. scheduler의 volume backup 부분은 CephFS snapshot 생성으로 교체하고, Harbor는 image backup 전용으로 문구와 정책을 정리한다. `/system/backup`은 이미지 백업 중심으로, storage 정책은 `/storage/policy`로 분리한다.
+CephFS 적용 후 기존 volume artifact 백업/복원 경로를 제품 기능에서 제거한다. `service_volume_backups.py`, rollback volume restore context, scheduler volume backup 실행, volume artifact cleanup, 서버 등록 시 관련 도구 설치 안내를 제거하거나 제품 호출에서 제외한다. Harbor는 image backup 전용으로 유지하고 storage 정책은 `/storage/policy`로 분리한다.
 
 참고:
-- `docs/ceph-storage-application-plan.md` §9, §17, §22, §23 Phase 7
+- `docs/ceph-storage-application-plan.md` §9, §17, §22, §23 Phase 6-7
 - `docs/backup-volume-layered-storage-design.md` §2, §3.1, §12, §16 Phase 0
 
 ---
@@ -133,14 +133,14 @@ Body:
 ## 10
 
 Title:
-Named volume에서 CephFS로 이전하는 Migration Wizard 구현
+기존 배포 서비스 자동 이전 제외와 안내 처리
 
 Body:
-기존 named volume 서비스를 CephFS bind mount로 이전하는 wizard를 구현한다. 흐름은 대상 volume 감지, 서비스 중지 계획, CephFS path 생성, 데이터 복사, Compose rewrite, 재배포, 검증이다. 기존 named volume은 자동 삭제하지 않고 rollback 가능성을 남긴다. migration은 plan API로 영향 범위를 먼저 보여주고 사용자 확인 후 실행한다.
+기존 배포 서비스의 Docker-managed volume은 자동 이전하지 않는다. 서비스 상세에 “CephFS snapshot/rollback 대상이 아니며, 직접 백업 후 재배포하거나 별도 Codex agent 작업으로 수동 이전해야 한다”는 안내를 표시한다. 신규 생성/수정/import 경로에서는 Docker-managed volume을 저장 전에 CephFS 또는 local bind mount로 변환하고, 기존 volume artifact 복원 버튼은 제공하지 않는다.
 
 참고:
 - `docs/ceph-storage-application-plan.md` §18, §22.1, §23 Phase 6
-- `docs/backup-volume-layered-storage-design.md` §10.3, §17.7, §18.3
+- `docs/backup-volume-layered-storage-design.md` §3.1, §10.3, §17.7, §18.3
 
 ---
 
@@ -150,7 +150,7 @@ Title:
 Dashboard와 Operations에 Storage 상태와 작업 로그 추가
 
 Body:
-`/dashboard`에 Storage health badge와 요약 카드를 추가한다. Ceph health error, OSD down, CephFS mount 누락, CRUSH rule drift, nearfull, snapshot cleanup 실패를 우선순위대로 표시한다. `/operations`에는 cluster preflight/bootstrap, OSD slot create/prepare/activate/out/remove, CephFS mount ensure, snapshot create/restore/cleanup, migration 작업 타입을 추가한다. CLI 원문은 접힌 상세로 둔다.
+`/dashboard`에 Storage health badge와 요약 카드를 추가한다. Ceph health error, OSD down, CephFS mount 누락, CRUSH rule drift, nearfull, snapshot cleanup 실패를 우선순위대로 표시한다. `/operations`에는 cluster preflight/bootstrap, OSD slot create/prepare/activate/out/remove, CephFS mount ensure, snapshot create/restore/cleanup, Compose volume rewrite 작업 타입을 추가한다. CLI 원문은 접힌 상세로 둔다.
 
 참고:
 - `docs/ceph-storage-application-plan.md` §10, §11, §14, §23 Phase 7
@@ -164,8 +164,24 @@ Title:
 CephFS Storage 검증 시나리오와 테스트 보강
 
 Body:
-UI/API/실동작 검증을 추가한다. UI는 `/storage` 미구성, preflight 결과, OSD slot plan, 서비스 생성 저장소 단계, 서비스 상세 저장소 탭, rollback modal을 확인한다. API는 migration, cluster preflight, OSD slot preflight, mount create, snapshot create/restore plan을 검증한다. 실제 동작은 A/B 3개 slot, C/D 1개 slot 예시에서 host bucket, CRUSH rule, mount read/write, snapshot rollback을 확인한다.
+UI/API/실동작 검증을 추가한다. UI는 `/storage` 미구성, preflight 결과, OSD slot plan, 서비스 생성 저장소 단계, 서비스 상세 저장소 탭, rollback modal을 확인한다. API는 cluster preflight, OSD slot preflight, mount create, snapshot create/restore plan, Docker-managed volume 차단/변환을 검증한다. 실제 동작은 A/B 3개 slot, C/D 1개 slot 예시에서 host bucket, CRUSH rule, mount read/write, snapshot rollback을 확인한다.
 
 참고:
 - `docs/ceph-storage-application-plan.md` §22, §25
 - `docs/backup-volume-layered-storage-design.md` §18, §9.1, §13.2
+
+---
+
+## 13
+
+Title:
+AI/Agent 생성과 서비스 동작에 Storage 계약 반영
+
+Body:
+AI 초안, 자동 템플릿 생성, `service.ai.verify`, runtime repair, 서버 Compose import 보정에 CephFS/local bind mount 계약을 반영한다. Agent context에는 `storage_context`를 포함하고, output은 `x-docker-infra.storage.mounts`와 `${DOCKER_INFRA_STORAGE_*}` placeholder를 사용한다. 최종 저장 Compose에는 top-level `volumes:`가 남지 않아야 하며, Agent는 volume artifact 백업/복원 경로를 호출하거나 제안하지 않는다. 관련 prompt, validator, preflight, 테스트를 함께 수정한다.
+
+참고:
+- `docs/ceph-storage-application-plan.md` §19, §24, §25
+- `docs/backup-volume-layered-storage-design.md` §14, §18.3
+- `docs/service-ai-codex-agent-design.md` §1, §3, §4, §7, §8, §10
+- `docs/compose-template-standard.md` Storage Rules

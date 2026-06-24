@@ -494,3 +494,6 @@
 | 2026-06-23 | 013 | 사이드바 세션 남은 시간 카드에 연장 버튼 추가 | [상세](devlog/2026-06-23/013-session-remaining-extend-button.md) |
 | 2026-06-23 | 014 | GlusterFS 대안 검토와 CephFS 기본값 유지 근거 보강 | [상세](devlog/2026-06-23/014-glusterfs-alternative-review.md) |
 | 2026-06-23 | 015 | GlusterFS 설계 내용 제거와 CephFS 적용 작업 지시서 작성 | [상세](devlog/2026-06-23/015-ceph-storage-reviewops-task-instructions.md) |
+| 2026-06-23 | 016 | CephFS Storage 작업 지시서 구현 가능성 검토 | [상세](devlog/2026-06-23/016-ceph-storage-implementation-feasibility-review.md) |
+| 2026-06-23 | 017 | CephFS 전환 시 volume artifact 경로 제거 정책 반영 | [상세](devlog/2026-06-23/017-cephfs-remove-volume-artifact-paths.md) |
+| 2026-06-23 | 018 | Agent 기반 생성과 서비스 동작의 CephFS Storage 계약 보강 | [상세](devlog/2026-06-23/018-agent-storage-contract.md) |

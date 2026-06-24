@@ -190,8 +190,11 @@ Done:
 필요한 TODO:
 
 - AI가 반환한 운영 메모를 서비스 상세 또는 compose version metadata에 저장할지 결정
+- AI 초안과 자동 템플릿 생성 context에 `storage_context`를 추가하고 상태 저장 경로는 `x-docker-infra.storage.mounts`로 받기
+- AI/템플릿 초안의 Docker-managed volume 입력을 저장 전 CephFS 또는 local bind mount로 변환하고 최종 Compose의 top-level `volumes:` 저장을 차단
 - [Done] 명시적으로 시작한 AI 검사/수정을 `service.ai.verify` 백그라운드 operation으로 전환하고, 컨테이너 안정화와 도메인/IP/port/HTTP probe 후 AI를 재호출하는 검증 루프 구현
 - `service.ai.verify` 진행 상태는 서비스 상세의 백그라운드 작업 배너와 처리 로그 polling으로 조회
+- `service.ai.verify`에서 CephFS/local mount health, current path 쓰기 가능 여부, snapshot policy 연결 상태를 검사
 - AI 초안 생성의 live/API 테스트를 추가
 - 직접 작성 Compose payload로 서비스 생성 API 테스트 추가
 
@@ -201,6 +204,8 @@ Done:
 
 - `docker compose config` 또는 내부 validator로 검증
 - 배포 방식은 `docker stack deploy` 기준
+- 배포/수정/재배포 전 storage mount path 준비 여부를 preflight로 확인
+- AI runtime repair가 volume artifact 백업/복원 또는 Docker-managed volume 생성을 제안하면 경고로 돌리고 실행하지 않음
 - [Done] 배포 로그는 Job이 아니라 operation output으로 저장하고 서비스 상세에서 polling으로 확인
 - [Done] 배포 성공 후 서비스 상태, 컨테이너 상태, health check 결과를 즉시 갱신
 - [Done] 공개 port가 있는 서비스는 실제 배치 노드의 서버 IP를 확인해 nginx upstream에 자동 반영

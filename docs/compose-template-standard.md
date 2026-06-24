@@ -19,6 +19,35 @@ Compose 템플릿은 사용자가 서비스 이름과 필요한 변수만 입력
 - 컴포넌트 표시명은 `template.json.metadata.component_labels`에 Compose service key별로 정의한다.
 - 분류는 `template.json.metadata.tags` 문자열 배열로 정의한다.
 
+## Storage Rules
+
+- 상태 저장 데이터가 필요한 템플릿은 `x-docker-infra.storage.mounts`를 반드시 포함한다.
+- `docker-compose.yaml`의 service mount source에는 `${DOCKER_INFRA_STORAGE_<NAME>}` 형식의 Docker Infra storage placeholder를 사용한다.
+- `${DOCKER_INFRA_STORAGE_<NAME>}`는 사용자가 입력하는 값이 아니므로 `values.default.yaml`과 `values.schema.json`에 넣지 않는다.
+- 템플릿은 실제 host path나 CephFS 절대 경로를 직접 쓰지 않는다.
+- 템플릿은 top-level `volumes:`로 Docker-managed volume을 만들지 않는다.
+- 템플릿 렌더러는 실행 대상이 Swarm/Ceph 서버이면 CephFS bind mount path로, 독립 서버이면 local bind mount path로 치환한다.
+- snapshot이 필요한 mount는 `snapshot_policy`를 함께 선언한다.
+
+예시:
+
+```yaml
+services:
+  app:
+    image: example/app:latest
+    volumes:
+      - ${DOCKER_INFRA_STORAGE_DATA}:/app/data
+
+x-docker-infra:
+  storage:
+    backend: auto
+    mounts:
+      - name: data
+        target: /app/data
+        quota: 20GiB
+        snapshot_policy: default
+```
+
 ## AI Draft Rules
 
 - 템플릿 관리 화면의 AI 초안은 위 Required Files 전체를 채우는 JSON output만 적용한다.
@@ -26,6 +55,8 @@ Compose 템플릿은 사용자가 서비스 이름과 필요한 변수만 입력
 - AI 초안은 자동 저장하지 않으며, 사용자가 README/Compose/기본값/Schema를 검토한 뒤 저장한다.
 - AI 초안은 서비스 생성/수정/점검용 AI와 분리된 `compose_template` 범위로 실행한다.
 - AI output에는 `description`, `primary_image`, `category`, 배포 대상 서버, 구체 도메인, 런타임 조치가 포함되면 안 된다.
+- AI 초안이 DB, Redis, upload directory 같은 상태 저장 경로를 만들면 Storage Rules를 따라야 한다.
+- AI 초안은 volume artifact 백업/복원 정책을 만들지 않는다.
 
 ## AI Permission Scope
 
@@ -50,3 +81,4 @@ Compose 템플릿은 사용자가 서비스 이름과 필요한 변수만 입력
 - 공개 대상 service에는 healthcheck와 ports를 정의한다.
 - 내부 DB/cache는 ports를 노출하지 않고 Compose service name으로만 연결한다.
 - 내부 service 참조는 `{{ namespace }}_db`처럼 namespace placeholder를 사용한다.
+- 상태 저장 경로는 Docker Infra storage placeholder를 사용하고 top-level `volumes:`는 만들지 않는다.
