@@ -54,7 +54,7 @@ main(class="space-y-5 px-5 py-5")
                                 p(class="text-xs font-semibold text-zinc-950 dark:text-zinc-50") README
                                 button(type="button", (click)="closeTemplateReadme()", class="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-50", aria-label="README 닫기")
                                     i(class="fa-solid fa-xmark")
-                            div(class="service-readme-markdown ai-agent-markdown max-h-72 overflow-auto px-3 py-3", [innerHTML]="selectedTemplateReadmeHtml()")
+                            div(class="service-readme-markdown ai-agent-markdown max-h-72 overflow-auto px-3 py-3", [attr.data-readme-present]="selectedTemplateReadme() ? 'true' : 'false'", [innerHTML]="selectedTemplateReadmeHtml()")
 
             div(class="rounded-md border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950")
                 div(class="flex min-w-0 items-start gap-3")
@@ -79,7 +79,9 @@ main(class="space-y-5 px-5 py-5")
                         span(class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200")
                             i(class="fa-solid fa-sliders")
                         div(class="min-w-0")
-                            h3(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") 템플릿 변수
+                            div(class="flex flex-wrap items-center gap-2")
+                                h3(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") 템플릿 변수
+                                span(class="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300") 변수 {{editableTemplateFields().length}}개
                             p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") 템플릿에서 요청하는 값만 입력합니다.
                     span(*ngIf="templateLoading()", class="inline-flex h-7 items-center gap-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400")
                         i(class="fa-solid fa-spinner fa-spin")
@@ -106,6 +108,52 @@ main(class="space-y-5 px-5 py-5")
                                         i(class="fa-solid", [ngClass]="secretFieldToggleIcon(field)")
                                 p(*ngIf="field.description", class="mt-1 text-[11px] leading-4 text-zinc-500 dark:text-zinc-400") {{field.description}}
                                 p(*ngIf="field.secret", class="mt-1 text-[11px] leading-4 text-zinc-500 dark:text-zinc-400") 자동 생성된 기본값입니다.
+
+            div(class="rounded-md border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950")
+                div(class="flex min-w-0 items-start gap-3")
+                    span(class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200")
+                        i(class="fa-solid fa-hard-drive")
+                    div(class="min-w-0 flex-1")
+                        div(class="flex flex-wrap items-center gap-2")
+                            h3(class="text-base font-semibold text-zinc-950 dark:text-zinc-50") 저장소 확인
+                            span(*ngIf="storageLoading()", class="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300")
+                                i(class="fa-solid fa-spinner fa-spin")
+                                span 확인 중
+                        p(class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400") Docker-managed volume 후보는 실행 서버 기준 bind mount로 자동 변환합니다.
+                div(class="mt-4 space-y-3")
+                    div(class="grid grid-cols-1 gap-2 md:grid-cols-3")
+                        div(class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900")
+                            p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 실행 대상
+                            p(class="mt-1 truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{storageTargetLabel()}}
+                        div(class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900")
+                            p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 저장 방식
+                            p(class="mt-1 truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{storageBackendLabel()}}
+                        div(class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900")
+                            p(class="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400") 변환 대상
+                            p(class="mt-1 truncate text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{storageMountCount()}}개
+                    div(*ngIf="storageFallback()", class="flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200 sm:flex-row sm:items-center sm:justify-between")
+                        p(class="text-xs leading-5") {{storageFallbackMessage()}}
+                        div(class="flex shrink-0 flex-wrap gap-2")
+                            button(type="button", (click)="goStorageSettings()", class="inline-flex h-8 items-center justify-center gap-2 rounded-md border border-amber-300 bg-white px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100 dark:hover:bg-amber-900")
+                                i(class="fa-solid fa-gear")
+                                span 스토리지 설정
+                            button(type="button", (click)="confirmLocalStorageFallback()", class="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-amber-700 px-3 text-xs font-semibold text-white hover:bg-amber-800 dark:bg-amber-300 dark:text-amber-950 dark:hover:bg-amber-200")
+                                i(class="fa-solid", [ngClass]="storageLocalConfirmed() ? 'fa-check' : 'fa-arrow-right'")
+                                span {{storageLocalConfirmed() ? 'local 확인됨' : 'local로 계속'}}
+                    div(class="rounded-md border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950")
+                        p(class="text-xs font-semibold text-zinc-700 dark:text-zinc-200") {{storagePreviewMessage()}}
+                        p(*ngIf="removedTopLevelVolumeText()", class="mt-1 text-[11px] leading-4 text-zinc-500 dark:text-zinc-400") {{removedTopLevelVolumeText()}}
+                    div(*ngIf="storageMountCount() > 0", class="space-y-2")
+                        div(*ngFor="let mount of storageMounts()", class="rounded-md border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900")
+                            div(class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between")
+                                div(class="min-w-0")
+                                    p(class="text-sm font-semibold text-zinc-950 dark:text-zinc-50") {{mount.name}}
+                                    p(class="mt-1 text-xs text-zinc-500 dark:text-zinc-400") {{mount.component_key}} · {{mount.container_path}}
+                                span(*ngIf="mount.database_path", class="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-200")
+                                    i(class="fa-solid fa-database")
+                                    span DB snapshot hook 권장
+                            p(class="mt-2 break-all rounded-md bg-zinc-50 px-2 py-1 text-[11px] font-mono text-zinc-600 dark:bg-zinc-950 dark:text-zinc-300") {{storagePathLabel(mount)}}
+                    div(*ngIf="!storageLoading() && storageMountCount() === 0", class="rounded-md border border-dashed border-zinc-300 px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400") 저장소 후보가 없으면 별도 설정 없이 생성합니다.
 
             div(class="rounded-md border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950")
                 div(class="flex min-w-0 items-start gap-3")

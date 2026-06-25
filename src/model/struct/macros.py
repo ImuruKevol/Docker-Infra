@@ -31,6 +31,9 @@ class MacroManager:
     def list_schedules(self, macro_id=None, env=None):
         return schedules.list(macro_id=macro_id, env=env)
 
+    def schedule_history(self, schedule_id, macro_id=None, page=1, limit=10, env=None):
+        return schedules.history(schedule_id, macro_id=macro_id, page=page, limit=limit, env=env)
+
     def save_schedule(self, payload=None, env=None):
         return schedules.save(payload, env=env)
 

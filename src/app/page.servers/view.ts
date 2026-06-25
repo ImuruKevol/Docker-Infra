@@ -119,7 +119,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     private detailTabKeys() {
-        return ['overview', 'files', 'terminal'];
+        return ['overview', 'files', 'terminal', 'storage'];
     }
 
     private routeNodeId() {
@@ -2007,7 +2007,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public isSwarmConnected(node: any) {
-        return Boolean(node?.swarm_connected || node?.swarm_node_id);
+        return Boolean(String(node?.swarm_node_id || '').trim());
     }
 
     public showJoinSwarmButton(node: any) {
@@ -2015,7 +2015,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public deploymentModeText(node: any) {
-        return this.isSwarmConnected(node) ? '클러스터' : '독립 서버';
+        return node?.server_mode_label || (this.isSwarmConnected(node) ? 'Swarm 서버' : '독립 서버');
     }
 
     public swarmBadgeText(node: any) {
@@ -2027,6 +2027,44 @@ export class Component implements OnInit, OnDestroy {
             return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
         }
         return 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300';
+    }
+
+    public selectedSwarmNodeId() {
+        return String(this.selected()?.swarm_node_id || '').trim();
+    }
+
+    public storageBackendText(node: any = this.selected()) {
+        return node?.storage_backend_label || (this.isSwarmConnected(node) ? 'CephFS bind mount' : 'local bind mount');
+    }
+
+    public serverModeDescription(node: any = this.selected()) {
+        if (this.isSwarmConnected(node)) {
+            return '이 서버는 Ceph OSD slot 후보이며 CephFS bind mount 기반 서비스 저장소에 참여할 수 있습니다.';
+        }
+        return '이 서버는 Ceph 없이 local bind mount로 서비스를 실행할 수 있습니다.';
+    }
+
+    public serverModeLimitText(node: any = this.selected()) {
+        if (this.isSwarmConnected(node)) {
+            return 'OSD 슬롯 구성 전에는 Storage 화면의 사전 점검과 plan 확인이 필요합니다.';
+        }
+        return '공유 저장소 복제와 CephFS snapshot은 사용할 수 없습니다.';
+    }
+
+    public showOsdSlotWizardButton(node: any = this.selected()) {
+        return Boolean(node && this.isSwarmConnected(node));
+    }
+
+    public storageModeRows(node: any = this.selected()) {
+        return [
+            { label: '서버 모드', value: this.deploymentModeText(node) },
+            { label: '저장소 기본값', value: this.storageBackendText(node) },
+            { label: 'OSD slot 후보', value: this.showOsdSlotWizardButton(node) ? '가능' : 'Swarm 등록 후 가능' },
+        ];
+    }
+
+    public async openStorageOsdWizard() {
+        await this.service.routeTo('/storage');
     }
 
     private nodeStatusTone(node: any) {

@@ -16,6 +16,7 @@ compose_rules = wiz.model("struct/compose_rules")
 shared = wiz.model("struct/services_shared")
 service_compose = wiz.model("struct/services_compose")
 placement_selector = wiz.model("struct/services_placement")
+storage_mounts = wiz.model("struct/storage_mounts")
 ddns_model = wiz.model("struct/domains_ddns")
 ServiceRuntimeMixin = wiz.model("struct/services_runtime")
 ServiceDeployMixin = wiz.model("struct/services_deploy")
@@ -170,6 +171,13 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
         deployment_context = self._deployment_context_for_node(node_id, payload=payload, env=env)
         deployment_mode = (validation or {}).get("deployment_mode") or deployment_context["deployment_mode"]
         network_name = (validation or {}).get("network") or deployment_context["network"]
+        storage_payload = payload.get("storage") if isinstance(payload.get("storage"), dict) else {}
+        storage_backend = storage_mounts.default_backend(
+            deployment_mode=deployment_mode,
+            node=deployment_context.get("node"),
+            requested=storage_payload.get("backend") or payload.get("storage_backend"),
+            env=env,
+        )
 
         if not content:
             content = self.default_compose(
@@ -183,16 +191,26 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
                 network_name=network_name,
             )
 
-        validation = validation or validator.validate({
-            "namespace": namespace,
-            "filename": filename,
-            "content": content,
-            "deployment_mode": deployment_mode,
-            "network_name": network_name,
-            "health_check": payload.get("health_check"),
-            "allow_warnings": payload.get("allow_warnings"),
-            "warning_codes": payload.get("warning_codes"),
-        })
+        storage_plan = storage_mounts.normalize_compose(
+            namespace,
+            content,
+            backend=storage_backend,
+            storage=storage_payload,
+            env=env,
+        )
+        content = storage_plan["content"]
+
+        if validation is None or storage_plan.get("changed"):
+            validation = validator.validate({
+                "namespace": namespace,
+                "filename": filename,
+                "content": content,
+                "deployment_mode": deployment_mode,
+                "network_name": network_name,
+                "health_check": payload.get("health_check"),
+                "allow_warnings": payload.get("allow_warnings"),
+                "warning_codes": payload.get("warning_codes"),
+            })
         deployment_mode = validation.get("deployment_mode") or deployment_mode
         network_name = validation.get("network") or network_name
         normalized_content = yaml.safe_dump(validation["normalized"], sort_keys=False, allow_unicode=False)
@@ -231,6 +249,13 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
                         "deployment_mode": deployment_mode,
                         "network": network_name,
                         "recommendation": placement_recommendation,
+                    },
+                    "storage": {
+                        "backend": storage_backend,
+                        "mount_root": storage_plan.get("mount_root"),
+                        "mounts": storage_plan.get("mounts") or [],
+                        "docker_managed_volume_allowed": False,
+                        "normalized": bool(storage_plan.get("changed")),
                     },
                 }
                 if source_ref:
@@ -308,10 +333,18 @@ class ServiceManager(ServiceReleaseMixin, ServiceRollbackMixin, ServiceUpdateMix
                     if index == 0:
                         domain_row = row
 
+        storage_rows = storage_mounts.record_service_mounts(
+            service["id"],
+            storage_plan.get("mounts") or [],
+            test_run_id=test_run_id,
+            env=env,
+        )
+
         return {
             "service": service,
             "domain": domain_row,
             "domains": domain_rows,
+            "storage_mounts": storage_rows,
             "validation": validation,
             "paths": {
                 "service_dir": str(service_dir),

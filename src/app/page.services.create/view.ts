@@ -11,6 +11,7 @@ export class Component implements OnInit {
     public busy = signal<boolean>(false);
     public preflightLoading = signal<boolean>(false);
     public domainsLoading = signal<boolean>(false);
+    public storageLoading = signal<boolean>(false);
     public error = signal<string>('');
     public step = signal<StepId>(1);
     public creationMode = signal<CreationMode>('template');
@@ -55,6 +56,9 @@ export class Component implements OnInit {
     public templateValues: any = {};
     public imageChecks: any = {};
     public preflight = signal<any>(null);
+    public storagePreview = signal<any>(null);
+    public storageBackendOverride = signal<string>('');
+    public storageLocalConfirmed = signal<boolean>(false);
     public form: any = {
         name: '',
         description: '',
@@ -82,6 +86,7 @@ export class Component implements OnInit {
     private templateDetailRequestSeq = 0;
     private zonesLoaded = false;
     private zonesRequest: Promise<boolean> | null = null;
+    private storagePreviewRequestSeq = 0;
     private domainModeTouched = false;
     private aiModelOptionsLoaded = false;
     private aiModelOptionsRequest: Promise<boolean> | null = null;
@@ -128,6 +133,9 @@ export class Component implements OnInit {
             this.draftMetadata = {};
             this.draftSourceRef = null;
             this.components = [];
+            this.storagePreview.set(null);
+            this.storageBackendOverride.set('');
+            this.storageLocalConfirmed.set(false);
             this.ensureDomainTarget();
             this.templateDetail.set(null);
         } else {
@@ -167,8 +175,11 @@ export class Component implements OnInit {
         }
         this.imageChecks = {};
         this.invalidatePreflight();
+        this.storagePreview.set(null);
+        this.storageLocalConfirmed.set(false);
         this.ensureDomainTarget();
         this.syncDomain();
+        this.refreshStoragePreview({ silent: true }).catch(() => null);
     }
 
     private composeDraftMetadata(data: any, source: string) {
@@ -1464,10 +1475,110 @@ export class Component implements OnInit {
         return zone?.domain ? (prefix ? `${prefix}.${zone.domain}` : zone.domain) : '도메인 선택 필요';
     }
 
+    public storageMounts() {
+        return this.storagePreview()?.mounts || [];
+    }
+
+    public storageMountCount() {
+        return this.storageMounts().length;
+    }
+
+    public storageBackendLabel() {
+        return this.storagePreview()?.backend_label || (this.storageBackendOverride() === 'local_bind' ? 'local bind mount' : '자동 선택');
+    }
+
+    public storageTargetLabel() {
+        const target = this.storagePreview()?.target || {};
+        return [target.mode_label, target.label].filter((item: string) => !!item).join(' · ') || '자동 선택';
+    }
+
+    public storagePreviewMessage() {
+        return this.storagePreview()?.message || '템플릿 적용 후 저장소 후보를 자동 확인합니다.';
+    }
+
+    public storageFallback() {
+        return this.storagePreview()?.fallback || null;
+    }
+
+    public storageFallbackMessage() {
+        return this.storageFallback()?.message || '';
+    }
+
+    public removedTopLevelVolumeText() {
+        const rows = this.storagePreview()?.removed_top_level_volumes || [];
+        if (!rows.length) return '';
+        return `${rows.length}개 top-level volumes 항목은 저장 전에 제거됩니다.`;
+    }
+
+    public storagePathLabel(row: any) {
+        const path = String(row?.host_path || '');
+        const namespace = String(this.storagePreview()?.namespace || '');
+        if (path && namespace) return path.replace(`/services/${namespace}/`, '/services/<service_namespace>/');
+        return path || '-';
+    }
+
+    public storagePayload() {
+        const preview = this.storagePreview();
+        const backend = this.storageBackendOverride() || preview?.storage?.backend || preview?.backend || '';
+        if (!backend && !preview?.storage) return {};
+        return {
+            ...(preview?.storage || {}),
+            backend,
+            source: 'service_create_storage_step',
+            auto: true,
+            local_fallback_confirmed: this.storageLocalConfirmed(),
+        };
+    }
+
+    public async refreshStoragePreview(options: any = {}) {
+        const silent = options.silent !== false;
+        if (!String(this.baseContent || '').trim() || !this.components.length) {
+            this.storagePreview.set(null);
+            return false;
+        }
+        const requestSeq = ++this.storagePreviewRequestSeq;
+        this.storageLoading.set(true);
+        if (!silent) await this.service.render();
+        const payload = this.payload({ includeStorage: false });
+        const override = this.storageBackendOverride();
+        if (override) payload.storage = { backend: override, source: 'service_create_storage_step', auto: true };
+        try {
+            const { code, data } = await wiz.call('storage_preview', payload);
+            if (requestSeq !== this.storagePreviewRequestSeq) return false;
+            this.storageLoading.set(false);
+            if (code === 200) {
+                this.storagePreview.set(data);
+                this.invalidatePreflight();
+                await this.service.render();
+                return true;
+            }
+            this.storagePreview.set(null);
+            if (!silent) await this.alert(this.formatComposeError(data, '저장소 후보를 확인할 수 없습니다.'));
+        } catch (error: any) {
+            if (requestSeq !== this.storagePreviewRequestSeq) return false;
+            this.storagePreview.set(null);
+            if (!silent) await this.alert(error?.message || '저장소 후보를 확인할 수 없습니다.');
+        }
+        this.storageLoading.set(false);
+        await this.service.render();
+        return false;
+    }
+
+    public async confirmLocalStorageFallback() {
+        this.storageBackendOverride.set('local_bind');
+        this.storageLocalConfirmed.set(true);
+        await this.refreshStoragePreview({ silent: false });
+    }
+
+    public goStorageSettings() {
+        this.service.href(this.storageFallback()?.storage_settings_url || '/storage');
+    }
+
     public createSummaryRows() {
         return [
             { label: '템플릿', value: this.selectedTemplate()?.name || this.selectedTemplate()?.namespace || '-' },
             { label: '이름', value: this.form.name || '-' },
+            { label: '저장소', value: this.storageMountCount() ? `${this.storageBackendLabel()} · ${this.storageMountCount()}개` : this.storageBackendLabel() },
             { label: '도메인', value: this.domainPreview() },
             { label: '연결', value: this.selectedDomainTargetLabel() },
         ];
@@ -1486,7 +1597,8 @@ export class Component implements OnInit {
         return this.imageChecks[this.imageRef(item)] || null;
     }
 
-    public payload() {
+    public payload(options: any = {}) {
+        const includeStorage = options.includeStorage !== false;
         this.syncDomain();
         this.ensureDomainTarget();
         const source = this.importSource() ? 'server_compose_import' : (this.draftSource() || 'manual_compose');
@@ -1494,7 +1606,7 @@ export class Component implements OnInit {
         const sourceRef = this.importSource()
             ? { ...this.importSource(), create_session_id: this.createSessionId }
             : { ...(this.draftSourceRef || { source, wizard: 'services.create' }), source, create_session_id: this.createSessionId };
-        return {
+        const result: any = {
             ...this.form,
             base_content: this.baseContent,
             generated_secret_keys: this.generatedSecretKeys,
@@ -1505,6 +1617,8 @@ export class Component implements OnInit {
             import_source: this.importSource(),
             source_ref: sourceRef,
         };
+        if (includeStorage) result.storage = this.storagePayload();
+        return result;
     }
 
     public importSourcePath() {
@@ -1677,6 +1791,7 @@ export class Component implements OnInit {
             return;
         }
         if (!(await this.applyTemplateDraft({ advance: false, showSuccess: false }))) return;
+        await this.refreshStoragePreview({ silent: true });
         if (!(await this.validateStep(1))) return;
 
         this.busy.set(true);

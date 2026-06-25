@@ -18,6 +18,8 @@ service_ports = wiz.model("struct/services_ports")
 service_nginx = wiz.model("struct/service_nginx")
 deploy_targets = wiz.model("struct/services_deploy_targets")
 placement_selector = wiz.model("struct/services_placement")
+storage_mounts = wiz.model("struct/storage_mounts")
+storage_ceph_mount = wiz.model("struct/storage_ceph_mount")
 nodes = wiz.model("struct").nodes
 shared = wiz.model("struct/services_shared")
 ServiceError = shared.ServiceError
@@ -745,6 +747,69 @@ class ServiceDeployMixin:
             return self._deploy_failure(operation_id, "원격 서버의 서비스 네트워크를 준비할 수 없습니다.", result, env=env)
         return {"ensure": result, "network": network_name, "mode": mode, "node": self._deployment_node_summary(node)}
 
+    def _service_storage_mounts(self, service_id, env=None):
+        try:
+            return storage_mounts.list(service_id=service_id, limit=500, env=env)
+        except Exception:
+            return []
+
+    def _storage_path_script(self, paths):
+        quoted = " ".join(shlex.quote(path) for path in paths)
+        return (
+            "set -eu\n"
+            f"for path in {quoted}; do\n"
+            "  [ -n \"$path\" ] || continue\n"
+            "  mkdir -p \"$path\" \"$path/../snapshots\" \"$path/../restore-staging\" \"$path/../.docker-infra\"\n"
+            "done\n"
+        )
+
+    def _ensure_storage_mount_paths(self, service, placement, operation_id, env=None):
+        rows = [row for row in self._service_storage_mounts(service.get("id"), env=env) if row.get("status") != "deleted"]
+        if not rows:
+            return {"skipped": True, "mounts": []}
+        node = placement.get("raw_node") or {}
+        if any(row.get("backend") == "cephfs" for row in rows):
+            if not str(node.get("swarm_node_id") or "").strip():
+                return self._deploy_failure(
+                    operation_id,
+                    "CephFS storage mount는 Swarm/Ceph node에서만 배포할 수 있습니다.",
+                    {"status": "error", "mounts": rows, "placement": placement},
+                    env=env,
+                )
+            try:
+                storage_ceph_mount.ensure_node_mount({"node_id": node.get("id"), "operation_id": operation_id}, env=env)
+            except Exception as exc:
+                return self._deploy_failure(
+                    operation_id,
+                    "CephFS host mount를 준비할 수 없습니다.",
+                    {"status": "error", "message": str(exc), "mounts": rows, "placement": placement},
+                    env=env,
+                )
+        paths = sorted({str(row.get("host_path") or "").strip() for row in rows if str(row.get("host_path") or "").strip()})
+        if not paths:
+            return {"skipped": True, "mounts": rows}
+        if node.get("is_local_master"):
+            for path in paths:
+                base = Path(path)
+                base.mkdir(parents=True, exist_ok=True)
+                (base.parent / "snapshots").mkdir(parents=True, exist_ok=True)
+                (base.parent / "restore-staging").mkdir(parents=True, exist_ok=True)
+                (base.parent / ".docker-infra").mkdir(parents=True, exist_ok=True)
+            result = {"status": "ok", "paths": paths}
+        else:
+            detail = nodes.detail(node.get("id"), env=env)
+            result = nodes._run_ssh_command(detail, ["sh", "-lc", self._storage_path_script(paths)], timeout_seconds=60, env=env, capture_limit=12000)
+            if result.get("status") != "ok":
+                return self._deploy_failure(operation_id, "서비스 storage bind mount 경로를 준비할 수 없습니다.", result, env=env)
+        operations.append_output(
+            operation_id,
+            f"storage mount paths ready: {len(paths)}",
+            stream="system",
+            metadata={"step": "storage mount paths", "paths": paths, "result": {key: result.get(key) for key in ["status", "exit_code", "stdout", "stderr"]}},
+            env=env,
+        )
+        return {"mounts": rows, "paths": paths, "result": result}
+
     def _remote_compose_up(self, node, compose_path, stack_name, network_name, operation_id, force_recreate=False, timeout_seconds=300, env=None):
         node_detail = nodes.detail(node.get("id"), env=env)
         compose_bytes = Path(compose_path).expanduser().read_bytes()
@@ -1019,6 +1084,7 @@ class ServiceDeployMixin:
                 env=env,
             )
         network_setup = self._ensure_deployment_network(placement, operation_id, env=env)
+        storage_setup = self._ensure_storage_mount_paths(service, placement, operation_id, env=env)
         update_order_adjustments = self._ensure_host_port_update_order(compose_path)
         if update_order_adjustments:
             operations.append_output(
@@ -1136,6 +1202,7 @@ class ServiceDeployMixin:
             "deploy_adjustments": deploy_adjustments,
             "placement": placement,
             "network": network_setup,
+            "storage": storage_setup,
             "backup_registry_setup": backup_registry_setup,
             "backup_registry_login": backup_registry_login,
             "stack_recreate": stack_recreate,
@@ -1223,6 +1290,7 @@ class ServiceDeployMixin:
                 "ai_verification": ai_verification,
                 "network": network_setup,
                 "placement": placement,
+                "storage": storage_setup,
                 "backup_registry_setup": backup_registry_setup,
                 "backup_registry_login": backup_registry_login,
                 "stack_recreate": stack_recreate,

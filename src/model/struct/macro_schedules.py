@@ -201,6 +201,58 @@ def _is_loopback(value):
         return str(value or "").strip().lower() in {"localhost"}
 
 
+def _pagination(total, page, limit):
+    total = max(0, int(total or 0))
+    limit = _clamp_int(limit, 10, 1, 50)
+    end = max(1, (total + limit - 1) // limit)
+    current = max(1, min(_clamp_int(page, 1, 1, end), end))
+    return {
+        "current": current,
+        "start": ((current - 1) // 10) * 10 + 1,
+        "end": end,
+        "total": total,
+        "limit": limit,
+        "offset": (current - 1) * limit,
+    }
+
+
+def _history_group_status(operations):
+    statuses = [str(item.get("status") or "").lower() for item in operations or []]
+    if any(status in {"running", "pending"} for status in statuses):
+        return "running"
+    if any(status == "failed" for status in statuses):
+        return "failed"
+    if any(status == "canceled" for status in statuses):
+        return "canceled"
+    if statuses and all(status == "succeeded" for status in statuses):
+        return "succeeded"
+    return statuses[0] if statuses else "unknown"
+
+
+def _iso_datetime(value):
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=datetime.timezone.utc)
+        return value.isoformat()
+    return value
+
+
+def _history_group_row(row):
+    operations = shared.normalize_schedule_history(shared.row_value(row, "operations", []) or [])
+    run_date = str(shared.row_value(row, "run_date", "") or "")
+    run_at = _iso_datetime(shared.row_value(row, "sort_at"))
+    return {
+        "id": run_date,
+        "date": run_date,
+        "run_at": run_at,
+        "operation_count": int(shared.row_value(row, "operation_count", 0) or len(operations) or 0),
+        "status": _history_group_status(operations),
+        "operations": operations,
+        "created_at": run_at,
+        "updated_at": run_at,
+    }
+
+
 class MacroSchedules:
     MacroError = MacroError
     CRON_TOKEN_HEADER = CRON_TOKEN_HEADER
@@ -360,6 +412,85 @@ class MacroSchedules:
             with connection.cursor() as cursor:
                 cursor.execute(sql, params)
                 return [shared.macro_schedule_row(row) for row in cursor.fetchall()]
+
+    def history(self, schedule_id, macro_id=None, page=1, limit=10, env=None):
+        schedule_id = _uuid_text(schedule_id, "schedule_id")
+        macro_id = _uuid_text(macro_id, "macro_id", required=False) if macro_id else ""
+        self.ensure_schema(env=env)
+        with connect(env=env) as connection:
+            with connection.cursor() as cursor:
+                self._fetch(cursor, schedule_id, macro_id=macro_id or None)
+                cursor.execute(
+                    """
+                    WITH operation_rows AS (
+                        SELECT (COALESCE(ol.finished_at, ol.started_at, ol.created_at, ol.updated_at) AT TIME ZONE 'Asia/Seoul')::date AS run_date
+                        FROM operation_logs ol
+                        WHERE ol.type = 'macro.run'
+                          AND ol.metadata->>'schedule_id' = %s
+                    )
+                    SELECT count(*) AS total
+                    FROM (
+                        SELECT run_date
+                        FROM operation_rows
+                        GROUP BY run_date
+                    ) days
+                    """,
+                    (schedule_id,),
+                )
+                pagination = _pagination(cursor.fetchone()["total"], page, limit)
+                if pagination["total"] == 0:
+                    return {"history": [], "pagination": {key: pagination[key] for key in ("current", "start", "end", "total", "limit")}}
+
+                cursor.execute(
+                    """
+                    WITH operation_rows AS (
+                        SELECT
+                            ol.*,
+                            (COALESCE(ol.finished_at, ol.started_at, ol.created_at, ol.updated_at) AT TIME ZONE 'Asia/Seoul')::date AS run_date,
+                            COALESCE(ol.finished_at, ol.started_at, ol.created_at, ol.updated_at) AS run_at
+                        FROM operation_logs ol
+                        WHERE ol.type = 'macro.run'
+                          AND ol.metadata->>'schedule_id' = %s
+                    ),
+                    selected_days AS (
+                        SELECT run_date, max(run_at) AS sort_at, count(*) AS operation_count
+                        FROM operation_rows
+                        GROUP BY run_date
+                        ORDER BY max(run_at) DESC
+                        LIMIT %s OFFSET %s
+                    )
+                    SELECT
+                        sd.run_date::text AS run_date,
+                        sd.sort_at,
+                        sd.operation_count,
+                        jsonb_agg(
+                            jsonb_build_object(
+                                'id', o.id::text,
+                                'status', o.status,
+                                'message', o.message,
+                                'target_id', o.target_id,
+                                'requested_payload', o.requested_payload,
+                                'result_payload', o.result_payload,
+                                'output', o.output,
+                                'metadata', o.metadata,
+                                'started_at', o.started_at,
+                                'finished_at', o.finished_at,
+                                'created_at', o.created_at,
+                                'updated_at', o.updated_at
+                            )
+                            ORDER BY o.created_at DESC
+                        ) AS operations
+                    FROM selected_days sd
+                    JOIN operation_rows o ON o.run_date = sd.run_date
+                    GROUP BY sd.run_date, sd.sort_at, sd.operation_count
+                    ORDER BY sd.sort_at DESC
+                    """,
+                    (schedule_id, pagination["limit"], pagination["offset"]),
+                )
+                return {
+                    "history": [_history_group_row(row) for row in cursor.fetchall()],
+                    "pagination": {key: pagination[key] for key in ("current", "start", "end", "total", "limit")},
+                }
 
     def save(self, payload=None, env=None):
         payload = payload or {}

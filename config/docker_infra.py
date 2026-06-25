@@ -75,6 +75,12 @@ DEFAULT_LOCAL_EXECUTOR_ALLOWLIST = [
     "monitoring.metrics_collector.remove",
     "monitoring.metrics_collector.status",
     "ddns.dispatcher.ensure",
+    "storage.ceph.node.runtime.ensure",
+    "storage.ceph.master.metadata.ensure",
+    "storage.ceph.mount.ensure",
+    "storage.ceph.daemon.service.create",
+    "storage.ceph.osd.slot.create",
+    "storage.ceph.osd.daemon.container.run",
 ]
 
 

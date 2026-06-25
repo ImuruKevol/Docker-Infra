@@ -22,12 +22,26 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
                 "021_ai_agent_history.sql",
                 "022_macro_schedules.down.sql",
                 "022_macro_schedules.sql",
+                "023_ceph_storage.down.sql",
+                "023_ceph_storage.sql",
+                "024_ceph_default_image.down.sql",
+                "024_ceph_default_image.sql",
+                "025_ceph_osd_managed_loop_check.down.sql",
+                "025_ceph_osd_managed_loop_check.sql",
             ],
         )
 
         sql = "\n".join(
             (MIGRATION_DIR / name).read_text(encoding="utf-8")
-            for name in ["019_current_schema.sql", "020_actual_schema_cleanup.sql", "021_ai_agent_history.sql", "022_macro_schedules.sql"]
+            for name in [
+                "019_current_schema.sql",
+                "020_actual_schema_cleanup.sql",
+                "021_ai_agent_history.sql",
+                "022_macro_schedules.sql",
+                "023_ceph_storage.sql",
+                "024_ceph_default_image.sql",
+                "025_ceph_osd_managed_loop_check.sql",
+            ]
         )
 
         for table in [
@@ -48,12 +62,23 @@ class MigrationSchemaStaticContractTest(unittest.TestCase):
             "auth_sessions",
             "auth_login_attempts",
             "ai_agent_histories",
+            "ceph_clusters",
+            "ceph_nodes",
+            "ceph_osd_slots",
+            "storage_mounts",
+            "storage_snapshots",
+            "storage_snapshot_policies",
         ]:
             self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
         self.assertIn("metadata JSONB NOT NULL DEFAULT '{}'::jsonb", sql)
         self.assertIn("test_run_id TEXT", sql)
         self.assertIn("request_id TEXT NOT NULL DEFAULT ''", sql)
         self.assertIn("schedule_weekdays JSONB NOT NULL DEFAULT '[0]'::jsonb", sql)
+        self.assertIn("mount_root TEXT NOT NULL DEFAULT '/srv/docker-infra/storage/cephfs'", sql)
+        self.assertIn("backend TEXT NOT NULL DEFAULT 'cephfs'", sql)
+        self.assertIn("source TEXT NOT NULL DEFAULT 'manual'", sql)
+        self.assertIn("ceph_osd_slots_backing_type_check", sql)
+        self.assertIn("'managed_loop'", sql)
 
     def test_removed_tables_are_not_created_by_current_schema(self):
         sql = (MIGRATION_DIR / "019_current_schema.sql").read_text(encoding="utf-8")

@@ -9,10 +9,13 @@ scripts = wiz.model("struct/local_command_scripts")
 DEFAULT_TIMEOUT_SECONDS = 10
 MAX_TIMEOUT_SECONDS = 1800
 MAX_CAPTURE_CHARS = 20000
+DEFAULT_CEPH_IMAGE = "quay.io/ceph/ceph:v19.2.4"
 NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$")
 REGISTRY_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,255}$")
 SWARM_NODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+CEPH_FSID_RE = re.compile(r"^[A-Fa-f0-9][A-Fa-f0-9-]{31,63}$")
+CEPH_DEVICE_RE = re.compile(r"^/dev/[A-Za-z0-9_./-]{1,240}$")
 METRICS_COLLECTOR_AGENT_VERSION = "2026-05-13-container-labels-v1"
 
 
@@ -81,6 +84,202 @@ def _swarm_node_remove_command(params):
     if SWARM_NODE_RE.match(node_id) is None:
         raise LocalCommandError(400, "swarm node_id 형식이 올바르지 않습니다.", "INVALID_SWARM_NODE_ID")
     return ["docker", "node", "rm", "-f", node_id]
+
+
+def _ceph_image_param(params):
+    image = str((params or {}).get("image") or (params or {}).get("ceph_image") or DEFAULT_CEPH_IMAGE).strip()
+    if image in {"quay.io/ceph/ceph:latest", "quay.io/ceph/ceph:v19"}:
+        image = DEFAULT_CEPH_IMAGE
+    if not image or any(ch.isspace() for ch in image):
+        raise LocalCommandError(400, "Ceph image 형식이 올바르지 않습니다.", "INVALID_CEPH_IMAGE")
+    return image
+
+
+def _ceph_fsid_param(params):
+    fsid = str((params or {}).get("fsid") or "").strip()
+    if CEPH_FSID_RE.match(fsid) is None:
+        raise LocalCommandError(400, "Ceph fsid 형식이 올바르지 않습니다.", "INVALID_CEPH_FSID")
+    return fsid
+
+
+def _ceph_safe_text(params, key, default="", pattern=NETWORK_NAME_RE, error_code="INVALID_CEPH_VALUE"):
+    value = str((params or {}).get(key) or default).strip()
+    if pattern and pattern.match(value) is None:
+        raise LocalCommandError(400, f"{key} 형식이 올바르지 않습니다.", error_code)
+    return value
+
+
+def _ceph_path_param(params, key, default):
+    value = str((params or {}).get(key) or default).strip()
+    if not value.startswith("/") or "\x00" in value:
+        raise LocalCommandError(400, f"{key} 형식이 올바르지 않습니다.", "INVALID_CEPH_PATH")
+    return value
+
+
+def _ceph_node_preflight_command(params):
+    return ["sh", "-lc", STORAGE_CEPH_PREFLIGHT_SCRIPT, "sh", _ceph_image_param(params)]
+
+
+def _ceph_auth_key_generate_command(params):
+    return ["docker", "run", "--rm", "--entrypoint", "ceph-authtool", _ceph_image_param(params), "--gen-print-key"]
+
+
+def _ceph_node_runtime_ensure_command(params):
+    params = params or {}
+    return [
+        "sh",
+        "-lc",
+        STORAGE_CEPH_NODE_RUNTIME_SCRIPT,
+        "sh",
+        _ceph_fsid_param(params),
+        _ceph_image_param(params),
+        _ceph_safe_text(params, "ceph_hostname", "node", error_code="INVALID_CEPH_HOSTNAME"),
+        str(params.get("mon_initial_members") or ""),
+        str(params.get("mon_host") or ""),
+        str(params.get("public_network") or ""),
+        str(params.get("cluster_network") or ""),
+        _ceph_path_param(params, "mount_root", "/srv/docker-infra/storage/cephfs"),
+        str(params.get("admin_keyring_b64") or ""),
+        str(params.get("bootstrap_osd_keyring_b64") or ""),
+        str(params.get("mon_keyring_b64") or ""),
+        str(params.get("roles") or ""),
+    ]
+
+
+def _ceph_mount_ensure_command(params):
+    params = params or {}
+    client_name = str(params.get("client_name") or "client.admin").strip()
+    if NETWORK_NAME_RE.match(client_name) is None:
+        raise LocalCommandError(400, "client_name 형식이 올바르지 않습니다.", "INVALID_CEPH_CLIENT_NAME")
+    return [
+        "sh",
+        "-lc",
+        STORAGE_CEPH_MOUNT_ENSURE_SCRIPT,
+        "sh",
+        _ceph_fsid_param(params),
+        _ceph_image_param(params),
+        _ceph_path_param(params, "mount_root", "/srv/docker-infra/storage/cephfs"),
+        str(params.get("mon_host") or ""),
+        client_name,
+        str(params.get("client_keyring_b64") or ""),
+    ]
+
+
+def _ceph_daemon_service_create_command(params):
+    params = params or {}
+    service_name = str(params.get("service_name") or "").strip()
+    swarm_node_id = str(params.get("swarm_node_id") or "").strip()
+    daemon = str(params.get("daemon") or "").strip().lower()
+    daemon_id = str(params.get("daemon_id") or "").strip().lower()
+    osd_fsid = str(params.get("osd_fsid") or "").strip()
+    image = _ceph_image_param(params)
+    fsid = _ceph_fsid_param(params)
+    if NETWORK_NAME_RE.match(service_name) is None:
+        raise LocalCommandError(400, "Ceph service name 형식이 올바르지 않습니다.", "INVALID_CEPH_SERVICE_NAME")
+    if SWARM_NODE_RE.match(swarm_node_id) is None:
+        raise LocalCommandError(400, "swarm node_id 형식이 올바르지 않습니다.", "INVALID_SWARM_NODE_ID")
+    if daemon not in {"mon", "mgr", "mds", "osd"}:
+        raise LocalCommandError(400, "지원하지 않는 Ceph daemon입니다.", "INVALID_CEPH_DAEMON")
+    if NETWORK_NAME_RE.match(daemon_id) is None:
+        raise LocalCommandError(400, "Ceph daemon id 형식이 올바르지 않습니다.", "INVALID_CEPH_DAEMON_ID")
+    base = f"/srv/docker-infra/ceph/{fsid}"
+    commands = {
+        "mon": f"exec ceph-mon -f --cluster ceph --id {shlex.quote(daemon_id)} --setuser ceph --setgroup ceph",
+        "mgr": f"exec ceph-mgr -f --cluster ceph --id {shlex.quote(daemon_id)} --setuser ceph --setgroup ceph",
+        "mds": f"exec ceph-mds -f --cluster ceph --id {shlex.quote(daemon_id)} --setuser ceph --setgroup ceph",
+        "osd": f"exec ceph-osd -f --cluster ceph --id {shlex.quote(daemon_id)} --setuser ceph --setgroup ceph",
+    }
+    if daemon == "osd" and osd_fsid:
+        commands["osd"] = (
+            f"[ -f /var/lib/ceph/osd/ceph-{shlex.quote(daemon_id)}/keyring ] || "
+            f"ceph-volume lvm activate --bluestore --no-systemd --no-tmpfs "
+            f"{shlex.quote(daemon_id)} {shlex.quote(osd_fsid)}; {commands['osd']}"
+        )
+    command = commands[daemon]
+    argv = [
+        "docker", "service", "create",
+        "--name", service_name,
+        "--detach=true",
+        "--mode", "replicated",
+        "--replicas", "1",
+        "--network", "host",
+        "--constraint", f"node.id == {swarm_node_id}",
+        "--restart-condition", "any",
+        "--mount", f"type=bind,src={base}/etc,dst=/etc/ceph",
+        "--mount", f"type=bind,src={base}/var/lib/ceph,dst=/var/lib/ceph",
+        "--label", "docker-infra.storage=ceph",
+        "--label", "docker-infra.ceph.managed=true",
+        "--label", f"docker-infra.ceph.daemon={daemon}",
+        "--label", f"docker-infra.ceph.daemon_id={daemon_id}",
+        "--label", f"docker-infra.ceph.fsid={fsid}",
+        image,
+        "sh", "-lc", command,
+    ]
+    if daemon == "osd":
+        insert_at = argv.index("--label")
+        argv[insert_at:insert_at] = [
+            "--mount", "type=bind,src=/dev,dst=/dev",
+            "--mount", "type=bind,src=/run/udev,dst=/run/udev,readonly",
+        ]
+    return argv
+
+
+def _ceph_master_metadata_ensure_command(params):
+    params = params or {}
+    return [
+        "sh",
+        "-lc",
+        STORAGE_CEPH_MASTER_METADATA_SCRIPT,
+        "sh",
+        _ceph_fsid_param(params),
+        _ceph_image_param(params),
+        _ceph_safe_text(params, "daemon_id", "master", error_code="INVALID_CEPH_DAEMON_ID"),
+    ]
+
+
+def _ceph_osd_slot_create_command(params):
+    params = params or {}
+    backing_type = str(params.get("backing_type") or "gpt_partition").strip()
+    data_path = str(params.get("data_path") or params.get("data_device") or "").strip()
+    fsid = _ceph_fsid_param(params)
+    slot_name = _ceph_safe_text(params, "slot_name", "osd-slot", error_code="INVALID_CEPH_SLOT_NAME")
+    if backing_type not in {"gpt_partition", "lvm_lv", "managed_loop"}:
+        raise LocalCommandError(400, "지원하지 않는 OSD backing type입니다.", "INVALID_CEPH_BACKING_TYPE")
+    if backing_type == "managed_loop":
+        base = f"/srv/docker-infra/ceph/{fsid}/osd-slots/"
+        data_path = data_path or f"{base}{slot_name}.raw"
+        if not data_path.startswith(base) or "\x00" in data_path or "/../" in data_path or not data_path.endswith(".raw"):
+            raise LocalCommandError(400, "OSD managed loop 경로 형식이 올바르지 않습니다.", "INVALID_CEPH_LOOP_PATH")
+    elif CEPH_DEVICE_RE.match(data_path) is None:
+        raise LocalCommandError(400, "OSD data device 형식이 올바르지 않습니다.", "INVALID_CEPH_DEVICE")
+    try:
+        size_gb = max(1, min(int(params.get("size_gb") or 128), 4096))
+    except (TypeError, ValueError):
+        raise LocalCommandError(400, "size_gb는 정수여야 합니다.", "INVALID_CEPH_SLOT_SIZE")
+    return [
+        "sh",
+        "-lc",
+        STORAGE_CEPH_OSD_SLOT_CREATE_SCRIPT,
+        "sh",
+        _ceph_image_param(params),
+        fsid,
+        slot_name,
+        backing_type,
+        data_path,
+        str(size_gb),
+    ]
+
+
+def _ceph_osd_daemon_container_run_command(params):
+    params = params or {}
+    return [
+        "sh", "-lc", STORAGE_CEPH_OSD_DAEMON_RUN_SCRIPT, "sh",
+        _ceph_fsid_param(params),
+        _ceph_image_param(params),
+        _ceph_safe_text(params, "container_name", "ceph-osd", error_code="INVALID_CEPH_SERVICE_NAME"),
+        _ceph_safe_text(params, "daemon_id", "0", error_code="INVALID_CEPH_DAEMON_ID"),
+        str(params.get("osd_fsid") or ""),
+    ]
 
 
 def _container_ids(params):
@@ -1181,6 +1380,479 @@ DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = scripts.DOCKER_IMAGE_DELETE_ESTIMATE_SCRIP
 DOCKER_PRUNE_ESTIMATE_SCRIPT = scripts.DOCKER_PRUNE_ESTIMATE_SCRIPT
 DDNS_DISPATCHER_AGENT_SCRIPT = getattr(scripts, "DDNS_DISPATCHER_AGENT_SCRIPT", "")
 
+STORAGE_CEPH_PREFLIGHT_SCRIPT = r"""
+set +e
+emit() { printf '%s\t%s\n' "$1" "$2"; }
+CEPH_IMAGE="${1:-quay.io/ceph/ceph:v19.2.4}"
+
+if command -v docker >/dev/null 2>&1; then
+  emit docker_binary ok
+  swarm_line="$(docker info --format '{{.Swarm.LocalNodeState}}|{{.Swarm.NodeID}}|{{.Swarm.ControlAvailable}}' 2>/dev/null)"
+  docker_exit=$?
+  if [ "$docker_exit" -eq 0 ]; then
+    emit docker ok
+    old_ifs="$IFS"
+    IFS='|'
+    set -- $swarm_line
+    IFS="$old_ifs"
+    emit swarm_state "${1:-}"
+    emit swarm_node_id "${2:-}"
+    emit swarm_control_available "${3:-}"
+  else
+    emit docker error
+    emit swarm_state unknown
+    emit swarm_node_id ""
+    emit swarm_control_available false
+  fi
+  if docker network inspect host >/dev/null 2>&1; then
+    emit host_network ok
+  else
+    emit host_network missing
+  fi
+  if docker image inspect "$CEPH_IMAGE" >/dev/null 2>&1 || docker pull "$CEPH_IMAGE" >/dev/null 2>&1; then
+    emit ceph_image ok
+    if docker run --rm --entrypoint sh "$CEPH_IMAGE" -lc 'command -v ceph >/dev/null 2>&1 && command -v ceph-volume >/dev/null 2>&1 && ceph --version >/dev/null 2>&1'; then
+      emit ceph_container ok
+      emit ceph_volume ok
+    else
+      emit ceph_container error
+      emit ceph_volume missing
+    fi
+  else
+    emit ceph_image missing
+    emit ceph_container missing
+    emit ceph_volume missing
+  fi
+else
+  emit docker_binary missing
+  emit docker missing
+  emit swarm_state unknown
+  emit swarm_node_id ""
+  emit swarm_control_available false
+  emit host_network unknown
+fi
+
+if grep -qw ceph /proc/filesystems 2>/dev/null || [ -d /sys/module/ceph ] || modinfo ceph >/dev/null 2>&1; then
+  emit kernel_ceph ok
+else
+  emit kernel_ceph missing
+fi
+
+free_bytes="$(df -B1 --output=avail /srv /var/lib/docker / 2>/dev/null | awk 'NR > 1 && $1 ~ /^[0-9]+$/ { if ($1 > max) max = $1 } END { print max + 0 }')"
+emit free_bytes "${free_bytes:-0}"
+capacity_line="$(df -B1 -P /srv /var/lib/docker / 2>/dev/null | awk 'NR > 1 && $4 ~ /^[0-9]+$/ { if ($4 > max) { max = $4; total = $2; used = $3; mount = $6 } } END { printf "%s\t%s\t%s\t%s", total + 0, used + 0, max + 0, mount }')"
+old_ifs="$IFS"
+IFS='	'
+set -- $capacity_line
+IFS="$old_ifs"
+emit storage_total_bytes "${1:-0}"
+emit storage_used_bytes "${2:-0}"
+emit storage_available_bytes "${3:-0}"
+emit storage_mountpoint "${4:-}"
+
+best_name=""
+best_size=0
+best_type=""
+candidate_count=0
+if command -v lsblk >/dev/null 2>&1; then
+  while IFS= read -r line; do
+    NAME=""
+    TYPE=""
+    SIZE="0"
+    MOUNTPOINT=""
+    FSTYPE=""
+    eval "$line"
+    case "$TYPE" in disk|part) ;; *) continue ;; esac
+    case "$NAME" in /dev/loop*|/dev/ram*|/dev/sr*) continue ;; esac
+    [ -z "$MOUNTPOINT" ] || continue
+    [ -z "$FSTYPE" ] || continue
+    if [ "$TYPE" = "disk" ]; then
+      children="$(lsblk -nr "$NAME" 2>/dev/null | wc -l | tr -d ' ')"
+      [ "${children:-0}" -le 1 ] || continue
+    fi
+    candidate_count=$((candidate_count + 1))
+    case "$SIZE" in ""|*[!0-9]*) SIZE=0 ;; esac
+    if [ "$SIZE" -gt "$best_size" ]; then
+      best_name="$NAME"
+      best_size="$SIZE"
+      best_type="$TYPE"
+    fi
+  done <<EOF
+$(lsblk -bprP -o NAME,TYPE,SIZE,MOUNTPOINT,FSTYPE 2>/dev/null)
+EOF
+fi
+emit osd_candidate_device "$best_name"
+emit osd_candidate_size_bytes "$best_size"
+emit osd_candidate_type "$best_type"
+emit osd_candidate_count "$candidate_count"
+
+if command -v lsblk >/dev/null 2>&1 && { command -v sgdisk >/dev/null 2>&1 || command -v parted >/dev/null 2>&1; }; then
+  emit gpt_partition ok
+else
+  emit gpt_partition missing
+fi
+
+if command -v lvm >/dev/null 2>&1 || command -v pvs >/dev/null 2>&1; then
+  emit lvm ok
+else
+  emit lvm missing
+fi
+
+emit ceph_image_name "$CEPH_IMAGE"
+"""
+
+STORAGE_CEPH_NODE_RUNTIME_SCRIPT = r"""
+set -eu
+emit() { printf '%s\t%s\n' "$1" "$2"; }
+fsid="$1"
+image="$2"
+ceph_hostname="$3"
+mon_initial_members="$4"
+mon_host="$5"
+public_network="$6"
+cluster_network="$7"
+mount_root="$8"
+admin_keyring_b64="$9"
+bootstrap_osd_keyring_b64="${10}"
+mon_keyring_b64="${11}"
+roles="${12}"
+base="/srv/docker-infra/ceph/$fsid"
+etc="$base/etc"
+lib="$base/var/lib/ceph"
+tmp="$base/tmp"
+mkdir -p "$etc" "$lib/bootstrap-osd" "$lib/mon" "$lib/mgr" "$lib/mds" "$lib/osd" "$tmp" "$mount_root"
+cat > "$etc/ceph.conf" <<EOF
+[global]
+fsid = $fsid
+mon_initial_members = $mon_initial_members
+mon_host = $mon_host
+auth_cluster_required = cephx
+auth_service_required = cephx
+auth_client_required = cephx
+osd_pool_default_size = 3
+osd_pool_default_min_size = 2
+osd_crush_chooseleaf_type = 1
+EOF
+if [ -n "$public_network" ]; then printf 'public_network = %s\n' "$public_network" >> "$etc/ceph.conf"; fi
+if [ -n "$cluster_network" ]; then printf 'cluster_network = %s\n' "$cluster_network" >> "$etc/ceph.conf"; fi
+write_b64() {
+  value="$1"
+  target="$2"
+  [ -n "$value" ] || return 0
+  printf '%s' "$value" | base64 -d > "$target"
+  chmod 0600 "$target"
+}
+write_b64 "$admin_keyring_b64" "$etc/ceph.client.admin.keyring"
+write_b64 "$bootstrap_osd_keyring_b64" "$lib/bootstrap-osd/ceph.keyring"
+write_b64 "$bootstrap_osd_keyring_b64" "$etc/ceph.client.bootstrap-osd.keyring"
+write_b64 "$mon_keyring_b64" "$tmp/ceph.mon.keyring"
+docker pull "$image" >/dev/null
+docker run --rm --entrypoint sh -v "$etc:/etc/ceph" -v "$lib:/var/lib/ceph" "$image" -lc 'command -v ceph >/dev/null'
+case ",$roles," in *,osd,*) docker run --rm --entrypoint sh "$image" -lc 'command -v ceph-volume >/dev/null' ;; esac
+case ",$roles," in
+  *,mon,*)
+    mon_dir="$lib/mon/ceph-$ceph_hostname"
+    mkdir -p "$mon_dir"
+    if [ ! -e "$mon_dir/keyring" ] && [ -s "$tmp/ceph.mon.keyring" ]; then
+      monmap_args=""
+      old_ifs="$IFS"
+      IFS=","
+      idx=1
+      for member in $mon_initial_members; do
+        [ -n "$member" ] || continue
+        host="$(printf '%s' "$mon_host" | cut -d, -f"$idx")"
+        case "$member$host" in *[!A-Za-z0-9_.:-]*)
+          echo "invalid monmap member or host" >&2
+          exit 68
+          ;;
+        esac
+        idx=$((idx + 1))
+        monmap_args="$monmap_args --add $member $host"
+      done
+      IFS="$old_ifs"
+      docker run --rm --net host \
+        -v "$etc:/etc/ceph" -v "$lib:/var/lib/ceph" -v "$tmp:/tmp/docker-infra-ceph" \
+        --entrypoint sh "$image" -lc "monmaptool --create $monmap_args --fsid '$fsid' /tmp/docker-infra-ceph/monmap && ceph-mon --mkfs -i '$ceph_hostname' --monmap /tmp/docker-infra-ceph/monmap --keyring /tmp/docker-infra-ceph/ceph.mon.keyring"
+    fi
+    ;;
+esac
+case ",$roles," in *,mgr,*) mkdir -p "$lib/mgr/ceph-$ceph_hostname" ;; esac
+case ",$roles," in *,mds,*) mkdir -p "$lib/mds/ceph-$ceph_hostname" ;; esac
+docker run --rm --entrypoint sh -v "$etc:/etc/ceph" -v "$lib:/var/lib/ceph" "$image" -lc 'chown -R ceph:ceph /etc/ceph /var/lib/ceph || true'
+emit runtime ok
+emit fsid "$fsid"
+emit ceph_hostname "$ceph_hostname"
+emit base "$base"
+"""
+
+STORAGE_CEPH_MASTER_METADATA_SCRIPT = r"""
+set -eu
+emit() { printf '%s\t%s\n' "$1" "$2"; }
+fsid="$1"
+image="$2"
+daemon_id="$3"
+case "$daemon_id" in ""|*[!A-Za-z0-9_.-]*) echo "invalid daemon id" >&2; exit 64 ;; esac
+base="/srv/docker-infra/ceph/$fsid"
+etc="$base/etc"
+lib="$base/var/lib/ceph"
+[ -s "$etc/ceph.conf" ] || { echo "missing ceph.conf" >&2; exit 65; }
+mkdir -p "$lib/mgr/ceph-$daemon_id" "$lib/mds/ceph-$daemon_id"
+docker run --rm --net host \
+  -v "$etc:/etc/ceph" -v "$lib:/var/lib/ceph" \
+  --entrypoint sh "$image" -lc "
+set -eu
+for i in \$(seq 1 60); do ceph --connect-timeout 3 -s >/tmp/ceph-status 2>&1 && break; sleep 2; done
+ceph --connect-timeout 3 -s >/tmp/ceph-status 2>&1 || { cat /tmp/ceph-status >&2; exit 70; }
+ceph auth get-or-create mgr.$daemon_id mon 'allow profile mgr' osd 'allow *' mds 'allow *' > /var/lib/ceph/mgr/ceph-$daemon_id/keyring
+ceph auth get-or-create mds.$daemon_id mon 'allow profile mds' osd 'allow rwx' mds 'allow' > /var/lib/ceph/mds/ceph-$daemon_id/keyring
+chown -R ceph:ceph /var/lib/ceph/mgr/ceph-$daemon_id /var/lib/ceph/mds/ceph-$daemon_id || true
+"
+emit metadata_keyrings ok
+emit daemon_id "$daemon_id"
+"""
+
+STORAGE_CEPH_MOUNT_ENSURE_SCRIPT = r"""
+set -eu
+emit() { printf '%s\t%s\n' "$1" "$2"; }
+fsid="$1"
+image="$2"
+mount_root="$3"
+mon_host="$4"
+client_name="$5"
+client_keyring_b64="$6"
+[ -n "$fsid" ] || { echo "fsid is required" >&2; exit 64; }
+[ -n "$mon_host" ] || { echo "mon_host is required" >&2; exit 65; }
+[ -n "$client_keyring_b64" ] || { echo "client keyring is required" >&2; exit 66; }
+case "$client_name" in client.*) client_id="${client_name#client.}"; client_entity="$client_name" ;; *) client_id="$client_name"; client_entity="client.$client_name" ;; esac
+base="/srv/docker-infra/ceph/$fsid"
+etc="$base/etc"
+mkdir -p "$etc" "$mount_root"
+cat > "$etc/ceph.conf" <<EOF
+[global]
+fsid = $fsid
+mon_host = $mon_host
+auth_cluster_required = cephx
+auth_service_required = cephx
+auth_client_required = cephx
+EOF
+keyring="$etc/ceph.${client_entity}.keyring"
+secretfile="$etc/ceph.${client_entity}.secret"
+printf '%s' "$client_keyring_b64" | base64 -d > "$keyring"
+chmod 0600 "$keyring"
+awk -F= '/^[[:space:]]*key[[:space:]]*=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' "$keyring" > "$secretfile"
+chmod 0600 "$secretfile"
+[ -s "$secretfile" ] || { echo "cephx key is empty" >&2; exit 67; }
+cat > "/usr/local/sbin/docker-infra-cephfs-mount-$fsid.sh" <<EOF
+#!/bin/sh
+set -eu
+mkdir -p "$mount_root"
+if mountpoint -q "$mount_root"; then
+  exit 0
+fi
+modprobe ceph >/dev/null 2>&1 || true
+if mount -t ceph "$mon_host:/" "$mount_root" -o "name=$client_id,secretfile=$secretfile,_netdev,noatime"; then
+  exit 0
+fi
+if command -v ceph-fuse >/dev/null 2>&1; then
+  exec ceph-fuse -n "$client_entity" --keyring "$keyring" "$mount_root"
+fi
+exit 72
+EOF
+chmod 0755 "/usr/local/sbin/docker-infra-cephfs-mount-$fsid.sh"
+unit="docker-infra-cephfs-$fsid.service"
+if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+  cat > "/etc/systemd/system/$unit" <<EOF
+[Unit]
+Description=Docker Infra CephFS mount $fsid
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/docker-infra-cephfs-mount-$fsid.sh
+ExecStop=/bin/umount "$mount_root"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable "$unit" >/dev/null 2>&1 || true
+  emit boot_unit "$unit"
+else
+  emit boot_unit "systemd-unavailable"
+fi
+if ! mountpoint -q "$mount_root"; then
+  "/usr/local/sbin/docker-infra-cephfs-mount-$fsid.sh"
+fi
+mountpoint -q "$mount_root" || { echo "CephFS mountpoint is not mounted" >&2; exit 73; }
+mkdir -p "$mount_root/services" "$mount_root/.docker-infra"
+touch "$mount_root/.docker-infra/mount-health"
+fstype="$(findmnt -T "$mount_root" -no FSTYPE 2>/dev/null | head -1 || true)"
+source="$(findmnt -T "$mount_root" -no SOURCE 2>/dev/null | head -1 || true)"
+case "$fstype" in ceph|fuse.ceph) ;; *) echo "unexpected mount type: ${fstype:-unknown}" >&2; exit 74 ;; esac
+emit mount_status mounted
+emit mount_root "$mount_root"
+emit fstype "$fstype"
+emit source "$source"
+emit client "$client_entity"
+"""
+
+STORAGE_CEPH_OSD_SLOT_CREATE_SCRIPT = r"""
+set -eu
+emit() { printf '%s\t%s\n' "$1" "$2"; }
+image="$1"
+fsid="$2"
+slot_name="$3"
+backing_type="$4"
+data_path="$5"
+size_gb="$6"
+base="/srv/docker-infra/ceph/$fsid"
+etc="$base/etc"
+lib="$base/var/lib/ceph"
+[ -f "$etc/ceph.conf" ] || { echo "ceph.conf not found: $etc/ceph.conf" >&2; exit 64; }
+target="$data_path"
+managed_file=""
+managed_vg=""
+managed_lv=""
+managed_loop=""
+if [ "$backing_type" = "managed_loop" ]; then
+  command -v losetup >/dev/null 2>&1 || { echo "losetup is required for managed loop OSD slot" >&2; exit 65; }
+  slot_dir="$base/osd-slots"
+  mkdir -p "$slot_dir"
+  managed_file="${data_path:-$slot_dir/$slot_name.raw}"
+  case "$managed_file" in "$slot_dir"/*.raw) ;; *) echo "managed loop path must stay under $slot_dir" >&2; exit 66 ;; esac
+  required_bytes=$((size_gb * 1024 * 1024 * 1024))
+  if [ ! -f "$managed_file" ]; then
+    if command -v fallocate >/dev/null 2>&1; then
+      fallocate -l "${size_gb}G" "$managed_file"
+    else
+      truncate -s "${size_gb}G" "$managed_file"
+    fi
+  else
+    current_bytes="$(stat -c '%s' "$managed_file" 2>/dev/null || echo 0)"
+    case "$current_bytes" in ""|*[!0-9]*) current_bytes=0 ;; esac
+    if [ "$current_bytes" -lt "$required_bytes" ]; then
+      if command -v fallocate >/dev/null 2>&1; then
+        fallocate -l "${size_gb}G" "$managed_file"
+      else
+        truncate -s "${size_gb}G" "$managed_file"
+      fi
+    fi
+  fi
+  chmod 0600 "$managed_file"
+  target="$(losetup -j "$managed_file" 2>/dev/null | awk -F: 'NR == 1 { print $1 }')"
+  if [ -z "$target" ]; then
+    target="$(losetup --find --show "$managed_file")"
+  fi
+  managed_loop="$target"
+  fsid_slug="$(printf '%s' "$fsid" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]' | cut -c1-20)"
+  slot_slug="$(printf '%s' "$slot_name" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]' | cut -c1-24)"
+  managed_vg="dinfra_${fsid_slug}_${slot_slug}"
+  managed_lv="block"
+  lv_path="/dev/$managed_vg/$managed_lv"
+  mapper_path="/dev/mapper/${managed_vg}-${managed_lv}"
+  docker run --rm --privileged --net host --pid host \
+    -v /dev:/dev -v /run/udev:/run/udev:ro \
+    --entrypoint sh "$image" -lc 'set -eu
+loop="$1"
+vg="$2"
+lv="$3"
+lv_path="$4"
+mapper_path="$5"
+export LVM_SUPPRESS_FD_WARNINGS=1
+if ! lvs "$vg/$lv" >/dev/null 2>&1; then
+  if ! pvs "$loop" >/dev/null 2>&1; then
+    pvcreate -ff -y "$loop"
+  fi
+  if ! vgs "$vg" >/dev/null 2>&1; then
+    vgcreate "$vg" "$loop"
+  fi
+  lvcreate --noudevsync --wipesignatures n --zero n -y -l 100%FREE -n "$lv" "$vg"
+fi
+vgchange --noudevsync -ay "$vg" >/dev/null
+dmsetup mknodes >/dev/null 2>&1 || true
+mkdir -p "/dev/$vg"
+ln -sf "../mapper/${vg}-${lv}" "$lv_path"
+[ -b "$lv_path" ] || [ -b "$mapper_path" ] || { echo "managed loop LV was not created: $lv_path" >&2; exit 68; }
+' sh "$managed_loop" "$managed_vg" "$managed_lv" "$lv_path" "$mapper_path"
+  target="$lv_path"
+elif [ "$backing_type" = "gpt_partition" ]; then
+  [ -b "$data_path" ] || { echo "block device not found: $data_path" >&2; exit 65; }
+  dev_type="$(lsblk -no TYPE "$data_path" 2>/dev/null | head -1 | tr -d ' ')"
+  if [ "$dev_type" = "disk" ]; then
+    if command -v sgdisk >/dev/null 2>&1; then
+      sgdisk -n "0:0:+${size_gb}G" -t "0:4fbd7e29-9d25-41b8-afd0-062c0ceff05d2" -c "0:${slot_name}" "$data_path"
+    elif command -v parted >/dev/null 2>&1; then
+      parted -s "$data_path" mkpart "$slot_name" 0% "${size_gb}GiB"
+    else
+      echo "sgdisk or parted is required for GPT partition slot" >&2
+      exit 66
+    fi
+    partprobe "$data_path" >/dev/null 2>&1 || true
+    sleep 2
+    target="$(lsblk -nrpo NAME,PARTLABEL "$data_path" 2>/dev/null | awk -v label="$slot_name" '$2 == label { print $1 }' | tail -1)"
+    [ -n "$target" ] || { echo "created partition was not found" >&2; exit 67; }
+  fi
+else
+  [ -b "$data_path" ] || { echo "block device not found: $data_path" >&2; exit 65; }
+fi
+docker run --rm --privileged --net host --pid host \
+  -v /dev:/dev -v /run/udev:/run/udev:ro \
+  -v "$etc:/etc/ceph" -v "$lib:/var/lib/ceph" \
+  --entrypoint sh "$image" -lc 'set -e; ceph-volume lvm prepare --data "$1"; ceph-volume lvm activate --bluestore --no-systemd --no-tmpfs --all; ceph-volume lvm list --format json || true' sh "$target" || {
+  if [ -n "$managed_file" ]; then
+    if [ -n "$managed_vg" ]; then
+      docker run --rm --privileged --net host --pid host \
+        -v /dev:/dev -v /run/udev:/run/udev:ro \
+        --entrypoint sh "$image" -lc 'lvremove -y --noudevsync "$1" >/dev/null 2>&1 || true; vgremove -y "$2" >/dev/null 2>&1 || true; [ -z "$3" ] || pvremove -ff -y "$3" >/dev/null 2>&1 || true' sh "$target" "$managed_vg" "$managed_loop" || true
+      rm -rf "/dev/$managed_vg" >/dev/null 2>&1 || true
+    fi
+    loopdev="$(losetup -j "$managed_file" 2>/dev/null | awk -F: 'NR == 1 { print $1 }')"
+    [ -z "$loopdev" ] || losetup -d "$loopdev" >/dev/null 2>&1 || true
+    rm -f "$managed_file" >/dev/null 2>&1 || true
+  fi
+  exit 70
+}
+stable_id="$(blkid -s PARTUUID -o value "$target" 2>/dev/null || true)"
+[ -n "$stable_id" ] || stable_id="$managed_file"
+emit backing_path "$target"
+emit device_stable_id "$stable_id"
+[ -z "$managed_file" ] || emit managed_path "$managed_file"
+emit ceph_volume ok
+"""
+
+STORAGE_CEPH_OSD_DAEMON_RUN_SCRIPT = r"""
+set -eu
+emit() { printf '%s\t%s\n' "$1" "$2"; }
+fsid="$1"
+image="$2"
+container_name="$3"
+daemon_id="$4"
+osd_fsid="$5"
+base="/srv/docker-infra/ceph/$fsid"
+etc="$base/etc"
+lib="$base/var/lib/ceph"
+[ -f "$etc/ceph.conf" ] || { echo "ceph.conf not found: $etc/ceph.conf" >&2; exit 64; }
+docker rm -f "$container_name" >/dev/null 2>&1 || true
+activate='[ -f /var/lib/ceph/osd/ceph-'"$daemon_id"'/keyring ]'
+if [ -n "$osd_fsid" ]; then
+  activate="$activate || ceph-volume lvm activate --bluestore --no-systemd --no-tmpfs $daemon_id $osd_fsid"
+fi
+container_id="$(docker run -d --privileged --net host --pid host --restart unless-stopped \
+  --name "$container_name" \
+  -v /dev:/dev -v /run/udev:/run/udev:ro \
+  -v "$etc:/etc/ceph" -v "$lib:/var/lib/ceph" \
+  --label docker-infra.storage=ceph \
+  --label docker-infra.ceph.managed=true \
+  --label docker-infra.ceph.daemon=osd \
+  --label docker-infra.ceph.daemon_id="$daemon_id" \
+  --label docker-infra.ceph.fsid="$fsid" \
+  "$image" sh -lc "$activate; exec ceph-osd -f --cluster ceph --id $daemon_id --setuser ceph --setgroup ceph")"
+emit container_id "$container_id"
+emit container_name "$container_name"
+"""
+
 
 COMMAND_SPECS = {
     "docker.version": {"category": "docker", "argv": ["docker", "version", "--format", "{{json .}}"]},
@@ -1250,6 +1922,14 @@ COMMAND_SPECS = {
     "swarm.join-token.manager": {"category": "swarm", "argv": ["docker", "swarm", "join-token", "-q", "manager"]},
     "swarm.network.inspect": {"category": "swarm", "factory": _inspect_network_command},
     "swarm.network.ensure": {"category": "swarm", "factory": _overlay_network_command, "destructive": True},
+    "storage.ceph.node.preflight": {"category": "storage", "factory": _ceph_node_preflight_command, "default_timeout_seconds": 180},
+    "storage.ceph.auth.key.generate": {"category": "storage", "factory": _ceph_auth_key_generate_command, "default_timeout_seconds": 120},
+    "storage.ceph.node.runtime.ensure": {"category": "storage", "factory": _ceph_node_runtime_ensure_command, "destructive": True, "default_timeout_seconds": 300},
+    "storage.ceph.master.metadata.ensure": {"category": "storage", "factory": _ceph_master_metadata_ensure_command, "destructive": True, "default_timeout_seconds": 300},
+    "storage.ceph.mount.ensure": {"category": "storage", "factory": _ceph_mount_ensure_command, "destructive": True, "default_timeout_seconds": 180},
+    "storage.ceph.daemon.service.create": {"category": "storage", "factory": _ceph_daemon_service_create_command, "destructive": True, "default_timeout_seconds": 120},
+    "storage.ceph.osd.slot.create": {"category": "storage", "factory": _ceph_osd_slot_create_command, "destructive": True, "default_timeout_seconds": 1800},
+    "storage.ceph.osd.daemon.container.run": {"category": "storage", "factory": _ceph_osd_daemon_container_run_command, "destructive": True, "default_timeout_seconds": 120},
     "proxy.nginx.version": {"category": "proxy", "argv": ["nginx", "-v"]},
     "proxy.nginx.configtest": {"category": "proxy", "argv": ["nginx", "-t"]},
     "proxy.nginx.reload": {"category": "proxy", "argv": ["nginx", "-s", "reload"], "destructive": True},
@@ -1270,6 +1950,12 @@ class LocalCommandCatalog:
     DOCKER_IMAGE_STORAGE_SCRIPT = DOCKER_IMAGE_STORAGE_SCRIPT
     DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT = DOCKER_IMAGE_DELETE_ESTIMATE_SCRIPT
     DOCKER_PRUNE_ESTIMATE_SCRIPT = DOCKER_PRUNE_ESTIMATE_SCRIPT
+    STORAGE_CEPH_PREFLIGHT_SCRIPT = STORAGE_CEPH_PREFLIGHT_SCRIPT
+    STORAGE_CEPH_NODE_RUNTIME_SCRIPT = STORAGE_CEPH_NODE_RUNTIME_SCRIPT
+    STORAGE_CEPH_MASTER_METADATA_SCRIPT = STORAGE_CEPH_MASTER_METADATA_SCRIPT
+    STORAGE_CEPH_MOUNT_ENSURE_SCRIPT = STORAGE_CEPH_MOUNT_ENSURE_SCRIPT
+    STORAGE_CEPH_OSD_SLOT_CREATE_SCRIPT = STORAGE_CEPH_OSD_SLOT_CREATE_SCRIPT
+    STORAGE_CEPH_OSD_DAEMON_RUN_SCRIPT = STORAGE_CEPH_OSD_DAEMON_RUN_SCRIPT
     METRICS_COLLECTOR_AGENT_VERSION = METRICS_COLLECTOR_AGENT_VERSION
     LocalCommandError = LocalCommandError
     COMMAND_SPECS = COMMAND_SPECS

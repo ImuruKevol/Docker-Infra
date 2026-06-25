@@ -1,0 +1,12 @@
+{
+    "id": "page.storage",
+    "mode": "page",
+    "title": "/storage",
+    "namespace": "storage",
+    "category": "infra",
+    "viewuri": "/storage",
+    "preview": "",
+    "controller": "user",
+    "layout": "layout.sidebar",
+    "template": "wiz-page-storage()"
+}

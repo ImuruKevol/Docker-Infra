@@ -52,18 +52,23 @@ class ServerMacrosStaticContractTest(unittest.TestCase):
             "실행 이력",
             "scheduleHistory()",
             "페이지당 10개",
+            "scheduleHistoryPagination().total",
+            "moveScheduleHistoryPage($event)",
+            "scheduleHistoryResultOperations()",
+            "scheduleHistoryDateTimeLabel",
+            "data-macro-run-output",
         ]:
             self.assertIn(token, macros_view)
         self.assertNotIn("stderr 출력이 없습니다.", macros_view)
         self.assertNotIn("lg:grid-cols-2", macros_view)
         self.assertNotIn("페이지당 20개", macros_view)
-        for token in ["public pageSize = 10", "selectedServiceId", "container_display_name", "macroArgsEnabled", "macroArgsInput", "scheduleTargetSearch", "removeMacroFileFromState", "deleteMacroFile", "saveSchedule", "deleteSchedule", "buildScheduleTargets", "schedule_weekdays", "toggleScheduleWeekday", "scheduleHistory", "scheduleHistoryResultOpen", "scheduleHistoryResultItem", "openScheduleHistoryResult", "closeScheduleHistoryResult", "scheduleHistoryStdoutText", "scheduleHistoryStderrText"]:
+        for token in ["public pageSize = 10", "selectedServiceId", "container_display_name", "macroArgsEnabled", "macroArgsInput", "scheduleTargetSearch", "removeMacroFileFromState", "deleteMacroFile", "saveSchedule", "deleteSchedule", "buildScheduleTargets", "schedule_weekdays", "toggleScheduleWeekday", "scheduleHistory", "scheduleHistoryResultOpen", "scheduleHistoryResultItem", "openScheduleHistoryResult", "closeScheduleHistoryResult", "scheduleHistoryStdoutText", "scheduleHistoryStderrText", "scheduleHistoryPagination", "scheduleHistoryResultOperationId", "loadScheduleHistory", "scheduleHistoryActiveOperation", "scheduleHistoryDateTimeLabel", "normalizeDateInput", "scrollMacroRunOutputToBottom"]:
             self.assertIn(token, macros_ts)
         for token in ["data-search-select-input", "valueChange.emit", "filteredItems()"]:
             self.assertIn(token, search_select_view if token == "data-search-select-input" else Path("/root/docker-infra/project/main/src/app/component.search.select/view.ts").read_text(encoding="utf-8"))
         for token in ["def list_macros()", "def run_macro()"]:
             self.assertIn(token, servers_api)
-        for token in ["def load()", "def save_macro()", "def delete_macro()", "def save_schedule()", "def delete_schedule()", "def run_macro()", "def operation_status()", "def download_macro_file()", "def delete_macro_file()", "container_display_name", "_friendly_container_name"]:
+        for token in ["def load()", "def save_macro()", "def delete_macro()", "def save_schedule()", "def delete_schedule()", "def schedule_history()", "def run_macro()", "def operation_status()", "def download_macro_file()", "def delete_macro_file()", "container_display_name", "_friendly_container_name"]:
             self.assertIn(token, macros_api)
         for token in ["def create(self, wiz, data, io):", "def ptyinput(self, wiz, data):", "def resize(self, wiz, data):", "def close(self, wiz, data, io):"]:
             self.assertIn(token, servers_socket)
@@ -75,7 +80,7 @@ class ServerMacrosStaticContractTest(unittest.TestCase):
             self.assertIn(token, macros_runner)
         macros_shared = Path("/root/docker-infra/project/main/src/model/struct/macros_shared.py").read_text(encoding="utf-8")
         self.assertIn('replace("\\r\\n", "\\n").replace("\\r", "\\n")', macros_shared)
-        for token in ["CREATE TABLE IF NOT EXISTS shell_macro_schedules", "schedule_weekdays", "operation_logs", "CRON_ROUTE", "DOCKER_INFRA_MACRO_CRON_DIR", "cron_files.write", "runner.run"]:
+        for token in ["CREATE TABLE IF NOT EXISTS shell_macro_schedules", "schedule_weekdays", "operation_logs", "CRON_ROUTE", "DOCKER_INFRA_MACRO_CRON_DIR", "cron_files.write", "runner.run", "def history(self, schedule_id", "selected_days", "_iso_datetime"]:
             self.assertIn(token, macro_schedules)
         for token in ["/etc/cron.d", "SHELL=/bin/sh", "PATH=/usr/local/sbin", "CronFileError"]:
             self.assertIn(token, cron_files)

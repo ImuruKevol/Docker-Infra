@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS storage_snapshots CASCADE;
+DROP TABLE IF EXISTS storage_mounts CASCADE;
+DROP TABLE IF EXISTS storage_snapshot_policies CASCADE;
+DROP TABLE IF EXISTS ceph_osd_slots CASCADE;
+DROP TABLE IF EXISTS ceph_nodes CASCADE;
+DROP TABLE IF EXISTS ceph_clusters CASCADE;

@@ -497,3 +497,33 @@
 | 2026-06-23 | 016 | CephFS Storage 작업 지시서 구현 가능성 검토 | [상세](devlog/2026-06-23/016-ceph-storage-implementation-feasibility-review.md) |
 | 2026-06-23 | 017 | CephFS 전환 시 volume artifact 경로 제거 정책 반영 | [상세](devlog/2026-06-23/017-cephfs-remove-volume-artifact-paths.md) |
 | 2026-06-23 | 018 | Agent 기반 생성과 서비스 동작의 CephFS Storage 계약 보강 | [상세](devlog/2026-06-23/018-agent-storage-contract.md) |
+| 2026-06-24 | 001 | Storage 메뉴와 읽기 전용 개요 페이지 추가 | [상세](devlog/2026-06-24/001-storage-readonly-overview.md) |
+| 2026-06-24 | 002 | Ceph Storage DB migration과 Struct skeleton 추가 | [상세](devlog/2026-06-24/002-ceph-storage-model-skeleton.md) |
+| 2026-06-24 | 003 | 서버 상세의 독립/Swarm Storage 분기 표시 정리 | [상세](devlog/2026-06-24/003-independent-swarm-server-storage-branch.md) |
+| 2026-06-24 | 004 | Ceph preflight와 cluster bootstrap PoC 구현 | [상세](devlog/2026-06-24/004-ceph-preflight-bootstrap-poc.md) |
+| 2026-06-24 | 005 | 실제 DB schema 대조 후 Ceph Storage migration 적용 | [상세](devlog/2026-06-24/005-ceph-storage-db-apply.md) |
+| 2026-06-24 | 006 | 독립 서버 Storage 탭을 단일 경고 메시지로 단순화 | [상세](devlog/2026-06-24/006-independent-storage-warning-only.md) |
+| 2026-06-24 | 007 | Ceph preflight 결과 모달과 보정 안내 추가 | [상세](devlog/2026-06-24/007-ceph-preflight-modal-remediation.md) |
+| 2026-06-24 | 008 | Dockerized Ceph runtime과 OSD 슬롯 구성 마법사 연결 | [상세](devlog/2026-06-24/008-dockerized-ceph-osd-wizard.md) |
+| 2026-06-24 | 009 | CephFS host mount와 service storage mount 모델 구현 | [상세](devlog/2026-06-24/009-cephfs-host-service-mount-model.md) |
+| 2026-06-24 | 010 | 서비스 생성 Wizard 저장소 확인 단계와 bind mount 자동 변환 연결 | [상세](devlog/2026-06-24/010-service-create-storage-step.md) |
+| 2026-06-24 | 011 | Ceph preflight 비동기 실행과 중간 과정 polling 보강 | [상세](devlog/2026-06-24/011-ceph-preflight-async-progress.md) |
+| 2026-06-24 | 012 | Storage 화면 Swarm 전용화와 OSD 자동 슬롯 계획 UX 개선 | [상세](devlog/2026-06-24/012-storage-swarm-only-osd-auto-plan.md) |
+| 2026-06-24 | 013 | Storage 클러스터 서버 카드 통합과 Operation log 탭 위치 조정 | [상세](devlog/2026-06-24/013-storage-cluster-server-compact-layout.md) |
+| 2026-06-24 | 014 | Storage bootstrap 카드 서버 목록 압축과 불필요한 설명 제거 | [상세](devlog/2026-06-24/014-storage-bootstrap-compact-summary.md) |
+| 2026-06-24 | 015 | Storage bootstrap 서버 행을 이름/IP/OSD 버튼만 표시하도록 압축 | [상세](devlog/2026-06-24/015-storage-bootstrap-server-row-minimal.md) |
+| 2026-06-24 | 016 | 매크로 스케줄 이력 일자 그룹화와 결과 탭/페이지네이션 적용 | [상세](devlog/2026-06-24/016-macro-schedule-history-pagination-tabs.md) |
+| 2026-06-24 | 017 | Storage bootstrap 서버 목록을 가로 배지 카드로 변경 | [상세](devlog/2026-06-24/017-storage-bootstrap-horizontal-server-badges.md) |
+| 2026-06-24 | 018 | 매크로 스케줄 이력과 결과 모달에 실행 시간 표시 | [상세](devlog/2026-06-24/018-macro-schedule-history-time-labels.md) |
+| 2026-06-24 | 019 | Ceph 마스터 bootstrap과 managed loop OSD 슬롯 선택 추가 | [상세](devlog/2026-06-24/019-ceph-master-managed-loop-osd.md) |
+| 2026-06-24 | 020 | 매크로 스케줄 이력 시간 표시 타임존 정규화 | [상세](devlog/2026-06-24/020-macro-schedule-history-timezone-normalization.md) |
+| 2026-06-24 | 021 | Ceph 마스터 구성 카드 표시 조건 보정 | [상세](devlog/2026-06-24/021-ceph-master-bootstrap-visibility.md) |
+| 2026-06-24 | 022 | Ceph 마스터 bootstrap 실패 표시와 MON 실행 경로 보정 | [상세](devlog/2026-06-24/022-ceph-master-bootstrap-feedback-runtime.md) |
+| 2026-06-24 | 023 | Ceph 마스터 bootstrap preflight 완화와 MGR/MDS 자동 배치 | [상세](devlog/2026-06-24/023-ceph-master-mgr-mds-bootstrap.md) |
+| 2026-06-24 | 024 | Ceph legacy image tag 정규화 | [상세](devlog/2026-06-24/024-ceph-legacy-image-normalization.md) |
+| 2026-06-24 | 025 | Storage 실행 결과 모달과 local-master SSH 우회 보정 | [상세](devlog/2026-06-24/025-storage-operation-modal-local-master.md) |
+| 2026-06-24 | 026 | OSD 슬롯 구성 마법사 다중 슬롯 개수 조정 지원 | [상세](devlog/2026-06-24/026-storage-osd-multi-slot-count.md) |
+| 2026-06-24 | 027 | mini-new2 managed loop OSD 3개 생성 오류 보정 | [상세](devlog/2026-06-24/027-mini-new2-managed-loop-osd-validation.md) |
+| 2026-06-24 | 028 | Storage 개요를 Ceph 대시보드형 OSD 배치 화면으로 재구성 | [상세](devlog/2026-06-24/028-storage-overview-ceph-dashboard-layout.md) |
+| 2026-06-25 | 001 | local-master OSD daemon allowlist와 prepared 슬롯 재시도 보정 | [상세](devlog/2026-06-25/001-local-master-osd-allowlist-retry.md) |
+| 2026-06-25 | 002 | Storage cluster/preflight 버튼 제거와 CephFS 서비스 배포 검증 | [상세](devlog/2026-06-25/002-storage-cephfs-service-validation.md) |

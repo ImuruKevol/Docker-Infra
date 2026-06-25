@@ -18,6 +18,32 @@ class NodeError(Exception):
         self.extra = extra
 
 
+def has_swarm_node_id(row):
+    return bool(str((row or {}).get("swarm_node_id") or "").strip())
+
+
+def is_local_master_node(row):
+    row = row or {}
+    return bool(row.get("is_local_master") or row.get("role") == "local_master" or row.get("name") == "local-master")
+
+
+def server_mode(row):
+    return "swarm" if has_swarm_node_id(row) else "independent"
+
+
+def server_mode_payload(row):
+    mode = server_mode(row)
+    is_swarm = mode == "swarm"
+    return {
+        "server_mode": mode,
+        "server_mode_label": "Swarm 서버" if is_swarm else "독립 서버",
+        "storage_backend": "cephfs" if is_swarm else "local_bind",
+        "storage_backend_label": "CephFS bind mount" if is_swarm else "local bind mount",
+        "osd_slot_candidate": is_swarm,
+        "swarm_registration_required": not is_swarm,
+    }
+
+
 def node_to_dict(row):
     if row is None:
         return None
@@ -40,6 +66,7 @@ def node_to_dict(row):
         "metadata": row["metadata"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        **server_mode_payload(row),
     }
 
 
@@ -374,6 +401,10 @@ class NodesShared:
     NODE_ROLES = NODE_ROLES
     REPORTER_TOKEN_TYPE = REPORTER_TOKEN_TYPE
     NodeError = NodeError
+    has_swarm_node_id = staticmethod(has_swarm_node_id)
+    is_local_master_node = staticmethod(is_local_master_node)
+    server_mode = staticmethod(server_mode)
+    server_mode_payload = staticmethod(server_mode_payload)
     node_to_dict = staticmethod(node_to_dict)
     node_access_host = staticmethod(node_access_host)
     credential_to_public = staticmethod(credential_to_public)

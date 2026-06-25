@@ -14,10 +14,18 @@ ddns_model = wiz.model("struct/domains_ddns")
 nodes_model = wiz.model("struct").nodes
 ssh_executor = wiz.model("struct/ssh_executor")
 placement_selector = wiz.model("struct/services_placement")
+storage_mounts = wiz.model("struct/storage_mounts")
 
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-zA-Z0-9_*-]{1,63}\.)*[a-zA-Z0-9-]{1,63}\.[a-zA-Z]{2,63}$")
 VOLUME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 SERVICE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
+DATABASE_VOLUME_TOKENS = (
+    "/var/lib/postgresql",
+    "/var/lib/mysql",
+    "/var/lib/mariadb",
+    "/var/lib/mongodb",
+    "/data/db",
+)
 
 
 def _item(key, title, status, message, details=None):
@@ -117,6 +125,11 @@ def _service_volumes(service):
         if source or target:
             rows.append({"source": source, "target": target, "external": False})
     return rows
+
+
+def _is_database_path(value):
+    clean = str(value or "").strip().lower()
+    return any(token in clean for token in DATABASE_VOLUME_TOKENS)
 
 
 class ServicesPreflight:
@@ -307,6 +320,87 @@ class ServicesPreflight:
             return issues
         return [_item("volumes", "데이터 보관", "ok", "볼륨 이름과 컨테이너 저장 경로를 확인했습니다.", details)]
 
+    def _check_storage(self, payload, content, namespace, validation, nodes=None, recommendation=None, env=None):
+        storage_payload = payload.get("storage") if isinstance(payload.get("storage"), dict) else {}
+        selected = (recommendation or {}).get("selected") or {}
+        selected_node = selected.get("node") or (nodes[0] if nodes else None)
+        backend = storage_mounts.default_backend(
+            deployment_mode=validation.get("deployment_mode"),
+            node=selected_node,
+            requested=storage_payload.get("backend") or payload.get("storage_backend"),
+            env=env,
+        )
+        plan = storage_mounts.normalize_compose(namespace, content, backend=backend, storage=storage_payload, env=env)
+        mounts = plan.get("mounts") or []
+        if not mounts:
+            return [_item("storage.mounts", "서비스 저장소", "ok", "Docker-managed volume 입력이 없어 storage mount 변환이 필요하지 않습니다.")]
+        details = [
+            {
+                "mount_name": row.get("mount_name"),
+                "backend": row.get("backend"),
+                "host_path": row.get("host_path"),
+                "container_path": row.get("container_path"),
+                "original_source": row.get("original_source"),
+            }
+            for row in mounts
+        ]
+        database_mounts = [row for row in details if _is_database_path(row.get("container_path"))]
+        items = []
+        if backend == "cephfs":
+            missing = 0
+            try:
+                cluster = storage_mounts.common.fetchone(
+                    """
+                    SELECT id, status, health
+                    FROM ceph_clusters
+                    WHERE status IN ('running', 'degraded')
+                    ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at ASC
+                    LIMIT 1
+                    """,
+                    env=env,
+                )
+                health = str((cluster or {}).get("health") or "HEALTH_UNKNOWN")
+                if cluster and health in {"HEALTH_OK", "HEALTH_WARN"}:
+                    summary = wiz.model("struct/storage_ceph_mount").summary(
+                        wiz.model("struct/storage_ceph_mount").list_node_mounts(cluster_id=cluster["id"], env=env)
+                    )
+                    missing = int(summary.get("missing") or 0) + int(summary.get("failed") or 0)
+            except Exception:
+                cluster = None
+                health = "HEALTH_UNKNOWN"
+            if not cluster:
+                return [_item("storage.cephfs.cluster", "서비스 저장소", "error", "CephFS bind mount를 선택했지만 실행 가능한 Ceph cluster가 없습니다.", details)]
+            if health not in {"HEALTH_OK", "HEALTH_WARN"}:
+                return [_item("storage.cephfs.health", "서비스 저장소", "error", f"Ceph cluster health가 {health} 상태라 CephFS bind mount를 기본 적용할 수 없습니다.", details)]
+            if missing:
+                items.append(_item("storage.cephfs.mount", "서비스 저장소", "warning", "일부 Swarm node의 CephFS host mount 확인이 필요합니다.", details))
+            else:
+                items.append(_item("storage.cephfs.mount", "서비스 저장소", "ok", "Docker-managed volume 입력을 CephFS bind mount로 변환합니다.", details))
+        else:
+            target_is_swarm = bool(str((selected_node or {}).get("swarm_node_id") or "").strip()) or validation.get("deployment_mode") == "swarm"
+            ceph_ready = False
+            if target_is_swarm:
+                try:
+                    ceph_ready = storage_mounts.common.fetchone(
+                        """
+                        SELECT id
+                        FROM ceph_clusters
+                        WHERE status IN ('running', 'degraded')
+                          AND health IN ('HEALTH_OK', 'HEALTH_WARN')
+                        LIMIT 1
+                        """,
+                        env=env,
+                    ) is not None
+                except Exception:
+                    ceph_ready = False
+            if target_is_swarm and not ceph_ready:
+                items.append(_item("storage.local_bind.fallback", "서비스 저장소", "warning", "공유 저장소가 아직 준비되지 않아 local bind mount로 계속합니다. 다른 서버로 옮길 때 데이터는 자동 이동하지 않습니다.", details))
+            else:
+                items.append(_item("storage.local_bind.mount", "서비스 저장소", "ok", "Docker-managed volume 입력을 local bind mount로 변환합니다.", details))
+        if database_mounts:
+            items.append(_item("storage.database_snapshot", "DB 저장소", "warning", "DB 데이터 경로가 감지되었습니다. 파일 snapshot 전 checkpoint hook을 켜는 것을 권장합니다.", database_mounts))
+        return items
+
     def _remote_port_usage(self, node, ports, env=None):
         if node.get("is_local_master") or not ports:
             return {"node": self._node_label(node), "used": [], "status": "skipped" if node.get("is_local_master") else "ok"}
@@ -433,6 +527,7 @@ class ServicesPreflight:
         items.extend(self._check_placement(candidate_nodes, recommendation=placement_recommendation))
         items.extend(self._check_images(validation, nodes=candidate_nodes, env=env))
         items.extend(self._check_volumes(validation, namespace))
+        items.extend(self._check_storage(payload, content, namespace, validation, nodes=candidate_nodes, recommendation=placement_recommendation, env=env))
         items.extend(self._check_ports(content, nodes=candidate_nodes, env=env))
         items.extend(self._check_domain(payload, validation, domains, env=env))
         blocking = [item for item in items if item["status"] == "error"]

@@ -9,6 +9,7 @@
         "services": "서비스 관리",
         "domains": "도메인 관리",
         "servers": "서버 관리",
+        "storage": "스토리지",
         "images": "이미지 관리",
         "templates": "Compose 템플릿",
         "macros": "매크로",

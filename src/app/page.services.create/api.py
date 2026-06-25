@@ -231,6 +231,27 @@ def check_image():
     wiz.response.status(200, **wizard.check_image(body.get("image_ref")))
 
 
+def storage_preview():
+    wizard = wiz.model("struct").services_wizard
+    code = 200
+    payload = {}
+    try:
+        payload = wizard.storage_preview(wiz.request.query())
+    except wizard.ComposeValidationError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, "details": exc.details}
+    except wizard.ServiceError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code = 400
+        payload = {"message": str(exc), "error_code": "SERVICE_STORAGE_PREVIEW_FAILED"}
+    wiz.response.status(code, **payload)
+
+
 def ai_contract():
     ai_assistant = wiz.model("struct").ai_assistant
     wiz.response.status(200, contract=ai_assistant.service_contract())

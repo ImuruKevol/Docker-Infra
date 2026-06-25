@@ -104,6 +104,10 @@ class Struct:
         return self._load("secret_masking")
 
     @property
+    def storage(self):
+        return self._load("storage")
+
+    @property
     def services(self):
         return self._load("services")
 

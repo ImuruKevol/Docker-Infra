@@ -22,6 +22,10 @@ export class Component implements OnInit, OnDestroy {
     public scheduleModalOpen = signal<boolean>(false);
     public scheduleHistoryResultOpen = signal<boolean>(false);
     public scheduleHistoryResultItem = signal<any>(null);
+    public scheduleHistoryResultOperationId = signal<string>('');
+    public scheduleHistoryLoading = signal<boolean>(false);
+    public scheduleHistoryError = signal<string>('');
+    public scheduleHistoryPagination = signal<any>({ current: 1, start: 1, end: 1, total: 0, limit: 10 });
     public scheduleTargetSearch = signal<string>('');
     public scheduleFormMode = signal<string>('create');
     public macroForm: any = this.emptyMacroForm();
@@ -37,10 +41,12 @@ export class Component implements OnInit, OnDestroy {
         roundedSelection: false,
     };
     public pageSize = 10;
+    public scheduleHistoryPageSize = 10;
     private themeObserver: MutationObserver | null = null;
     private agentCommandHandler: ((event: Event) => void) | null = null;
     private macroRunTimer: ReturnType<typeof setTimeout> | null = null;
     private macroRunToken = 0;
+    private scheduleHistoryToken = 0;
 
     constructor(public service: Service) { }
 
@@ -436,16 +442,16 @@ export class Component implements OnInit, OnDestroy {
         return Math.floor((Math.max(1, Number(page || 1)) - 1) / 10) * 10 + 1;
     }
 
-    private paginationFor(total: number, page: number = 1) {
-        const limit = this.pageSize;
-        const end = Math.max(1, Math.ceil(Number(total || 0) / limit));
+    private paginationFor(total: number, page: number = 1, limit: number = this.pageSize) {
+        const pageLimit = Math.max(1, Number(limit || this.pageSize));
+        const end = Math.max(1, Math.ceil(Number(total || 0) / pageLimit));
         const current = Math.min(Math.max(1, Number(page || 1)), end);
         return {
             current,
             start: this.paginationStart(current),
             end,
             total: Number(total || 0),
-            limit,
+            limit: pageLimit,
         };
     }
 
@@ -568,6 +574,10 @@ export class Component implements OnInit, OnDestroy {
     public async closeScheduleModal() {
         this.scheduleModalOpen.set(false);
         this.resetScheduleHistoryResult();
+        this.scheduleHistoryToken += 1;
+        this.scheduleHistoryLoading.set(false);
+        this.scheduleHistoryError.set('');
+        this.scheduleHistoryPagination.set(this.paginationFor(0, 1, this.scheduleHistoryPageSize));
         this.scheduleTargetSearch.set('');
         this.scheduleForm = this.emptyScheduleForm();
         await this.service.render();
@@ -576,6 +586,10 @@ export class Component implements OnInit, OnDestroy {
     public newScheduleForm() {
         this.scheduleFormMode.set('create');
         this.resetScheduleHistoryResult();
+        this.scheduleHistoryToken += 1;
+        this.scheduleHistoryLoading.set(false);
+        this.scheduleHistoryError.set('');
+        this.scheduleHistoryPagination.set(this.paginationFor(0, 1, this.scheduleHistoryPageSize));
         this.scheduleTargetSearch.set('');
         this.scheduleForm = this.emptyScheduleForm(this.selectedMacroId());
         void this.service.render();
@@ -586,6 +600,9 @@ export class Component implements OnInit, OnDestroy {
         this.resetScheduleHistoryResult();
         const scheduleWeekdays = this.scheduleWeekdays(schedule);
         const history = [...(schedule?.history || [])];
+        this.scheduleHistoryLoading.set(Boolean(schedule?.id));
+        this.scheduleHistoryError.set('');
+        this.scheduleHistoryPagination.set(this.paginationFor(history.length, 1, this.scheduleHistoryPageSize));
         this.scheduleForm = {
             id: schedule?.id || '',
             macro_id: schedule?.macro_id || this.selectedMacroId(),
@@ -603,6 +620,9 @@ export class Component implements OnInit, OnDestroy {
             cron_file: schedule?.cron_file || '',
             history,
         };
+        if (this.scheduleForm.id) {
+            void this.loadScheduleHistory(this.scheduleForm.id, 1);
+        }
         void this.service.render();
     }
 
@@ -809,33 +829,150 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public scheduleHistorySummary() {
-        const count = this.scheduleHistory().length;
-        return count ? `최근 ${count}건` : '이력 없음';
+        if (this.scheduleHistoryLoading()) return '불러오는 중';
+        const total = Number(this.scheduleHistoryPagination()?.total ?? this.scheduleHistory().length ?? 0);
+        return total ? `총 ${total}건` : '이력 없음';
+    }
+
+    public scheduleHistoryPageSummary() {
+        const pagination = this.scheduleHistoryPagination();
+        const total = Number(pagination?.total || 0);
+        if (!total) return '';
+        const current = Number(pagination?.current || 1);
+        const limit = Number(pagination?.limit || this.scheduleHistoryPageSize);
+        const start = (current - 1) * limit + 1;
+        const end = Math.min(total, current * limit);
+        return `${start}-${end} / ${total}`;
+    }
+
+    private async loadScheduleHistory(scheduleId: string, page: number = 1) {
+        const targetScheduleId = String(scheduleId || '').trim();
+        if (!targetScheduleId) return;
+        const token = ++this.scheduleHistoryToken;
+        this.scheduleHistoryLoading.set(true);
+        this.scheduleHistoryError.set('');
+        await this.service.render();
+        try {
+            const { code, data } = await wiz.call('schedule_history', {
+                schedule_id: targetScheduleId,
+                macro_id: this.selectedMacro()?.id || this.scheduleForm?.macro_id || '',
+                page,
+                limit: this.scheduleHistoryPageSize,
+            });
+            if (token !== this.scheduleHistoryToken || this.scheduleForm?.id !== targetScheduleId) return;
+            if (code === 200) {
+                const history = Array.isArray(data?.history) ? data.history : [];
+                this.scheduleForm.history = history;
+                this.scheduleHistoryPagination.set(data?.pagination || this.paginationFor(history.length, page, this.scheduleHistoryPageSize));
+            } else {
+                this.scheduleForm.history = [];
+                this.scheduleHistoryPagination.set(this.paginationFor(0, 1, this.scheduleHistoryPageSize));
+                this.scheduleHistoryError.set(data?.message || '실행 이력을 불러올 수 없습니다.');
+            }
+        } catch (error: any) {
+            if (token !== this.scheduleHistoryToken || this.scheduleForm?.id !== targetScheduleId) return;
+            this.scheduleForm.history = [];
+            this.scheduleHistoryPagination.set(this.paginationFor(0, 1, this.scheduleHistoryPageSize));
+            this.scheduleHistoryError.set(error?.message || '실행 이력을 불러올 수 없습니다.');
+        } finally {
+            if (token === this.scheduleHistoryToken && this.scheduleForm?.id === targetScheduleId) {
+                this.scheduleHistoryLoading.set(false);
+                await this.service.render();
+            }
+        }
+    }
+
+    public async moveScheduleHistoryPage(page: number) {
+        if (!this.scheduleForm?.id) return;
+        await this.loadScheduleHistory(this.scheduleForm.id, page);
     }
 
     public scheduleHistoryDate(history: any) {
+        if (history?.run_at) return history.run_at;
+        if (history?.date) return history.date;
         return history?.finished_at || history?.started_at || history?.created_at || history?.updated_at;
     }
 
-    public scheduleHistoryTargetLabel(history: any) {
-        const metadata = history?.metadata || {};
-        const context = history?.requested_payload?.target_context || {};
+    public scheduleHistoryDayLabel(history: any) {
+        const value = history?.date || this.scheduleHistoryDate(history);
+        if (!value) return '-';
+        const text = String(value);
+        const date = new Date(text.length === 10 ? `${text}T00:00:00` : text);
+        if (Number.isNaN(date.getTime())) return text;
+        return date.toLocaleDateString();
+    }
+
+    public scheduleHistoryDateTimeLabel(history: any) {
+        const value = this.scheduleHistoryDate(history);
+        if (!value) return '-';
+        const text = String(value);
+        if (text.length === 10) return this.scheduleHistoryDayLabel(history);
+        return this.formatDate(value);
+    }
+
+    private scheduleHistoryOperationRows(history: any) {
+        if (Array.isArray(history?.operations)) {
+            return history.operations.filter((item: any) => item?.id);
+        }
+        return history?.id ? [history] : [];
+    }
+
+    public scheduleHistoryResultOperations(history: any = this.scheduleHistoryResultItem()) {
+        return this.scheduleHistoryOperationRows(history);
+    }
+
+    private scheduleHistoryOperationTargetLabel(operation: any) {
+        const metadata = operation?.metadata || {};
+        const context = operation?.requested_payload?.target_context || {};
         const targetType = metadata?.target_type || context?.target_type || '';
         if (targetType === 'service') {
             const service = metadata?.service_name || context?.service_name || metadata?.service_namespace || context?.service_namespace || '서비스';
             const container = metadata?.container_display_name || context?.container_display_name || metadata?.container_name || context?.container_name || '';
-            return [service, container].filter((item: string) => !!item).join(' - ') || history?.target_id || '-';
+            return [service, container].filter((item: string) => !!item).join(' - ') || operation?.target_id || '-';
         }
-        return metadata?.node_name || history?.target_id || '-';
+        return metadata?.node_name || operation?.target_id || '-';
+    }
+
+    public scheduleHistoryTargetLabel(history: any) {
+        const operations = this.scheduleHistoryOperationRows(history);
+        if (operations.length > 1) {
+            const labels = Array.from(new Set(operations.map((item: any) => this.scheduleHistoryOperationTargetLabel(item)).filter((item: string) => !!item && item !== '-')));
+            const preview = labels.slice(0, 2).join(', ');
+            const suffix = labels.length > 2 ? ` 외 ${labels.length - 2}개` : '';
+            const count = Math.max(Number(history?.operation_count || 0), operations.length);
+            return preview ? `${count}개 대상 · ${preview}${suffix}` : `${count}개 대상`;
+        }
+        if (operations.length === 1 && Array.isArray(history?.operations)) {
+            return this.scheduleHistoryOperationTargetLabel(operations[0]);
+        }
+        return this.scheduleHistoryOperationTargetLabel(history);
+    }
+
+    public scheduleHistoryOperationTabLabel(operation: any, index: number) {
+        return this.scheduleHistoryOperationTargetLabel(operation) || `대상 ${index + 1}`;
+    }
+
+    public scheduleHistoryActiveOperation() {
+        const operations = this.scheduleHistoryResultOperations();
+        const selectedId = String(this.scheduleHistoryResultOperationId() || '');
+        return operations.find((item: any) => String(item?.id || '') === selectedId) || operations[0] || null;
+    }
+
+    public async selectScheduleHistoryResultOperation(operation: any) {
+        this.scheduleHistoryResultOperationId.set(String(operation?.id || ''));
+        await this.service.render();
     }
 
     private resetScheduleHistoryResult() {
         this.scheduleHistoryResultOpen.set(false);
         this.scheduleHistoryResultItem.set(null);
+        this.scheduleHistoryResultOperationId.set('');
     }
 
     public async openScheduleHistoryResult(history: any) {
+        const operations = this.scheduleHistoryOperationRows(history);
         this.scheduleHistoryResultItem.set(history || null);
+        this.scheduleHistoryResultOperationId.set(String(operations[0]?.id || ''));
         this.scheduleHistoryResultOpen.set(Boolean(history));
         await this.service.render();
     }
@@ -857,11 +994,11 @@ export class Component implements OnInit, OnDestroy {
             .join('\n');
     }
 
-    public scheduleHistoryStdoutText(history: any = this.scheduleHistoryResultItem()) {
+    public scheduleHistoryStdoutText(history: any = this.scheduleHistoryActiveOperation()) {
         return this.scheduleHistoryStreamText(history, 'stdout');
     }
 
-    public scheduleHistoryStderrText(history: any = this.scheduleHistoryResultItem()) {
+    public scheduleHistoryStderrText(history: any = this.scheduleHistoryActiveOperation()) {
         return this.scheduleHistoryStreamText(history, 'stderr');
     }
 
@@ -1155,6 +1292,14 @@ export class Component implements OnInit, OnDestroy {
         this.macroRunTimer = null;
     }
 
+    private scrollMacroRunOutputToBottom() {
+        setTimeout(() => {
+            const output = document.querySelector('[data-macro-run-output="true"]') as HTMLElement | null;
+            if (!output) return;
+            output.scrollTop = output.scrollHeight;
+        }, 0);
+    }
+
     private isTerminalOperationStatus(status: string) {
         return ['succeeded', 'failed', 'canceled'].includes(String(status || '').toLowerCase());
     }
@@ -1188,6 +1333,7 @@ export class Component implements OnInit, OnDestroy {
             }
         }
         await this.service.render();
+        this.scrollMacroRunOutputToBottom();
     }
 
     public async runSelectedMacro(explicitArgs?: string) {
@@ -1236,6 +1382,7 @@ export class Component implements OnInit, OnDestroy {
         }
         this.busy.set(false);
         await this.service.render();
+        this.scrollMacroRunOutputToBottom();
     }
 
     public macroRunLogText() {
@@ -1355,9 +1502,19 @@ export class Component implements OnInit, OnDestroy {
         return new Blob(chunks, { type: contentType || 'application/octet-stream' });
     }
 
+    private normalizeDateInput(value: any) {
+        if (typeof value !== 'string') return value;
+        const text = value.trim();
+        const hasTime = /^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(text);
+        const hasTimezone = /(Z|[+-]\d{2}:?\d{2})$/.test(text);
+        if (!hasTime) return text;
+        const normalized = text.replace(' ', 'T');
+        return hasTimezone ? normalized : `${normalized}Z`;
+    }
+
     public formatDate(value: any) {
         if (!value) return '-';
-        const date = new Date(value);
+        const date = new Date(this.normalizeDateInput(value));
         if (Number.isNaN(date.getTime())) return String(value);
         return date.toLocaleString();
     }

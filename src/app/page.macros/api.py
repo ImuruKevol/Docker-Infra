@@ -277,6 +277,35 @@ def delete_schedule():
     wiz.response.status(code, **payload)
 
 
+def schedule_history():
+    macros_model = wiz.model("struct").macros
+    body = wiz.request.query()
+    schedule_id = body.get("schedule_id")
+    if not schedule_id:
+        wiz.response.status(400, message="schedule_id는 필수입니다.", error_code="MACRO_SCHEDULE_ID_REQUIRED")
+        return
+
+    code = 200
+    payload = {}
+    try:
+        payload = macros_model.schedule_history(
+            schedule_id,
+            macro_id=body.get("macro_id"),
+            page=body.get("page") or 1,
+            limit=body.get("limit") or 10,
+        )
+    except macros_model.MacroError as exc:
+        code = exc.status_code
+        payload = {"message": exc.message, "error_code": exc.error_code, **exc.extra}
+    except RuntimeError as exc:
+        code = 503
+        payload = {"message": str(exc), "error_code": "DATABASE_UNAVAILABLE"}
+    except Exception as exc:
+        code, payload = _error_payload(exc)
+
+    wiz.response.status(code, **payload)
+
+
 def run_macro():
     macros_model = wiz.model("struct").macros
     nodes_model = wiz.model("struct").nodes

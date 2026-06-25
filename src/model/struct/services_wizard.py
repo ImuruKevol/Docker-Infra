@@ -17,11 +17,20 @@ ddns_model = wiz.model("struct/domains_ddns")
 validator = wiz.model("struct/compose_validator")
 preflight_model = wiz.model("struct/services_preflight")
 compose_rules = wiz.model("struct/compose_rules")
+placement_selector = wiz.model("struct/services_placement")
+storage_mounts = wiz.model("struct/storage_mounts")
 
 DOCKER_SEARCH_TIMEOUT_SECONDS = 8
 DOCKER_HUB_TIMEOUT_SECONDS = 8
 DOCKER_SEARCH_LIMIT = 5
 IMAGE_TAG_FALLBACKS = ["latest", "stable", "alpine", "slim", "bookworm", "bullseye", "lts"]
+DATABASE_VOLUME_TOKENS = (
+    "/var/lib/postgresql",
+    "/var/lib/mysql",
+    "/var/lib/mariadb",
+    "/var/lib/mongodb",
+    "/data/db",
+)
 
 
 def _normalize(value):
@@ -131,6 +140,11 @@ def _suggest_import_name(payload):
         if stem:
             return stem
     return "가져온 서비스"
+
+
+def _is_database_path(value):
+    clean = str(value or "").strip().lower()
+    return any(token in clean for token in DATABASE_VOLUME_TOKENS)
 
 
 class ServicesWizard:
@@ -496,6 +510,160 @@ class ServicesWizard:
         content = yaml.safe_dump(compose, sort_keys=False, allow_unicode=False)
         return _rewrite_internal_service_ref(content, namespace, service_names)
 
+    def _storage_node_label(self, node):
+        node = node or {}
+        return str(node.get("name") or node.get("host") or node.get("id") or "자동 선택")
+
+    def _storage_node_summary(self, node):
+        node = node or {}
+        is_swarm = bool(str(node.get("swarm_node_id") or "").strip())
+        return {
+            "id": str(node.get("id") or ""),
+            "name": str(node.get("name") or ""),
+            "host": str(node.get("host") or ""),
+            "label": self._storage_node_label(node),
+            "mode": "swarm" if is_swarm else "independent",
+            "mode_label": "Swarm 서버" if is_swarm else "독립 서버",
+            "swarm_node_id": str(node.get("swarm_node_id") or ""),
+        }
+
+    def _storage_cluster_status(self, env=None):
+        try:
+            cluster = storage_mounts.common.fetchone(
+                """
+                SELECT id, status, health, mount_root
+                FROM ceph_clusters
+                WHERE status IN ('running', 'degraded')
+                ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at ASC
+                LIMIT 1
+                """,
+                env=env,
+            )
+        except Exception:
+            cluster = None
+        if not cluster:
+            return {
+                "configured": False,
+                "ready": False,
+                "status": "not_configured",
+                "health": "HEALTH_UNKNOWN",
+                "message": "공유 저장소가 아직 준비되지 않았습니다.",
+            }
+        health = str(cluster.get("health") or "HEALTH_UNKNOWN")
+        ready = health in {"HEALTH_OK", "HEALTH_WARN"}
+        return {
+            "configured": True,
+            "ready": ready,
+            "id": str(cluster.get("id") or ""),
+            "status": cluster.get("status") or "",
+            "health": health,
+            "mount_root": cluster.get("mount_root") or "",
+            "message": "CephFS bind mount를 기본으로 사용합니다." if ready else "Ceph cluster 상태 확인이 필요합니다.",
+        }
+
+    def _storage_mount_preview_rows(self, mounts):
+        rows = []
+        for row in mounts or []:
+            container_path = row.get("container_path") or ""
+            rows.append({
+                "name": row.get("mount_name"),
+                "mount_name": row.get("mount_name"),
+                "component_key": row.get("component_key"),
+                "backend": row.get("backend"),
+                "original_source": row.get("original_source") or "",
+                "container_path": container_path,
+                "target": container_path,
+                "host_path": row.get("host_path"),
+                "database_path": _is_database_path(container_path),
+                "snapshot_policy": (row.get("metadata") or {}).get("snapshot_policy") or "default",
+            })
+        return rows
+
+    def _storage_payload_from_plan(self, backend, mounts):
+        return {
+            "backend": backend,
+            "source": "service_create_storage_step",
+            "auto": True,
+            "mounts": [
+                {
+                    "name": row.get("mount_name"),
+                    "component_key": row.get("component_key"),
+                    "target": row.get("container_path"),
+                    "original_source": row.get("original_source") or "",
+                    "snapshot_policy": (row.get("metadata") or {}).get("snapshot_policy") or "default",
+                }
+                for row in mounts or []
+            ],
+        }
+
+    def storage_preview(self, payload, env=None):
+        body = payload or {}
+        self._require_base_content_source(body)
+        self._require_base_content(body)
+        name = str(body.get("name") or body.get("namespace") or "service").strip()
+        namespace = str(body.get("namespace") or "").strip() or (_normalize(name) or "service_preview")
+        content = self.render(body, namespace=namespace)
+        validation_options = self._validation_options(body)
+        validation = validator.validate({
+            "namespace": namespace,
+            "filename": body.get("filename") or "docker-compose.yaml",
+            "content": content,
+            **validation_options,
+        })
+        try:
+            recommendation = placement_selector.recommend(body, env=env)
+        except Exception as exc:
+            recommendation = {"error": str(exc), "selected": None, "candidates": []}
+        selected = (recommendation.get("selected") or {}) if isinstance(recommendation, dict) else {}
+        selected_node = selected.get("node") or {}
+        storage_payload = body.get("storage") if isinstance(body.get("storage"), dict) else {}
+        backend = storage_mounts.default_backend(
+            deployment_mode=validation.get("deployment_mode"),
+            node=selected_node or None,
+            requested=storage_payload.get("backend") or body.get("storage_backend"),
+            env=env,
+        )
+        plan = storage_mounts.normalize_compose(namespace, content, backend=backend, storage=storage_payload, env=env)
+        mounts = plan.get("mounts") or []
+        cluster = self._storage_cluster_status(env=env)
+        target = self._storage_node_summary(selected_node)
+        target_is_swarm = target.get("mode") == "swarm" or validation.get("deployment_mode") == "swarm"
+        fallback = None
+        if target_is_swarm and backend == "local_bind" and not cluster.get("ready"):
+            fallback = {
+                "reason": "ceph_not_configured",
+                "message": "공유 저장소가 준비되지 않아 local bind mount로 계속합니다.",
+                "storage_settings_url": "/storage",
+            }
+        elif target.get("mode") == "independent" and mounts:
+            fallback = {
+                "reason": "independent_server",
+                "message": "독립 서버 대상이라 local bind mount로 저장합니다.",
+                "storage_settings_url": "/servers",
+            }
+        backend_label = "CephFS bind mount" if backend == "cephfs" else "local bind mount"
+        return {
+            "namespace": namespace,
+            "backend": backend,
+            "backend_label": backend_label,
+            "mount_root": plan.get("mount_root"),
+            "target": target,
+            "placement": recommendation,
+            "ceph": cluster,
+            "fallback": fallback,
+            "mounts": self._storage_mount_preview_rows(mounts),
+            "mount_count": len(mounts),
+            "changed": bool(plan.get("changed")),
+            "converted_sources": plan.get("converted_sources") or [],
+            "removed_top_level_volumes": plan.get("removed_top_level_volumes") or [],
+            "storage": self._storage_payload_from_plan(backend, mounts),
+            "message": (
+                f"Docker-managed volume {len(mounts)}개를 {backend_label}로 변환합니다."
+                if mounts
+                else "Docker-managed volume 후보가 없어 추가 저장소 변환이 필요하지 않습니다."
+            ),
+        }
+
     def _validation_options(self, body):
         if self._is_import_source(body) or self._is_template_source(body):
             return {
@@ -600,6 +768,11 @@ class ServicesWizard:
             "port": port,
             "ssl_mode": ssl_mode,
             "test_run_id": body.get("test_run_id"),
+            "node_id": body.get("node_id") or body.get("target_node_id"),
+            "placement_mode": body.get("placement_mode") or "auto",
+            "storage": body.get("storage") if isinstance(body.get("storage"), dict) else {},
+            "allow_warnings": validation_options.get("allow_warnings"),
+            "warning_codes": validation_options.get("warning_codes"),
             "source": source,
             "source_ref": source_ref,
             "draft_metadata": draft_metadata,

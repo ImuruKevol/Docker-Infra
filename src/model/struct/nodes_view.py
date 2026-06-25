@@ -50,6 +50,7 @@ class NodeView:
     def node(self, node, docker_result=None):
         node = node or {}
         metadata = node.get("metadata") or {}
+        mode = shared.server_mode_payload(node)
         return {
             "id": node.get("id"),
             "name": node.get("name"),
@@ -61,6 +62,7 @@ class NodeView:
             "status": node.get("status"),
             "swarm_node_id": node.get("swarm_node_id"),
             "is_local_master": node.get("is_local_master"),
+            **mode,
             "credential": self.credential(node.get("credential")),
             "latest_metric": self.metric(node.get("latest_metric")),
             "docker": self.docker(node, docker_result=docker_result),

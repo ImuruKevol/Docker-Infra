@@ -9,6 +9,7 @@
         "services": "Services",
         "domains": "Domains",
         "servers": "Servers",
+        "storage": "Storage",
         "images": "Images",
         "templates": "Compose templates",
         "macros": "Macros",
